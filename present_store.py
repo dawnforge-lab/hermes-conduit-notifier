@@ -130,7 +130,8 @@ class PresentStore:
             _trim_devices(state)
             for result in results:
                 _take_result(state, installation, result, now)
-            waiting = [_public(prompt) for prompt in state["prompts"] if prompt["status"] == "waiting"]
+            # The newest, within a cap only a hand-edited store can exceed.
+            waiting = [_public(prompt) for prompt in state["prompts"] if prompt["status"] == "waiting"][-MAX_WAITING:]
         return {"prompts": waiting}
 
     # --- Hermes' side --------------------------------------------------------
