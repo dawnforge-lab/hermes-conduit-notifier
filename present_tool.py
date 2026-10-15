@@ -24,6 +24,7 @@ from .events import push_event
 from .present_store import (DEFAULT_TTL_MINUTES, MAX_ACTION_LABEL_CHARS, MAX_PREVIEW_CHARS, MAX_SPOKEN_YES,
                             MAX_SPOKEN_YES_CHARS, MAX_TITLE_CHARS, MAX_TTL_MINUTES, PresentError, PresentStore,
                             first_line)
+from .present_store import _text as clean_text
 
 logger = logging.getLogger("hermes.plugins.conduit_push")
 
@@ -189,7 +190,8 @@ def _confirm(store: PresentStore, args: dict[str, Any], session: str, profile: s
     # Answers the agent hasn't seen yet ride along, taken only once this
     # prompt is kept so a refused one leaves them for later.
     earlier = [item for item in store.unreported_outcomes() if item["id"] != prompt["id"]]
-    _nudge(prompt, args.get("preview"), profile)
+    # Cleaned as the store keeps it, so the notification shows what the panel will.
+    _nudge(prompt, clean_text(args.get("preview"), MAX_PREVIEW_CHARS), profile)
     if wait > 0:
         prompt = _wait(store, prompt, wait, sleep, monotonic)
     answer: dict[str, Any] = {"ok": True, **_with_note(prompt)}

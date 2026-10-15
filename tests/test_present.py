@@ -521,3 +521,11 @@ def test_an_unreadable_store_is_not_overwritten(store, monkeypatch):
         _exchange(store)
     monkeypatch.undo()
     assert store.path.read_text(encoding="utf-8") == saved
+
+
+def test_the_wake_shows_the_cleaned_first_line(tool_home, pushes):
+    _exchange(PresentStore(tool_home))
+    _call({**CONFIRM, "preview": "\x1b]0;evil\x07 hi\nmore"})
+    [event] = pushes
+    assert event["body"] == "]0;evil hi"
+    assert "\x1b" not in event["body"] and "\x07" not in event["body"]
