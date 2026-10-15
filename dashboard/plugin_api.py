@@ -4131,6 +4131,10 @@ def exchange_present(body: Any) -> Dict[str, Any]:
         return module.PresentStore(_calls_home()).exchange(body)
     except module.PresentError as exc:
         raise TokenError(400, str(exc))
+    except OSError:
+        # The store couldn't be read or written right now; the phone keeps
+        # its answers and exchanges again.
+        raise TokenError(503, "Confirm prompts are unavailable right now")
 
 
 @router.post("/present/exchange")

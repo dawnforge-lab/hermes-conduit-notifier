@@ -503,3 +503,21 @@ def test_a_hand_edited_store_is_cleaned_before_the_phone_sees_it(store):
     [shown] = _exchange(store)["prompts"]
     assert shown["title"].startswith("Send [2J?") and len(shown["title"]) == store_module.MAX_TITLE_CHARS
     assert shown["spoken_yes"] == ["send it"] and shown["action_label"] == "Confirm"
+
+
+def test_an_unreadable_store_is_not_overwritten(store, monkeypatch):
+    _exchange(store)
+    _confirm(store)
+    saved = store.path.read_text(encoding="utf-8")
+    real = type(store.path).read_text
+
+    def unreadable(path, *args, **kwargs):
+        if path == store.path:
+            raise PermissionError("busy")
+        return real(path, *args, **kwargs)
+
+    monkeypatch.setattr(type(store.path), "read_text", unreadable)
+    with pytest.raises(OSError):
+        _exchange(store)
+    monkeypatch.undo()
+    assert store.path.read_text(encoding="utf-8") == saved
