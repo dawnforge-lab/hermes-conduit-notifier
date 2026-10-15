@@ -25,6 +25,7 @@ import json
 import os
 import re
 import secrets
+import tempfile
 import threading
 import time
 from contextlib import contextmanager
@@ -164,7 +165,7 @@ class PresentStore:
         if isinstance(ttl_minutes, bool) or not isinstance(ttl_minutes, (int, float)) \
                 or not 1 <= ttl_minutes <= MAX_TTL_MINUTES:
             raise PresentError("invalid", f"ttl_minutes is 1 to {MAX_TTL_MINUTES}.")
-        session = session_id.strip()[:180] if isinstance(session_id, str) else ""
+        session = _line(session_id, 180)
         with self._locked() as state:
             now = self.clock()
             if not state["devices"]:
@@ -234,7 +235,7 @@ class PresentStore:
     def _load(self) -> dict[str, Any]:
         try:
             raw = json.loads(self.path.read_text(encoding="utf-8"))
-        except (FileNotFoundError, ValueError, OSError):
+        except (FileNotFoundError, ValueError, OSError, RecursionError):
             raw = None
         return _normalized(raw, self.clock())
 
@@ -252,12 +253,16 @@ class PresentStore:
                 self._save(after)
 
     def _save(self, encoded: str) -> None:
-        temporary = self.path.with_name(f".{self.path.name}.{os.getpid()}.{threading.get_ident()}.tmp")
-        descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-        with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
-            handle.write(encoded)
-        temporary.chmod(0o600)
-        temporary.replace(self.path)
+        # A fresh, unguessable file (mkstemp opens it O_EXCL, mode 0600).
+        descriptor, name = tempfile.mkstemp(prefix=f".{self.path.name}.", suffix=".tmp", dir=self.path.parent)
+        temporary = Path(name)
+        try:
+            with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+                handle.write(encoded)
+            temporary.replace(self.path)
+        except BaseException:
+            temporary.unlink(missing_ok=True)
+            raise
         self.path.chmod(0o600)
 
 
@@ -382,7 +387,7 @@ def _prompt(raw: Any, now: float) -> dict[str, Any] | None:
         "id": prompt_id, "title": raw["title"], "preview": raw["preview"], "action_label": raw["action_label"],
         "spoken_yes": [item for item in spoken if isinstance(item, str)][:MAX_SPOKEN_YES]
         if isinstance(spoken, list) else [],
-        "session_id": raw["session_id"] if isinstance(raw.get("session_id"), str) else "",
+        "session_id": _line(raw.get("session_id"), 180),
         "created_at": created, "expires_at": expires, "status": status, "reported": raw.get("reported") is True,
     }
     if raw.get("via") in VIAS:

@@ -482,3 +482,13 @@ def test_the_route_is_rate_limited(route_home):
 
 def test_the_route_is_a_reported_capability():
     assert "present-v1" in api.ROUTE_CAPABILITIES
+
+
+def test_session_ids_lose_control_characters_and_a_nested_file_reads_as_empty(store, tmp_path):
+    _exchange(store)
+    _confirm(store, session_id="s1\n\x1b[2Jx")
+    [shown] = _exchange(store)["prompts"]
+    assert shown["session_id"] == "s1 [2Jx"
+    store.path.write_text("[" * 100_000, encoding="utf-8")
+    assert _exchange(store) == {"prompts": []}
+
