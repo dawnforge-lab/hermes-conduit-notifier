@@ -101,6 +101,17 @@ def test_a_prompt_waits_for_the_phone_and_its_answer_reaches_hermes_once(store):
     assert store.status(prompt["id"])[0]["status"] == "confirmed"
 
 
+def test_a_quiet_exchange_rewrites_the_file_at_most_once_a_minute(store, clock):
+    _exchange(store)
+    stamp = store.path.stat().st_mtime_ns
+    clock.now += 30
+    _exchange(store)
+    assert store.path.stat().st_mtime_ns == stamp
+    clock.now += store_module.SEEN_REFRESH_S
+    _exchange(store)
+    assert store._load()["devices"][PHONE]["seen_at"] == clock.now
+
+
 def test_the_first_answer_wins_and_unknown_ids_are_ignored(store):
     _exchange(store)
     prompt = _confirm(store)

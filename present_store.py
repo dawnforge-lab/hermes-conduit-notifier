@@ -59,6 +59,8 @@ MAX_DEVICES = 8
 MAX_WAITING = 20
 MAX_PROMPTS = 50
 MAX_RESULTS = 40
+# How often an unchanged phone's last-seen time is refreshed.
+SEEN_REFRESH_S = 60
 DEFAULT_TTL_MINUTES = 30
 MAX_TTL_MINUTES = 24 * 60
 # Answered, expired and cancelled prompts are kept a week so the next chat can
@@ -110,11 +112,20 @@ class PresentStore:
             raise PresentError("invalid", "results must be a short list")
         with self._locked() as state:
             now = self.clock()
-            state["devices"][installation] = {
+            device = {
                 "name": _line(body.get("device"), MAX_DEVICE_NAME_CHARS) or "Conduit",
                 "app_version": _line(body.get("app_version"), 40),
                 "seen_at": now,
             }
+            # A phone polls often: an unchanged device is only re-stamped once
+            # a minute, so a quiet exchange doesn't rewrite the file.
+            known = state["devices"].get(installation)
+            if (isinstance(known, dict) and known.get("name") == device["name"]
+                    and known.get("app_version") == device["app_version"]
+                    and isinstance(known.get("seen_at"), (int, float))
+                    and 0 <= now - known["seen_at"] < SEEN_REFRESH_S):
+                device["seen_at"] = known["seen_at"]
+            state["devices"][installation] = device
             _trim_devices(state)
             for result in results:
                 _take_result(state, installation, result, now)

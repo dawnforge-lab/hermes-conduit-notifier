@@ -4021,7 +4021,7 @@ async def put_conduit_settings(request: Request, response: Response, profile: Op
 
 PRESENT_EXCHANGE_LIMIT = 60
 PRESENT_EXCHANGE_WINDOW_S = 60.0
-PRESENT_MAX_BODY_BYTES = 64 * 1024
+PRESENT_MAX_BODY_BYTES = 512 * 1024  # room for 40 results with 2,000-character edits in any script, even \u-escaped
 
 _present_exchange_limiter = _MintLimiter(PRESENT_EXCHANGE_LIMIT, PRESENT_EXCHANGE_WINDOW_S,
                                          message="Too many confirm prompt checks; try again shortly")
