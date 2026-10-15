@@ -3780,7 +3780,7 @@ def _cron_store() -> Any:
         if _cron_store_module is None:
             path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "cron_store.py")
             spec = importlib.util.spec_from_file_location("conduit_push_dashboard_cron_store", path)
-            if spec is None or spec.loader is None:
+            if spec is None or spec.loader is None or not os.path.isfile(path):
                 raise TokenError(501, "This plugin install is missing cron_store.py; update the plugin")
             module = importlib.util.module_from_spec(spec)
             spec.loader.exec_module(module)

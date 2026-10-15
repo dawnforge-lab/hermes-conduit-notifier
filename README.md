@@ -78,7 +78,7 @@ An exact `[Silent]` assistant response does not emit a completion notification.
 A cron run notifies like any other turn, with two exceptions:
 
 - A run whose reply is Hermes' cron silence marker doesn't notify, by the same rule Hermes uses to skip delivering it: `[SILENT]` (or `SILENT` / `NO_REPLY`) as the whole reply, on its own first or last line, or opening the reply (`[SILENT] No changes since yesterday`). A marker mid-sentence is real content and still notifies.
-- You can turn a job's notifications off in Conduit's Cron tab. Its runs then send no reply or failure notification (and no alert call). The muted job ids live in the profile's `conduit-cron.json`; `GET /api/plugins/conduit_push/cron/notifications` lists them (`{"muted": [...]}`) and `PUT` with `{"job_id": "...", "notify": false}` changes one. Capability `cron-notifications`.
+- You can turn a job's notifications off in Conduit's Cron tab. Its runs then send no reply or failure notification (and no automatic alert call; a call you asked for on the job still rings). The muted job ids live in the profile's `conduit-cron.json`; `GET /api/plugins/conduit_push/cron/notifications` lists them (`{"ok": true, "muted": [...]}`) and `PUT` with `{"job_id": "...", "notify": false}` changes one. Capability `cron-notifications`.
 
 The plugin tells a cron run by its task id (`cron:<job id>:…`) or its classic session id (`cron_<job id>_<date>_<time>`).
 

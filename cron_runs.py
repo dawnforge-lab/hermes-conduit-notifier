@@ -50,7 +50,7 @@ def is_silent(response: Any) -> bool:
     try:
         return bool(is_autonomous_silence_response(response))
     except Exception:  # noqa: BLE001 — a Hermes change must not cost the push
-        logger.debug("conduit_push: Hermes silence check failed", exc_info=True)
+        logger.warning("conduit_push: Hermes silence check failed; using the plugin's copy", exc_info=True)
         return _fallback_silent(response)
 
 

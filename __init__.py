@@ -187,7 +187,8 @@ def _on_session_end(**kwargs: Any) -> None:
         calls.turn_ended(session_id, "stopped", profile=_profile, fallback=None)
         return
     if cron_runs.quiet(session_id, kwargs.get("task_id")):
-        # A muted cron job's failed run: no push, and no alert call.
+        # A muted cron job's failed run: no push and no automatic alert call.
+        # A call the user asked for on this job (a watch) still rings.
         calls.turn_ended(session_id, "failed", profile=_profile, fallback=None)
         return
     failed = push_event(
