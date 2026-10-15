@@ -1109,7 +1109,7 @@ what Conduit allows:
 The tool shows only once a Conduit has synced with the profile. Limits: 20
 requested changes per device per hour, 10 per call, 8 devices per profile.
 
-## Hermes asks you to confirm (plugin 0.33+)
+## Hermes asks you to confirm (plugin 0.34+)
 
 Before an action you should OK (sending a message for you, buying, deleting),
 Hermes can ask on your phone with the `conduit_present` tool:
