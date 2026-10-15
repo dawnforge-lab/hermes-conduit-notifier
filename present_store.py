@@ -384,17 +384,24 @@ def _prompt(raw: Any, now: float) -> dict[str, Any] | None:
         return None
     spoken = raw.get("spoken_yes")
     prompt: dict[str, Any] = {
-        "id": prompt_id, "title": raw["title"], "preview": raw["preview"], "action_label": raw["action_label"],
-        "spoken_yes": [item for item in spoken if isinstance(item, str)][:MAX_SPOKEN_YES]
-        if isinstance(spoken, list) else [],
+        # Cleaned again on the way out, as on the way in: the file is text
+        # anyone with the account could edit.
+        "id": prompt_id, "title": _line(raw["title"], MAX_TITLE_CHARS),
+        "preview": _text(raw["preview"], MAX_PREVIEW_CHARS),
+        "action_label": _line(raw["action_label"], MAX_ACTION_LABEL_CHARS) or "Confirm",
+        "spoken_yes": [phrase for phrase in (_line(item, MAX_SPOKEN_YES_CHARS) for item in spoken) if phrase][
+            :MAX_SPOKEN_YES] if isinstance(spoken, list) else [],
         "session_id": _line(raw.get("session_id"), 180),
         "created_at": created, "expires_at": expires, "status": status, "reported": raw.get("reported") is True,
     }
     if raw.get("via") in VIAS:
         prompt["via"] = raw["via"]
-    for key in ("edit_text", "device"):
-        if isinstance(raw.get(key), str) and raw[key]:
-            prompt[key] = raw[key]
+    edit_text = _text(raw.get("edit_text"), MAX_EDIT_TEXT_CHARS)
+    if edit_text:
+        prompt["edit_text"] = edit_text
+    device = raw.get("device")
+    if isinstance(device, str) and _INSTALLATION.match(device):
+        prompt["device"] = device
     finished = raw.get("finished_at")
     if isinstance(finished, int) and not isinstance(finished, bool):
         prompt["finished_at"] = finished

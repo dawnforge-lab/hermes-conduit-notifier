@@ -492,3 +492,14 @@ def test_session_ids_lose_control_characters_and_a_nested_file_reads_as_empty(st
     store.path.write_text("[" * 100_000, encoding="utf-8")
     assert _exchange(store) == {"prompts": []}
 
+
+
+def test_a_hand_edited_store_is_cleaned_before_the_phone_sees_it(store):
+    _exchange(store)
+    _confirm(store)
+    state = json.loads(store.path.read_text(encoding="utf-8"))
+    state["prompts"][0].update(title="Send\x1b[2J?" + "x" * 500, spoken_yes=["send\x07 it", 3, ""], action_label="\x00")
+    store.path.write_text(json.dumps(state), encoding="utf-8")
+    [shown] = _exchange(store)["prompts"]
+    assert shown["title"].startswith("Send [2J?") and len(shown["title"]) == store_module.MAX_TITLE_CHARS
+    assert shown["spoken_yes"] == ["send it"] and shown["action_label"] == "Confirm"
