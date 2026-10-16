@@ -81,16 +81,29 @@ def test_a_turn_reuses_a_recent_look(shared):
     assert "conduit_health" in first.note(clock=lambda: now[0])
 
 
-def test_a_failing_check_adds_nothing(shared, monkeypatch):
+def test_a_failing_check_leaves_out_only_its_kind(shared, monkeypatch):
     def broken():
         raise RuntimeError("locked")
     monkeypatch.setattr(phone, "calendar_available", broken)
     assert first.note() is None
+    first._cache.clear()
+    shared["health"] = True
+    note = first.note()
+    assert "conduit_health" in note and "conduit_calendar" not in note
+
+
+def test_the_cache_keeps_a_few_homes(shared, monkeypatch):
+    homes = iter(range(first.MAX_HOMES + 5))
+    monkeypatch.setattr(first, "get_hermes_home", lambda: f"/home/{next(homes)}")
+    for _ in range(first.MAX_HOMES + 5):
+        first.note()
+    assert len(first._cache) == first.MAX_HOMES
 
 
 def test_each_shared_tool_says_to_use_it_first():
     assert phone.CALENDAR_SCHEMA["description"].endswith(first.CALENDAR_FIRST)
     assert phone.CONTACTS_SCHEMA["description"].endswith(first.CONTACTS_FIRST)
+    assert phone.PHONE_SCHEMA["description"].endswith(first.PHONE_FIRST)
     assert health.SCHEMA["description"].endswith(first.HEALTH_FIRST)
     assert location.SCHEMA["description"].endswith(first.LOCATION_FIRST)
 
@@ -99,3 +112,14 @@ def test_voice_calls_get_no_routing_sentence():
     # A live voice model has no other route to choose from.
     assert first.HEALTH_FIRST not in health.voice_description()
     assert first.LOCATION_FIRST not in location.voice_description()
+    texts = [tool["description"] for tool in phone.voice_tools(_SharingStore()).values()]
+    assert texts
+    for sentence in (first.CALENDAR_FIRST, first.CONTACTS_FIRST, first.PHONE_FIRST):
+        assert all(sentence not in text for text in texts)
+
+
+class _SharingStore:
+    """A phone store where one device shares everything voice can read."""
+
+    def devices(self):
+        return [{"sharing": {"calendar": "full", "reminders": True, "status": True, "focus": True, "alarms": True}}]

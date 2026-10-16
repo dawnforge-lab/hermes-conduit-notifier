@@ -30,7 +30,7 @@ from typing import Any, Callable
 from hermes_constants import get_hermes_home
 
 from . import client, session_titles
-from .conduit_first import CALENDAR_FIRST, CONTACTS_FIRST
+from .conduit_first import CALENDAR_FIRST, CONTACTS_FIRST, PHONE_FIRST
 from .events import push_event
 from .phone_store import (ALARM_CHANGE_KINDS, CALENDAR_CHANGE_KINDS, WEEKDAYS, PhoneError, PhoneStore, alarm_summary,
                           clean_text, parse_day, parse_time, shares)
@@ -149,7 +149,7 @@ PHONE_SCHEMA: dict[str, Any] = {
         "the phone applies (the user approves it there unless they let Hermes add without asking), so never say "
         "it's set until pending shows it applied. Set them when the user asks (\"wake me at 6:30\", \"timer for "
         "the pasta\") or for something they set up, never on your own initiative. pending: recent changes and how "
-        "they went."
+        f"they went. {PHONE_FIRST}"
     ),
     "parameters": {
         "type": "object",
