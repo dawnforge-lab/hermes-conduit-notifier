@@ -28,9 +28,10 @@ _clarify_loop_active = False
 _turn_started: dict[str, float] = {}
 _turn_started_lock = threading.Lock()
 MAX_TURN_STARTS = 256
-# turn_id -> (session id, its "response ready" event or None, whether it goes
-# out), held from post_llm_call until on_session_end says the turn finished.
-_pending_ready: dict[str, tuple[str, Any, bool]] = {}
+# (session id, turn_id) -> (its "response ready" event or None, whether it
+# goes out, the grace timer), held from post_llm_call until on_session_end
+# says the turn finished.
+_pending_ready: dict[tuple[str, str], tuple[Any, bool, Any]] = {}
 _pending_lock = threading.Lock()
 READY_GRACE_S = 30.0
 # Parent session -> (its running turn's id, when it started by
@@ -168,23 +169,32 @@ def _post_llm_call(**kwargs: Any) -> None:
     if not isinstance(turn_id, str) or not turn_id:
         _finish_ready(session_id, ready, send)
         return
-    with _pending_lock:
-        _pending_ready[turn_id] = (session_id, ready, send)
-        while len(_pending_ready) > MAX_TURN_STARTS:
-            _pending_ready.pop(next(iter(_pending_ready)))
+    key = (session_id, turn_id)
     # A Hermes that never reports the turn's end still gets its reply out.
-    _later(READY_GRACE_S, lambda: _settle_ready(turn_id, "done"))
+    timer = _later(READY_GRACE_S, lambda: _settle_ready(session_id, turn_id, "done"))
+    with _pending_lock:
+        _pending_ready[key] = (ready, send, timer)
+        overflow = []
+        while len(_pending_ready) > MAX_TURN_STARTS:
+            oldest = next(iter(_pending_ready))
+            overflow.append((oldest[0], _pending_ready.pop(oldest)))
+    # Far more turns than ever end at once: the oldest go out now.
+    for old_session, (old_ready, old_send, old_timer) in overflow:
+        _cancel(old_timer)
+        _finish_ready(old_session, old_ready, old_send)
 
 
-def _settle_ready(turn_id: Any, outcome: str) -> bool:
-    """Sends (``done``) or drops the reply held for ``turn_id``; False when
+def _settle_ready(session_id: str, turn_id: Any, outcome: str) -> bool:
+    """Sends (``done``) or drops the reply held for this turn; False when
     none was held (already settled, or never held)."""
     with _pending_lock:
-        pending = _pending_ready.pop(turn_id, None) if isinstance(turn_id, str) else None
+        pending = _pending_ready.pop((session_id, turn_id), None) if isinstance(turn_id, str) else None
     if pending is None:
         return False
+    ready, send, timer = pending
+    _cancel(timer)
     if outcome == "done":
-        _finish_ready(*pending)
+        _finish_ready(session_id, ready, send)
     return True
 
 
@@ -197,10 +207,17 @@ def _finish_ready(session_id: str, ready: dict[str, Any] | None, send: bool) -> 
         enqueue(ready)
 
 
-def _later(delay: float, work: Any) -> None:
+def _later(delay: float, work: Any) -> Any:
     timer = threading.Timer(delay, work)
     timer.daemon = True
     timer.start()
+    return timer
+
+
+def _cancel(timer: Any) -> None:
+    cancel = getattr(timer, "cancel", None)
+    if callable(cancel):
+        cancel()
 
 
 def _take_turn_start(turn_id: Any) -> float | None:
@@ -243,10 +260,10 @@ def _on_session_end(**kwargs: Any) -> None:
     _quietly(live_activity.reporter.turn_ended, session_id,
              "done" if answered else "stopped" if kwargs.get("interrupted") else "failed")
     if answered:
-        if not _settle_ready(kwargs.get("turn_id"), "done"):
+        if not _settle_ready(session_id, kwargs.get("turn_id"), "done"):
             calls.turn_ended(session_id, "done", profile=_profile, fallback=None)
         return
-    _settle_ready(kwargs.get("turn_id"), "dropped")
+    _settle_ready(session_id, kwargs.get("turn_id"), "dropped")
     if kwargs.get("interrupted"):
         calls.turn_ended(session_id, "stopped", profile=_profile, fallback=None)
         return
@@ -449,13 +466,17 @@ def _end_parent_turn(session_id: str) -> None:
 
 
 def _inside_parent_turn(session_id: str, turn_id: Any) -> bool:
-    """Whether the turn ``turn_id`` of ``session_id`` (or, unnamed, any) runs
-    now. One whose end was never reported stops counting after a while."""
+    """Whether the turn ``turn_id`` of ``session_id`` runs now. Unnamed on
+    either side counts as not (the task notifies); one whose end was never
+    reported stops counting after a while."""
+    if not isinstance(turn_id, str) or not turn_id:
+        return False
     with _parent_turns_lock:
         running = _parent_turns.get(session_id)
-    if running is None or time.monotonic() - running[1] >= PARENT_TURN_MAX_S:
-        return False
-    return not turn_id or not running[0] or turn_id == running[0]
+        if running is not None and time.monotonic() - running[1] >= PARENT_TURN_MAX_S:
+            _parent_turns.pop(session_id, None)
+            running = None
+    return running is not None and turn_id == running[0]
 
 
 def _voice_persona_note(history: Any) -> str | None:

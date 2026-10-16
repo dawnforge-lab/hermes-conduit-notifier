@@ -110,6 +110,36 @@ def test_a_reply_whose_turn_end_never_comes_goes_out_after_the_grace(pushed, mon
     assert _types(pushed) == ["response.ready"]
 
 
+def test_held_replies_are_per_chat(pushed):
+    plugin._post_llm_call(session_id="a", turn_id="t", assistant_response="For A.")
+    plugin._post_llm_call(session_id="b", turn_id="t", assistant_response="For B.")
+    plugin._on_session_end(session_id="b", turn_id="t", completed=False, failed=True, interrupted=False)
+    plugin._on_session_end(session_id="a", turn_id="t", completed=True, failed=False, interrupted=False)
+    assert [(event["type"], event.get("body")) for event in pushed] == [
+        ("turn.failed", None), ("response.ready", "For A.")]
+
+
+def test_the_grace_timer_stops_once_the_turn_ends(pushed, monkeypatch):
+    class Timer:
+        cancelled = False
+
+        def cancel(self):
+            self.cancelled = True
+
+    timer = Timer()
+    monkeypatch.setattr(plugin, "_later", lambda delay, work: timer)
+    plugin._post_llm_call(session_id="s", turn_id="t", assistant_response="Done.")
+    plugin._on_session_end(session_id="s", turn_id="t", completed=True, failed=False, interrupted=False)
+    assert timer.cancelled
+
+
+def test_too_many_held_replies_send_the_oldest(pushed, monkeypatch):
+    monkeypatch.setattr(plugin, "MAX_TURN_STARTS", 2)
+    for turn in ("t1", "t2", "t3"):
+        plugin._post_llm_call(session_id="s", turn_id=turn, assistant_response=turn)
+    assert [event["body"] for event in pushed] == ["t1"]
+
+
 def test_a_turn_without_an_id_pushes_at_once(pushed):
     plugin._post_llm_call(session_id="s", assistant_response="Done.")
     assert _types(pushed) == ["response.ready"]
@@ -142,6 +172,12 @@ def test_a_background_task_that_outlives_its_turn_notifies(pushed):
     pushed.clear()
     plugin._pre_llm_call(session_id="p", turn_id="t2")
     _subagent(child="c3")
+    assert _types(pushed) == ["background_task.finished"]
+
+
+def test_a_subagent_without_a_parent_turn_id_notifies(pushed):
+    plugin._pre_llm_call(session_id="p", turn_id="t")
+    _subagent(parent_turn="")
     assert _types(pushed) == ["background_task.finished"]
 
 

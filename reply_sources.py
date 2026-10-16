@@ -99,16 +99,23 @@ class ReplySourcesStore:
         self.path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
         temporary = self.path.with_name(f".{self.path.name}.{os.getpid()}.{threading.get_ident()}.tmp")
         descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-        with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
-            handle.write(json.dumps(state, separators=(",", ":")) + "\n")
-        temporary.replace(self.path)
+        try:
+            with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+                handle.write(json.dumps(state, separators=(",", ":")) + "\n")
+            temporary.replace(self.path)
+        except BaseException:
+            try:
+                temporary.unlink()
+            except OSError:
+                pass
+            raise
 
 
 def turn_source(platform: Any, transport: Any = None) -> str | None:
     """Where the message this turn answers was sent, or None when unknown."""
     if getattr(transport, "conduit_client", None) == "conduit":
         return "conduit"
-    if transport is not None and type(transport).__name__ == "WSTransport":
+    if _is_app_socket(transport):
         headers = _headers(transport)
         if headers is None:
             return None
@@ -121,6 +128,17 @@ def turn_source(platform: Any, transport: Any = None) -> str | None:
     if name == "cli":
         return "terminal"
     return "messaging" if _is_messaging(name) else None
+
+
+def _is_app_socket(transport: Any) -> bool:
+    """Hermes' WSTransport: an instance of the gateway's class when it is
+    loaded, or a class of that name (a socket opened before a reload)."""
+    if transport is None:
+        return False
+    socket_type = getattr(sys.modules.get("tui_gateway.ws"), "WSTransport", None)
+    if isinstance(socket_type, type) and isinstance(transport, socket_type):
+        return True
+    return type(transport).__name__ == "WSTransport"
 
 
 def current_transport() -> Any:
