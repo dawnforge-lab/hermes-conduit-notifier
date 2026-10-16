@@ -80,7 +80,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple, TypeVar
 
-from fastapi import APIRouter, HTTPException, Request, Response, WebSocket
+from fastapi import APIRouter, HTTPException, Query, Request, Response, WebSocket
 
 logger = logging.getLogger(__name__)
 
@@ -9653,11 +9653,14 @@ async def post_room_file(request: Request, response: Response, profile: Optional
 # GET /artifacts lists what a profile's chats produced (artifacts_index.py
 # beside this folder): files Hermes sent or wrote, the HTML pages it drew,
 # files the user attached and links, newest first. Conduit's Artifacts screen
-# reads every chat (no session_id) and a chat's own sheet reads one. Paged by
+# reads every chat (no session_id) and a chat's own sheet reads one (each id
+# it's known by as a session_id, with the sessions it continues). Paged by
 # message id: pass the previous page's next_before as before.
 
 ARTIFACTS_LIMIT = 60
 ARTIFACTS_WINDOW_S = 60.0
+# The ids one chat is known by (its runtime and stored ids).
+ARTIFACTS_MAX_SESSIONS = 16
 _artifacts_limiter = _MintLimiter(ARTIFACTS_LIMIT, ARTIFACTS_WINDOW_S,
                                   message="Too many artifact requests; try again shortly")
 _artifacts_executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="conduit-artifacts")
@@ -9680,7 +9683,7 @@ def _artifacts_index() -> Any:
         return _artifacts_module
 
 
-def list_artifacts(before: Optional[int] = None, session_id: Optional[str] = None,
+def list_artifacts(before: Optional[int] = None, session_ids: Optional[List[str]] = None,
                    kind: Optional[str] = None, q: str = "", limit: Optional[int] = None) -> Dict[str, Any]:
     """One page of the profile's artifacts (called inside the profile scope)."""
     from hermes_constants import get_hermes_home
@@ -9693,7 +9696,8 @@ def list_artifacts(before: Optional[int] = None, session_id: Optional[str] = Non
     except FileNotFoundError:
         return {"items": [], "next_before": None}
     try:
-        return index.list_artifacts(conn, before=before, session_id=session_id or None, group=kind or None,
+        ids = [sid.strip() for sid in session_ids or [] if sid and sid.strip()][:ARTIFACTS_MAX_SESSIONS]
+        return index.list_artifacts(conn, before=before, session_ids=ids, group=kind or None,
                                     query=q or "", limit=limit or index.DEFAULT_LIMIT)
     finally:
         conn.close()
@@ -9701,8 +9705,8 @@ def list_artifacts(before: Optional[int] = None, session_id: Optional[str] = Non
 
 @router.get("/artifacts")
 async def get_artifacts(response: Response, profile: Optional[str] = None, before: Optional[int] = None,
-                        session_id: Optional[str] = None, kind: Optional[str] = None, q: Optional[str] = None,
-                        limit: Optional[int] = None) -> Dict[str, Any]:
+                        session_id: Optional[List[str]] = Query(None), kind: Optional[str] = None,
+                        q: Optional[str] = None, limit: Optional[int] = None) -> Dict[str, Any]:
     response.headers["Cache-Control"] = "no-store"
     try:
         _artifacts_limiter.acquire(_limiter_key(profile))

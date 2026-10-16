@@ -28,13 +28,14 @@ _api_spec.loader.exec_module(api)
 def _db(home: pathlib.Path, rows, sessions=None, hidden_column=True):
     home.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(home / "state.db")
-    hidden = ", hidden INTEGER NOT NULL DEFAULT 0" if hidden_column else ""
+    hidden = ", hidden INTEGER NOT NULL DEFAULT 0, parent_session_id TEXT" if hidden_column else ""
     conn.execute(f"CREATE TABLE sessions (id TEXT PRIMARY KEY, title TEXT{hidden})")
     conn.execute("CREATE TABLE messages (id INTEGER PRIMARY KEY AUTOINCREMENT, session_id TEXT, role TEXT,"
                  " content TEXT, tool_calls TEXT, tool_name TEXT, timestamp REAL)")
     for sid, title, *rest in sessions or [("s1", "Weekend trip")]:
         if hidden_column:
-            conn.execute("INSERT INTO sessions VALUES (?, ?, ?)", (sid, title, rest[0] if rest else 0))
+            conn.execute("INSERT INTO sessions VALUES (?, ?, ?, ?)",
+                         (sid, title, rest[0] if rest else 0, rest[1] if len(rest) > 1 else None))
         else:
             conn.execute("INSERT INTO sessions VALUES (?, ?)", (sid, title))
     for number, row in enumerate(rows, start=1):
@@ -142,6 +143,31 @@ def test_one_chat_kind_and_search_filters(tmp_path, monkeypatch):
     assert [i["name"] for i in _list(conn, query="budget REVIEW")["items"]] == ["budget.xlsx"]
 
 
+def test_one_chat_includes_the_sessions_it_continues_and_spawned(tmp_path, monkeypatch):
+    _no_gateway(monkeypatch)
+    conn = _db(tmp_path, [
+        ("root", "assistant", "MEDIA:/root/before-compression.png"),
+        ("tip", "assistant", "MEDIA:/root/after-compression.png"),
+        ("sub", "tool", json.dumps({"file_path": "/root/sub.pdf"}), None, "export_report"),
+        ("other", "assistant", "MEDIA:/root/elsewhere.png"),
+    ], sessions=[("root", "Trip", 0, None), ("tip", None, 0, "root"), ("sub", "", 0, "tip"),
+                 ("other", "Other", 0, None)])
+    for asked in ("root", "tip", "sub"):
+        names = [i["name"] for i in _list(conn, session_ids=[asked])["items"]]
+        assert names == ["sub.pdf", "after-compression.png", "before-compression.png"], asked
+    titles = {i["name"]: i["session_title"] for i in _list(conn)["items"]}
+    assert titles["after-compression.png"] == "Trip" and titles["sub.pdf"] == "Trip"
+    assert titles["elsewhere.png"] == "Other"
+
+
+def test_a_parent_loop_ends(tmp_path, monkeypatch):
+    _no_gateway(monkeypatch)
+    conn = _db(tmp_path, [("a", "assistant", "MEDIA:/root/a.png")],
+               sessions=[("a", "", 0, "b"), ("b", "", 0, "a")])
+    assert sorted(index.lineage(conn, ["a"])) == ["a", "b"]
+    assert _list(conn, session_ids=["a"])["items"][0]["session_title"] == ""
+
+
 def test_hidden_chats_are_left_out_and_older_stores_still_read(tmp_path, monkeypatch):
     _no_gateway(monkeypatch)
     conn = _db(tmp_path / "a", [("s1", "assistant", "MEDIA:/root/a.png"), ("s2", "assistant", "MEDIA:/root/b.png")],
@@ -180,6 +206,9 @@ def test_the_route_reads_the_profile_store(tmp_path, monkeypatch):
     body = client.get(f"{BASE}/artifacts").json()
     assert body["ok"] is True and body["items"][0]["name"] == "map.png" and body["next_before"] is None
     assert client.get(f"{BASE}/artifacts?kind=bogus").status_code == 400
+    one = client.get(f"{BASE}/artifacts?session_id=gone&session_id=s1").json()
+    assert [i["name"] for i in one["items"]] == ["map.png"]
+    assert client.get(f"{BASE}/artifacts?session_id=gone").json()["items"] == []
 
 
 def test_a_profile_without_a_store_has_no_artifacts(tmp_path, monkeypatch):

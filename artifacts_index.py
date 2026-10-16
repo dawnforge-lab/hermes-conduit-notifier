@@ -248,13 +248,13 @@ def row_items(role: str, content: Any, tool_calls: Any, tool_name: Any) -> list:
     return []
 
 
-def _describe(source: str, kind: str, target: str, label: str, row: sqlite3.Row,
+def _describe(source: str, kind: str, target: str, label: str, row: sqlite3.Row, title: str,
               stat: Callable[[str], Optional[int]]) -> Optional[dict]:
     item: dict = {
         "kind": kind,
         "source": source,
         "session_id": str(row["session_id"]),
-        "session_title": _clip(row["title"], MAX_TITLE_CHARS),
+        "session_title": _clip(title, MAX_TITLE_CHARS),
         "message_id": int(row["id"]),
         "timestamp": float(row["timestamp"] or 0),
     }
@@ -326,8 +326,74 @@ def open_db(home: Any) -> sqlite3.Connection:
     return conn
 
 
+MAX_LINEAGE = 256
+MAX_TITLE_HOPS = 16
+
+
+def lineage(conn: sqlite3.Connection, session_ids: Iterable[str]) -> list:
+    """The chats' sessions with the ones they continue from and the ones
+    that continue them (a compression's continuation, a subagent's run),
+    since Hermes keeps one chat's history across them."""
+    found = [sid for sid in dict.fromkeys(str(s) for s in session_ids if s)][:MAX_LINEAGE]
+    if not found or "parent_session_id" not in _columns(conn, "sessions"):
+        return found
+    known = set(found)
+    roots = []
+    for sid in found:
+        current, chain = sid, {sid}
+        while len(chain) < MAX_LINEAGE:
+            row = conn.execute("SELECT parent_session_id FROM sessions WHERE id = ?", (current,)).fetchone()
+            parent = str(row[0]) if row and row[0] else ""
+            if not parent or parent in chain:
+                break
+            current = parent
+            chain.add(current)
+            known.add(current)
+        roots.append(current)
+    frontier = list(dict.fromkeys(roots))
+    expanded: set = set()
+    while frontier and len(known) < MAX_LINEAGE:
+        expanded.update(frontier)
+        marks = ",".join("?" * len(frontier))
+        children = [str(r[0]) for r in conn.execute(
+            f"SELECT id FROM sessions WHERE parent_session_id IN ({marks})", frontier)]
+        frontier = [c for c in dict.fromkeys(children) if c not in expanded]
+        room = MAX_LINEAGE - len(known)
+        frontier = [c for c in frontier if c in known] + [c for c in frontier if c not in known][:room]
+        known.update(frontier)
+    return list(known)
+
+
+def _titles(conn: sqlite3.Connection, has_parent: bool) -> Callable[[str, Any], str]:
+    """A session's title, else the nearest titled session it continues."""
+    cache: dict = {}
+
+    def title(session_id: str, own: Any) -> str:
+        if isinstance(own, str) and own.strip():
+            return own
+        if not has_parent:
+            return ""
+        if session_id in cache:
+            return cache[session_id]
+        found, current = "", session_id
+        for _ in range(MAX_TITLE_HOPS):
+            row = conn.execute("SELECT parent_session_id FROM sessions WHERE id = ?", (current,)).fetchone()
+            if not row or not row[0]:
+                break
+            current = str(row[0])
+            parent = conn.execute("SELECT title FROM sessions WHERE id = ?", (current,)).fetchone()
+            if parent and isinstance(parent[0], str) and parent[0].strip():
+                found = parent[0]
+                break
+        cache[session_id] = found
+        return found
+
+    return title
+
+
 def list_artifacts(conn: sqlite3.Connection, *, before: Optional[int] = None,
-                   session_id: Optional[str] = None, group: Optional[str] = None,
+                   session_id: Optional[str] = None, session_ids: Iterable[str] = (),
+                   group: Optional[str] = None,
                    query: str = "", limit: int = DEFAULT_LIMIT,
                    stat: Callable[[str], Optional[int]] = _file_size,
                    window_rows: int = WINDOW_ROWS, max_scan_rows: int = MAX_SCAN_ROWS) -> dict:
@@ -349,9 +415,12 @@ def list_artifacts(conn: sqlite3.Connection, *, before: Optional[int] = None,
            "FROM messages m LEFT JOIN sessions s ON s.id = m.session_id "
            f"WHERE m.id >= ? AND m.id < ?{hidden} AND {_candidate_sql(message_columns)}")
     params_tail: list = []
-    if session_id:
-        sql += " AND m.session_id = ?"
-        params_tail.append(session_id)
+    wanted = [*([session_id] if session_id else []), *session_ids]
+    if wanted:
+        chat = lineage(conn, wanted)
+        sql += f" AND m.session_id IN ({','.join('?' * len(chat))})"
+        params_tail.extend(chat)
+    title_for = _titles(conn, "parent_session_id" in session_columns and "title" in session_columns)
     sql += " ORDER BY m.id DESC"
 
     bounds = conn.execute("SELECT MIN(id), MAX(id) FROM messages").fetchone()
@@ -373,7 +442,8 @@ def list_artifacts(conn: sqlite3.Connection, *, before: Optional[int] = None,
                 if key in seen:
                     continue
                 seen.add(key)
-                item = _describe(source, kind, target, label, row, stat)
+                item = _describe(source, kind, target, label, row,
+                                 title_for(str(row["session_id"]), row["title"]), stat)
                 if item is not None and _matches(item, kinds, query):
                     items.append(item)
             if len(items) >= limit:
