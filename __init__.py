@@ -435,11 +435,11 @@ def _pre_llm_call(**kwargs: Any) -> dict[str, str] | None:
     since the last turn of this chat (#449), the voice persona hint, and
     which of the user's data Conduit shares here, to use before other routes."""
     session_id = _text(kwargs.get("session_id"))
-    if not _is_child(session_id):
+    child = _is_child(session_id)
+    if not child:
         _note_turn_start(kwargs.get("turn_id"))
         _start_parent_turn(session_id, kwargs.get("turn_id"))
         _quietly(live_activity.reporter.turn_started, session_id)
-    child = _is_child(session_id)
     notes = [
         None if child else calls.outcome_note(session_id),
         _voice_persona_note(kwargs.get("conversation_history")),

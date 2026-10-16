@@ -58,6 +58,8 @@ def _shared() -> list[str]:
 
 
 def _join(items: list[str]) -> str:
+    if not items:
+        return ""
     return items[0] if len(items) == 1 else ", ".join(items[:-1]) + " and " + items[-1]
 
 
