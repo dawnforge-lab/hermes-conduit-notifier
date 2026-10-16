@@ -9675,6 +9675,9 @@ _room_image_limiter = _MintLimiter(ROOM_IMAGE_LIMIT, ROOM_IMAGE_WINDOW_S,
                                    message="Too many picture changes; try again shortly")
 _ROOM_IMAGE_ID = re.compile(r"^[A-Za-z0-9._:-]{1,200}$")
 _room_image_lock = threading.Lock()
+# Writes wait on one another (the lock above), so they get their own threads
+# rather than the default pool other routes share.
+_room_image_executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="conduit-room-images")
 
 
 def _room_images_root() -> str:
@@ -9706,7 +9709,8 @@ def _read_no_follow(path: str, limit: int) -> Optional[bytes]:
     (where the platform has O_NOFOLLOW); None when missing, larger, or not
     a plain file."""
     try:
-        fd = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+        # Non-blocking, so a FIFO planted in its place can't hang the read.
+        fd = os.open(path, os.O_RDONLY | os.O_NONBLOCK | getattr(os, "O_NOFOLLOW", 0))
     except OSError:
         return None
     with os.fdopen(fd, "rb") as handle:
@@ -9913,7 +9917,7 @@ async def put_room_image(room_id: str, request: Request, response: Response) -> 
     try:
         body = await _read_json_body(request, ROOM_IMAGE_MAX_BODY_BYTES)
         stored = await asyncio.get_running_loop().run_in_executor(
-            None, lambda: store_room_image(_room_images_root(), room_id, body))
+            _room_image_executor, lambda: store_room_image(_room_images_root(), room_id, body))
     except HTTPException as exc:
         if exc.status_code < 500 or exc.status_code == 507:
             _room_image_limiter.release("", mint)
