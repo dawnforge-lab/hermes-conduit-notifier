@@ -230,7 +230,7 @@ def test_a_links_host_leaves_out_credentials(tmp_path, monkeypatch):
     conn = _db(tmp_path, [("s1", "assistant", "See https://user:secret@Example.com/")])
     item = _list(conn)["items"][0]
     assert item["host"] == "example.com" and item["name"] == "example.com"
-    assert "secret" not in item["name"]
+    assert "secret" not in item["name"] and item["url"] == "https://Example.com/"
 
 
 def test_the_route_turns_a_request_away_while_both_reads_run(tmp_path, monkeypatch):
@@ -260,3 +260,17 @@ def test_one_lineage_budget_covers_every_chain(tmp_path, monkeypatch):
     sessions = [(f"a{n}", "", 0, f"a{n + 1}" if n < 299 else None) for n in range(300)]
     conn = _db(tmp_path, [("a0", "assistant", "MEDIA:/root/a.png")], sessions=sessions)
     assert len(index.lineage(conn, ["a0", "a5"])) <= index.MAX_LINEAGE
+
+
+def test_unusable_chat_ids_list_nothing(tmp_path, monkeypatch):
+    _no_gateway(monkeypatch)
+    _db(tmp_path, [("s1", "assistant", "MEDIA:/root/map.png")]).close()
+    monkeypatch.setattr(sys.modules["hermes_constants"], "get_hermes_home", lambda: tmp_path)
+    monkeypatch.setattr(api, "_artifacts_index", lambda: index)
+    assert api.list_artifacts(session_ids=["x" * 500, "  "]) == {"items": [], "next_before": None}
+
+
+def test_a_file_reference_in_a_code_block_is_not_an_attachment(tmp_path, monkeypatch):
+    _no_gateway(monkeypatch)
+    conn = _db(tmp_path, [("s1", "user", "Use it like:\n```\n@file:/root/example.txt\n```\n")])
+    assert _list(conn)["items"] == []

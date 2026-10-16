@@ -188,7 +188,8 @@ def assistant_items(text: str) -> Iterable[tuple]:
 def user_items(text: str) -> Iterable[tuple]:
     if not text or "@file:" not in text:
         return
-    for match in _FILE_REF_RE.finditer(text[:MAX_SCAN_CHARS]):
+    # A reference shown in a code block is an example, not an attachment.
+    for match in _FILE_REF_RE.finditer(_prose(text[:MAX_SCAN_CHARS])):
         path = _unquote(match.group("path"))
         if _is_local_path(path):
             yield ("attached", kind_for(path), path, "")
@@ -269,7 +270,8 @@ def _describe(source: str, kind: str, target: str, label: str, row: sqlite3.Row,
             host = ""
         if parsed.scheme not in ("http", "https") or not host:
             return None
-        item["url"] = target
+        # Never a URL's user:password@.
+        item["url"] = parsed._replace(netloc=parsed.netloc.rpartition("@")[2]).geturl() if "@" in parsed.netloc else target
         # The host alone, never a URL's user:password@.
         item["name"] = _clip(label or host + (parsed.path if parsed.path not in ("", "/") else ""),
                              MAX_NAME_CHARS)

@@ -9704,6 +9704,10 @@ def list_artifacts(before: Optional[int] = None, session_ids: Optional[List[str]
     try:
         ids = [sid.strip() for sid in session_ids or []
                if sid and sid.strip() and len(sid) <= ARTIFACTS_MAX_ID_LENGTH][:ARTIFACTS_MAX_SESSIONS]
+        if session_ids and not ids:
+            # A chat asked for by ids none of which can name one: never
+            # every chat instead.
+            return {"items": [], "next_before": None}
         return index.list_artifacts(conn, before=before, session_ids=ids, group=kind or None,
                                     query=q or "", limit=index.DEFAULT_LIMIT if limit is None else limit)
     finally:
