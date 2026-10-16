@@ -540,6 +540,7 @@ _IMAGE = re.compile(r"!\[([^\]]*)\]\([^)]*\)")
 _LINK = re.compile(r"\[([^\]]+)\]\([^)]*\)")
 _STRONG = re.compile(r"(\*\*|__)(?=\S)(.+?)(?<=\S)\1")
 _EMPHASIS = re.compile(r"(?<![\w*])\*(?=\S)([^*]+?)(?<=\S)\*(?![\w*])")
+_UNDERSCORE_EMPHASIS = re.compile(r"(?<![\w_])_(?=\S)([^_]+?)(?<=\S)_(?![\w_])")
 _STRIKE = re.compile(r"~~(?=\S)(.+?)(?<=\S)~~")
 
 
@@ -558,14 +559,16 @@ def plain_text(value: Any) -> str:
         if fenced:
             lines.append(line)
             continue
+        line = _QUOTE.sub("", line)
         if _RULE.match(line) or _TABLE_RULE.match(line):
             continue
-        line = _QUOTE.sub("", _HEADING.sub("", line))
+        line = _HEADING.sub("", line)
         line = _BULLET.sub(r"\1• ", line)
         if line.lstrip().startswith("|"):
             line = " · ".join(cell.strip() for cell in line.strip().strip("|").split("|") if cell.strip())
         line = _LINK.sub(r"\1", _IMAGE.sub(r"\1", line))
-        line = _STRIKE.sub(r"\1", _EMPHASIS.sub(r"\1", _STRONG.sub(r"\2", line)))
+        line = _STRONG.sub(r"\2", line)
+        line = _STRIKE.sub(r"\1", _UNDERSCORE_EMPHASIS.sub(r"\1", _EMPHASIS.sub(r"\1", line)))
         lines.append(line.replace("`", ""))
     return "\n".join(lines).strip()
 

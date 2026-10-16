@@ -140,8 +140,8 @@ def test_hermes_platform_list_decides_messaging_when_it_has_one(monkeypatch):
     monkeypatch.setitem(sys.modules, "gateway.config", config)
     assert sources.turn_source("buzz", None) == "messaging"
     assert sources.turn_source("telegram", None) == "messaging"
-    # Not a Hermes platform there, though the plugin's own list has it.
-    assert sources.turn_source("slack", None) == "messaging"
+    # Not a platform this Hermes has, though the plugin's own list has it.
+    assert sources.turn_source("slack", None) is None
     assert sources.turn_source("webui", None) is None
     assert sources.turn_source("local", None) is None
 

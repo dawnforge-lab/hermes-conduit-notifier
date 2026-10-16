@@ -175,11 +175,14 @@ def _post_llm_call(**kwargs: Any) -> None:
     # A Hermes that never reports the turn's end still gets its reply out.
     timer = _later(READY_GRACE_S, lambda: _settle_ready(session_id, turn_id, "done"))
     with _pending_lock:
+        earlier = _pending_ready.pop(key, None)
         _pending_ready[key] = (ready, send, timer)
         overflow = []
         while len(_pending_ready) > MAX_TURN_STARTS:
             oldest = next(iter(_pending_ready))
             overflow.append((oldest[0], _pending_ready.pop(oldest)))
+    if earlier is not None:
+        _cancel(earlier[2])  # the same turn reported twice: the last reply wins
     # Far more turns than ever end at once: the oldest go out now.
     for old_session, (old_ready, old_send, old_timer) in overflow:
         _cancel(old_timer)
@@ -190,14 +193,18 @@ def _settle_ready(session_id: str, turn_id: Any, outcome: str) -> bool:
     """Sends (``done``) or drops the reply held for this turn; False when
     none was held (already settled, or never held)."""
     with _pending_lock:
-        pending = _pending_ready.pop((session_id, turn_id), None) if isinstance(turn_id, str) else None
-    if pending is None:
-        return False
-    ready, send, timer = pending
-    _cancel(timer)
-    if outcome == "done":
-        _finish_ready(session_id, ready, send)
-    return True
+        if isinstance(turn_id, str) and turn_id:
+            found = [_pending_ready.pop((session_id, turn_id), None)]
+        else:
+            # An end without its turn's id: a chat's turns run one at a
+            # time, so whatever it holds is that turn's.
+            found = [_pending_ready.pop(key) for key in [key for key in _pending_ready if key[0] == session_id]]
+    found = [pending for pending in found if pending is not None]
+    for ready, send, timer in found:
+        _cancel(timer)
+        if outcome == "done":
+            _finish_ready(session_id, ready, send)
+    return bool(found)
 
 
 def _finish_ready(session_id: str, ready: dict[str, Any] | None, send: bool) -> None:
@@ -258,7 +265,8 @@ def _on_session_end(**kwargs: Any) -> None:
     # A turn Hermes doesn't call failed but that didn't complete (it hit the
     # step limit) still answered: its reply goes out, not a failure. A Hermes
     # that doesn't say counts it failed, as before.
-    answered = kwargs.get("completed") or (kwargs.get("failed") is False and not kwargs.get("interrupted"))
+    answered = (not kwargs.get("interrupted") and kwargs.get("failed") is not True
+                and (kwargs.get("completed") or kwargs.get("failed") is False))
     _quietly(live_activity.reporter.turn_ended, session_id,
              "done" if answered else "stopped" if kwargs.get("interrupted") else "failed")
     if answered:

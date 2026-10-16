@@ -101,7 +101,12 @@ class ReplySourcesStore:
         temporary = self.path.with_name(f".{self.path.name}.{os.getpid()}.{threading.get_ident()}.tmp")
         descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
         try:
-            with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+            try:
+                handle = os.fdopen(descriptor, "w", encoding="utf-8")
+            except BaseException:
+                os.close(descriptor)
+                raise
+            with handle:
                 handle.write(json.dumps(state, separators=(",", ":")) + "\n")
             temporary.replace(self.path)
         except BaseException:
@@ -161,10 +166,11 @@ def _is_messaging(name: str) -> bool:
     except Exception:  # noqa: BLE001 — an older or trimmed Hermes
         return name in _MESSAGING_FALLBACK
     try:
-        # Plugin platforms (Buzz, IRC…) resolve too; anything else raises.
+        # Plugin platforms (Buzz, IRC…) resolve too; anything else raises,
+        # and a name this Hermes doesn't know is unknown here too.
         return Platform(name) is not None
     except Exception:  # noqa: BLE001
-        return name in _MESSAGING_FALLBACK
+        return False
 
 
 def _headers(transport: Any) -> dict[str, Any] | None:

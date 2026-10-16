@@ -140,6 +140,29 @@ def test_too_many_held_replies_send_the_oldest(pushed, monkeypatch):
     assert [event["body"] for event in pushed] == ["t1"]
 
 
+def test_an_end_without_its_turn_id_settles_the_chats_held_reply(pushed):
+    plugin._post_llm_call(session_id="s", turn_id="t", assistant_response="Error text.")
+    plugin._on_session_end(session_id="s", completed=False, failed=True, interrupted=False)
+    assert _types(pushed) == ["turn.failed"]
+    assert plugin._pending_ready == {}
+
+
+def test_a_turn_reported_twice_keeps_one_timer(pushed, monkeypatch):
+    class Timer:
+        cancelled = False
+
+        def cancel(self):
+            self.cancelled = True
+
+    timers = []
+    monkeypatch.setattr(plugin, "_later", lambda delay, work: timers.append(Timer()) or timers[-1])
+    plugin._post_llm_call(session_id="s", turn_id="t", assistant_response="First.")
+    plugin._post_llm_call(session_id="s", turn_id="t", assistant_response="Second.")
+    assert timers[0].cancelled and not timers[1].cancelled
+    plugin._on_session_end(session_id="s", turn_id="t", completed=True, failed=False, interrupted=False)
+    assert [event["body"] for event in pushed] == ["Second."]
+
+
 def test_a_turn_without_an_id_pushes_at_once(pushed):
     plugin._post_llm_call(session_id="s", assistant_response="Done.")
     assert _types(pushed) == ["response.ready"]
@@ -194,7 +217,8 @@ def test_a_nested_subagent_sends_nothing(pushed):
     ("## Done\n\n- [x] one\n- two", "Done\n\n• one\n• two"),
     ("| a | b |\n|---|---|\n| 1 | 2 |", "a · b\n1 · 2"),
     ("```python\nprint(1)\n```", "print(1)"),
-    ("> quoted ~~old~~ `code`\n---", "quoted old code"),
+    ("> quoted ~~old~~ `code`\n---\n> ---", "quoted old code"),
+    ("_em_ and snake_case_name", "em and snake_case_name"),
     ("2 * 3 * 4 = 24 in file_name_here", "2 * 3 * 4 = 24 in file_name_here"),
     ("![chart](a.png) *nice*", "chart nice"),
     (None, ""),
