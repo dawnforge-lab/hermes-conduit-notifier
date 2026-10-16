@@ -9648,6 +9648,77 @@ async def post_room_file(request: Request, response: Response, profile: Optional
     return {"ok": True, **stored}
 
 
+# --- Artifacts ---------------------------------------------------------------
+#
+# GET /artifacts lists what a profile's chats produced (artifacts_index.py
+# beside this folder): files Hermes sent or wrote, the HTML pages it drew,
+# files the user attached and links, newest first. Conduit's Artifacts screen
+# reads every chat (no session_id) and a chat's own sheet reads one. Paged by
+# message id: pass the previous page's next_before as before.
+
+ARTIFACTS_LIMIT = 60
+ARTIFACTS_WINDOW_S = 60.0
+_artifacts_limiter = _MintLimiter(ARTIFACTS_LIMIT, ARTIFACTS_WINDOW_S,
+                                  message="Too many artifact requests; try again shortly")
+_artifacts_executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="conduit-artifacts")
+_artifacts_module: Any = None
+_artifacts_module_lock = threading.Lock()
+
+
+def _artifacts_index() -> Any:
+    """artifacts_index.py beside this folder, loaded once."""
+    global _artifacts_module
+    with _artifacts_module_lock:
+        if _artifacts_module is None:
+            path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "artifacts_index.py")
+            spec = importlib.util.spec_from_file_location("conduit_push_dashboard_artifacts_index", path)
+            if spec is None or spec.loader is None or not os.path.isfile(path):
+                raise TokenError(501, "This plugin install is missing artifacts_index.py; update the plugin")
+            module = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(module)
+            _artifacts_module = module
+        return _artifacts_module
+
+
+def list_artifacts(before: Optional[int] = None, session_id: Optional[str] = None,
+                   kind: Optional[str] = None, q: str = "", limit: Optional[int] = None) -> Dict[str, Any]:
+    """One page of the profile's artifacts (called inside the profile scope)."""
+    from hermes_constants import get_hermes_home
+
+    index = _artifacts_index()
+    if kind and kind not in index.GROUPS:
+        raise TokenError(400, "kind must be images, pages, files or links")
+    try:
+        conn = index.open_db(get_hermes_home())
+    except FileNotFoundError:
+        return {"items": [], "next_before": None}
+    try:
+        return index.list_artifacts(conn, before=before, session_id=session_id or None, group=kind or None,
+                                    query=q or "", limit=limit or index.DEFAULT_LIMIT)
+    finally:
+        conn.close()
+
+
+@router.get("/artifacts")
+async def get_artifacts(response: Response, profile: Optional[str] = None, before: Optional[int] = None,
+                        session_id: Optional[str] = None, kind: Optional[str] = None, q: Optional[str] = None,
+                        limit: Optional[int] = None) -> Dict[str, Any]:
+    response.headers["Cache-Control"] = "no-store"
+    try:
+        _artifacts_limiter.acquire(_limiter_key(profile))
+        page = await _run_scoped(profile, lambda: list_artifacts(before, session_id, kind, q or "", limit),
+                                 _artifacts_executor)
+    except TokenError as exc:
+        raise HTTPException(status_code=exc.status, detail=str(exc), headers={"Cache-Control": "no-store"})
+    except sqlite3.Error as exc:
+        logger.warning("Conduit artifacts couldn't read the session store: %s", type(exc).__name__)
+        raise HTTPException(status_code=503, detail="Hermes' session store is busy; try again shortly",
+                            headers={"Cache-Control": "no-store"})
+    except Exception as exc:
+        raise _unexpected("list", exc, feature="Artifacts")
+    return {"ok": True, **page}
+
+
 # --- Capabilities ------------------------------------------------------------
 #
 # Conduit reads this once per connection to tell which of its features this
@@ -9692,6 +9763,7 @@ ROUTE_CAPABILITIES = (
     "reply-sources",
     "room-files",
     "speech-server",
+    "artifacts",
 )
 
 

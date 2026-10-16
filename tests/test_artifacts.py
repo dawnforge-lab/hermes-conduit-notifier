@@ -1,0 +1,188 @@
+import importlib.util
+import json
+import pathlib
+import sqlite3
+import sys
+import types
+
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
+
+ROOT = pathlib.Path(__file__).resolve().parents[1]
+BASE = "/api/plugins/conduit_push"
+
+if "hermes_constants" not in sys.modules:
+    _hermes_constants = types.ModuleType("hermes_constants")
+    _hermes_constants.get_hermes_home = lambda: pathlib.Path("/nonexistent-hermes-home")
+    sys.modules["hermes_constants"] = _hermes_constants
+
+_spec = importlib.util.spec_from_file_location("conduit_artifacts_index_test", ROOT / "artifacts_index.py")
+index = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(index)
+
+_api_spec = importlib.util.spec_from_file_location("conduit_plugin_api_artifacts", ROOT / "dashboard" / "plugin_api.py")
+api = importlib.util.module_from_spec(_api_spec)
+_api_spec.loader.exec_module(api)
+
+
+def _db(home: pathlib.Path, rows, sessions=None, hidden_column=True):
+    home.mkdir(parents=True, exist_ok=True)
+    conn = sqlite3.connect(home / "state.db")
+    hidden = ", hidden INTEGER NOT NULL DEFAULT 0" if hidden_column else ""
+    conn.execute(f"CREATE TABLE sessions (id TEXT PRIMARY KEY, title TEXT{hidden})")
+    conn.execute("CREATE TABLE messages (id INTEGER PRIMARY KEY AUTOINCREMENT, session_id TEXT, role TEXT,"
+                 " content TEXT, tool_calls TEXT, tool_name TEXT, timestamp REAL)")
+    for sid, title, *rest in sessions or [("s1", "Weekend trip")]:
+        if hidden_column:
+            conn.execute("INSERT INTO sessions VALUES (?, ?, ?)", (sid, title, rest[0] if rest else 0))
+        else:
+            conn.execute("INSERT INTO sessions VALUES (?, ?)", (sid, title))
+    for number, row in enumerate(rows, start=1):
+        session, role, content, *extra = row
+        tool_calls = extra[0] if extra else None
+        tool_name = extra[1] if len(extra) > 1 else None
+        conn.execute("INSERT INTO messages (session_id, role, content, tool_calls, tool_name, timestamp)"
+                     " VALUES (?, ?, ?, ?, ?, ?)", (session, role, content, tool_calls, tool_name, 1_760_000_000 + number))
+    conn.commit()
+    conn.close()
+    return index.open_db(home)
+
+
+def _list(conn, **kwargs):
+    kwargs.setdefault("stat", lambda path: None)
+    return index.list_artifacts(conn, **kwargs)
+
+
+def _no_gateway(monkeypatch):
+    # The plain tag reading, as on a host without Hermes' gateway module.
+    monkeypatch.setattr(index, "_extract_media", None)
+
+
+def test_each_source_is_listed_newest_first(tmp_path, monkeypatch):
+    _no_gateway(monkeypatch)
+    write = json.dumps([{"function": {"name": "write_file",
+                                      "arguments": json.dumps({"path": "/root/out/report.pdf", "content": "x"})}}])
+    conn = _db(tmp_path, [
+        ("s1", "user", "@file:/root/uploads/notes.txt\nplease read"),
+        ("s1", "assistant", "Here it is MEDIA:/root/out/map.png"),
+        ("s1", "assistant", "", write),
+        ("s1", "tool", json.dumps({"file_path": "/root/out/brief.mp3"}), None, "text_to_speech"),
+        ("s1", "assistant", 'Chart below\n::preview{file="/root/out/chart.html"}'),
+        ("s1", "assistant", "Book at [Curate](https://curate.example/reserve)."),
+    ])
+    items = _list(conn)["items"]
+    assert [(i["source"], i["kind"], i.get("path") or i.get("url")) for i in items] == [
+        ("link", "link", "https://curate.example/reserve"),
+        ("preview", "page", "/root/out/chart.html"),
+        ("written", "audio", "/root/out/brief.mp3"),
+        ("written", "document", "/root/out/report.pdf"),
+        ("delivered", "image", "/root/out/map.png"),
+        ("attached", "document", "/root/uploads/notes.txt"),
+    ]
+    assert items[0]["name"] == "Curate"
+    assert items[0]["host"] == "curate.example"
+    assert items[1]["session_title"] == "Weekend trip"
+    assert items[1]["name"] == "chart.html"
+    assert items[1]["exists"] is False
+
+
+def test_source_code_a_tool_writes_is_left_out(tmp_path, monkeypatch):
+    _no_gateway(monkeypatch)
+    calls = json.dumps([{"function": {"name": "write_file",
+                                      "arguments": json.dumps({"path": "/repo/app.py", "content": "x"})}}])
+    conn = _db(tmp_path, [("s1", "assistant", "", calls),
+                          ("s1", "tool", json.dumps({"path": "/repo/out.txt"}), None, "read_file")])
+    assert _list(conn)["items"] == []
+
+
+def test_a_path_mentioned_twice_is_listed_once_at_its_newest(tmp_path, monkeypatch):
+    _no_gateway(monkeypatch)
+    conn = _db(tmp_path, [("s1", "assistant", "MEDIA:/root/a.png"), ("s1", "assistant", "again MEDIA:/root/a.png")])
+    items = _list(conn)["items"]
+    assert len(items) == 1 and items[0]["message_id"] == 2
+
+
+def test_code_blocks_are_examples_not_deliveries(tmp_path, monkeypatch):
+    _no_gateway(monkeypatch)
+    conn = _db(tmp_path, [("s1", "assistant", "Use it like:\n```\nMEDIA:/tmp/example.png\n```\n")])
+    assert _list(conn)["items"] == []
+
+
+def test_pages_continue_where_the_last_stopped(tmp_path, monkeypatch):
+    _no_gateway(monkeypatch)
+    conn = _db(tmp_path, [("s1", "assistant", f"MEDIA:/root/{n}.png") for n in range(1, 8)])
+    first = _list(conn, limit=3)
+    assert [i["name"] for i in first["items"]] == ["7.png", "6.png", "5.png"]
+    second = _list(conn, limit=3, before=first["next_before"])
+    assert [i["name"] for i in second["items"]] == ["4.png", "3.png", "2.png"]
+    third = _list(conn, limit=3, before=second["next_before"])
+    assert [i["name"] for i in third["items"]] == ["1.png"]
+    assert third["next_before"] is None
+
+
+def test_a_request_reads_a_bounded_window(tmp_path, monkeypatch):
+    _no_gateway(monkeypatch)
+    rows = [("s1", "assistant", "MEDIA:/root/old.png")] + [("s1", "assistant", "nothing here")] * 20
+    conn = _db(tmp_path, rows)
+    page = _list(conn, window_rows=5, max_scan_rows=10)
+    assert page["items"] == [] and page["next_before"] == 12
+    rest = _list(conn, before=page["next_before"], window_rows=5, max_scan_rows=100)
+    assert [i["name"] for i in rest["items"]] == ["old.png"] and rest["next_before"] is None
+
+
+def test_one_chat_kind_and_search_filters(tmp_path, monkeypatch):
+    _no_gateway(monkeypatch)
+    conn = _db(tmp_path, [
+        ("s1", "assistant", "MEDIA:/root/map.png and MEDIA:/root/plan.pdf"),
+        ("s2", "assistant", "MEDIA:/root/budget.xlsx"),
+    ], sessions=[("s1", "Weekend trip"), ("s2", "Budget review")])
+    assert [i["name"] for i in _list(conn, session_id="s1")["items"]] == ["map.png", "plan.pdf"]
+    assert [i["name"] for i in _list(conn, group="images")["items"]] == ["map.png"]
+    assert [i["name"] for i in _list(conn, group="files")["items"]] == ["budget.xlsx", "plan.pdf"]
+    assert [i["name"] for i in _list(conn, query="budget REVIEW")["items"]] == ["budget.xlsx"]
+
+
+def test_hidden_chats_are_left_out_and_older_stores_still_read(tmp_path, monkeypatch):
+    _no_gateway(monkeypatch)
+    conn = _db(tmp_path / "a", [("s1", "assistant", "MEDIA:/root/a.png"), ("s2", "assistant", "MEDIA:/root/b.png")],
+               sessions=[("s1", "Shown", 0), ("s2", "Hidden", 1)])
+    assert [i["name"] for i in _list(conn)["items"]] == ["a.png"]
+    old = _db(tmp_path / "b", [("s1", "assistant", "MEDIA:/root/a.png")], hidden_column=False)
+    assert [i["name"] for i in _list(old)["items"]] == ["a.png"]
+
+
+def test_a_file_on_disk_reports_its_size(tmp_path, monkeypatch):
+    _no_gateway(monkeypatch)
+    target = tmp_path / "out" / "photo.jpg"
+    target.parent.mkdir()
+    target.write_bytes(b"12345")
+    conn = _db(tmp_path / "home", [("s1", "assistant", f"MEDIA:{target}")])
+    item = index.list_artifacts(conn)["items"][0]
+    assert item["exists"] is True and item["size"] == 5
+
+
+def test_links_need_a_web_address(tmp_path, monkeypatch):
+    _no_gateway(monkeypatch)
+    conn = _db(tmp_path, [("s1", "assistant", "See https://example.com/a, and ![chart](https://img.example/c.png)")])
+    items = _list(conn)["items"]
+    assert [(i["kind"], i["url"]) for i in items] == [
+        ("image", "https://img.example/c.png"), ("link", "https://example.com/a")]
+
+
+def test_the_route_reads_the_profile_store(tmp_path, monkeypatch):
+    _no_gateway(monkeypatch)
+    _db(tmp_path, [("s1", "assistant", "MEDIA:/root/map.png")]).close()
+    monkeypatch.setattr(sys.modules["hermes_constants"], "get_hermes_home", lambda: tmp_path)
+    monkeypatch.setattr(api, "_artifacts_index", lambda: index)
+    app = FastAPI()
+    app.include_router(api.router, prefix=BASE)
+    client = TestClient(app)
+    body = client.get(f"{BASE}/artifacts").json()
+    assert body["ok"] is True and body["items"][0]["name"] == "map.png" and body["next_before"] is None
+    assert client.get(f"{BASE}/artifacts?kind=bogus").status_code == 400
+
+
+def test_a_profile_without_a_store_has_no_artifacts(tmp_path, monkeypatch):
+    monkeypatch.setattr(sys.modules["hermes_constants"], "get_hermes_home", lambda: tmp_path / "missing")
+    monkeypatch.setattr(api, "_artifacts_index", lambda: index)
+    assert api.list_artifacts() == {"items": [], "next_before": None}
