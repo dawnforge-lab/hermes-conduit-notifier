@@ -231,3 +231,32 @@ def test_a_links_host_leaves_out_credentials(tmp_path, monkeypatch):
     item = _list(conn)["items"][0]
     assert item["host"] == "example.com" and item["name"] == "example.com"
     assert "secret" not in item["name"]
+
+
+def test_the_route_turns_a_request_away_while_both_reads_run(tmp_path, monkeypatch):
+    _no_gateway(monkeypatch)
+    _db(tmp_path, [("s1", "assistant", "MEDIA:/root/map.png")]).close()
+    monkeypatch.setattr(sys.modules["hermes_constants"], "get_hermes_home", lambda: tmp_path)
+    monkeypatch.setattr(api, "_artifacts_index", lambda: index)
+    app = FastAPI()
+    app.include_router(api.router, prefix=BASE)
+    client = TestClient(app)
+    assert api._artifacts_slots.acquire(blocking=False) and api._artifacts_slots.acquire(blocking=False)
+    try:
+        assert client.get(f"{BASE}/artifacts").status_code == 503
+    finally:
+        api._artifacts_slots.release()
+        api._artifacts_slots.release()
+    # Every finished read gave its slot back.
+    for _ in range(3):
+        assert client.get(f"{BASE}/artifacts").status_code == 200
+    assert api._artifacts_slots.acquire(blocking=False) and api._artifacts_slots.acquire(blocking=False)
+    api._artifacts_slots.release()
+    api._artifacts_slots.release()
+
+
+def test_one_lineage_budget_covers_every_chain(tmp_path, monkeypatch):
+    _no_gateway(monkeypatch)
+    sessions = [(f"a{n}", "", 0, f"a{n + 1}" if n < 299 else None) for n in range(300)]
+    conn = _db(tmp_path, [("a0", "assistant", "MEDIA:/root/a.png")], sessions=sessions)
+    assert len(index.lineage(conn, ["a0", "a5"])) <= index.MAX_LINEAGE

@@ -9667,6 +9667,9 @@ ARTIFACTS_TIMEOUT_S = 25.0
 _artifacts_limiter = _MintLimiter(ARTIFACTS_LIMIT, ARTIFACTS_WINDOW_S,
                                   message="Too many artifact requests; try again shortly")
 _artifacts_executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="conduit-artifacts")
+# A timed-out read keeps its worker until it ends, so a request finding both
+# busy is turned away rather than queued behind them.
+_artifacts_slots = threading.BoundedSemaphore(2)
 _artifacts_module: Any = None
 _artifacts_module_lock = threading.Lock()
 
@@ -9712,13 +9715,37 @@ async def get_artifacts(response: Response, profile: Optional[str] = None, befor
                         session_id: Optional[List[str]] = Query(None), kind: Optional[str] = None,
                         q: Optional[str] = None, limit: Optional[int] = None) -> Dict[str, Any]:
     response.headers["Cache-Control"] = "no-store"
+    # The slot is freed exactly once: by the read when it ran, else by this
+    # request (a read it gave up on before it started never runs).
+    state = {"started": False, "abandoned": False}
+    state_lock = threading.Lock()
+
+    def job() -> Dict[str, Any]:
+        with state_lock:
+            if state["abandoned"]:
+                return {"items": [], "next_before": None}
+            state["started"] = True
+        try:
+            return list_artifacts(before, session_id, kind, q or "", limit)
+        finally:
+            _artifacts_slots.release()
+
     try:
         _artifacts_limiter.acquire(_limiter_key(profile))
-        page = await asyncio.wait_for(
-            _run_scoped(profile, lambda: list_artifacts(before, session_id, kind, q or "", limit),
-                        _artifacts_executor),
-            timeout=ARTIFACTS_TIMEOUT_S,
-        )
+        if not _artifacts_slots.acquire(blocking=False):
+            raise HTTPException(status_code=503, detail="Hermes is still reading artifacts; try again shortly",
+                                headers={"Cache-Control": "no-store"})
+        try:
+            page = await asyncio.wait_for(_run_scoped(profile, job, _artifacts_executor),
+                                          timeout=ARTIFACTS_TIMEOUT_S)
+        except BaseException:
+            with state_lock:
+                if not state["started"]:
+                    state["abandoned"] = True
+                    _artifacts_slots.release()
+            raise
+    except HTTPException:
+        raise
     except asyncio.TimeoutError:
         logger.warning("Conduit artifacts list timed out after %ss", ARTIFACTS_TIMEOUT_S)
         raise HTTPException(status_code=504, detail="Listing artifacts took too long; try again",

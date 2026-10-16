@@ -170,7 +170,7 @@ def assistant_items(text: str) -> Iterable[tuple]:
         found = _PREVIEW_FILE_RE.search(match.group(1))
         path = (found.group(1) or found.group(2) or "").strip() if found else ""
         if path:
-            yield ("preview", "page" if kind_for(path) == "page" else kind_for(path), path, "")
+            yield ("preview", kind_for(path), path, "")
     linked = set()
     for bang, label, url in _MD_LINK_RE.findall(prose):
         url = url.rstrip(_TRAILING)
@@ -347,7 +347,8 @@ def lineage(conn: sqlite3.Connection, session_ids: Iterable[str]) -> list:
     roots = []
     for sid in found:
         current, chain = sid, {sid}
-        while len(chain) < MAX_LINEAGE:
+        # One budget for every chain, so the ids stay a bounded IN (...).
+        while len(known) < MAX_LINEAGE:
             row = conn.execute("SELECT parent_session_id FROM sessions WHERE id = ?", (current,)).fetchone()
             parent = str(row[0]) if row and row[0] else ""
             if not parent or parent in chain:
