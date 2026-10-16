@@ -14,8 +14,9 @@ open again:
 
 The list is read from the profile's ``state.db`` (read only), newest message
 first, a bounded window of rows per request: ``before`` pages back from the
-message id the previous page stopped at. One path or URL is listed once, at
-its newest mention.
+message id the previous page stopped at. Within a page one path or URL is
+listed once, at its newest mention; a later page can list it again at an
+older one, and the client keeps the first.
 
 The dashboard loads this module by path, so it imports nothing from the
 plugin package.
@@ -233,7 +234,7 @@ def _json(raw: Any) -> Any:
         return None
     try:
         return json.loads(raw)
-    except ValueError:
+    except (ValueError, RecursionError):
         return None
 
 

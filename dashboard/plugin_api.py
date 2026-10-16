@@ -9661,6 +9661,9 @@ ARTIFACTS_LIMIT = 60
 ARTIFACTS_WINDOW_S = 60.0
 # The ids one chat is known by (its runtime and stored ids).
 ARTIFACTS_MAX_SESSIONS = 16
+ARTIFACTS_MAX_ID_LENGTH = 200
+# Each read is bounded (rows scanned, sqlite's busy wait); this backstops it.
+ARTIFACTS_TIMEOUT_S = 25.0
 _artifacts_limiter = _MintLimiter(ARTIFACTS_LIMIT, ARTIFACTS_WINDOW_S,
                                   message="Too many artifact requests; try again shortly")
 _artifacts_executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="conduit-artifacts")
@@ -9696,7 +9699,8 @@ def list_artifacts(before: Optional[int] = None, session_ids: Optional[List[str]
     except FileNotFoundError:
         return {"items": [], "next_before": None}
     try:
-        ids = [sid.strip() for sid in session_ids or [] if sid and sid.strip()][:ARTIFACTS_MAX_SESSIONS]
+        ids = [sid.strip() for sid in session_ids or []
+               if sid and sid.strip() and len(sid) <= ARTIFACTS_MAX_ID_LENGTH][:ARTIFACTS_MAX_SESSIONS]
         return index.list_artifacts(conn, before=before, session_ids=ids, group=kind or None,
                                     query=q or "", limit=limit or index.DEFAULT_LIMIT)
     finally:
@@ -9710,8 +9714,15 @@ async def get_artifacts(response: Response, profile: Optional[str] = None, befor
     response.headers["Cache-Control"] = "no-store"
     try:
         _artifacts_limiter.acquire(_limiter_key(profile))
-        page = await _run_scoped(profile, lambda: list_artifacts(before, session_id, kind, q or "", limit),
-                                 _artifacts_executor)
+        page = await asyncio.wait_for(
+            _run_scoped(profile, lambda: list_artifacts(before, session_id, kind, q or "", limit),
+                        _artifacts_executor),
+            timeout=ARTIFACTS_TIMEOUT_S,
+        )
+    except asyncio.TimeoutError:
+        logger.warning("Conduit artifacts list timed out after %ss", ARTIFACTS_TIMEOUT_S)
+        raise HTTPException(status_code=504, detail="Listing artifacts took too long; try again",
+                            headers={"Cache-Control": "no-store"})
     except TokenError as exc:
         raise HTTPException(status_code=exc.status, detail=str(exc), headers={"Cache-Control": "no-store"})
     except sqlite3.Error as exc:
