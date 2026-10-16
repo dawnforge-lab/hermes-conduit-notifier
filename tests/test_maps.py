@@ -647,6 +647,10 @@ def test_the_phone_reports_navigate_opened_by_itself(home):
     present.exchange({"installation_id": "phone-installation-1",
                       "results": [{"id": other["id"], "outcome": "declined", "via": "auto"}]})
     assert present.status(other["id"])[0]["status"] == "waiting", "auto is only ever a yes"
+    plain = present.confirm("Send to Mei?", "Hi", "Send")
+    present.exchange({"installation_id": "phone-installation-1",
+                      "results": [{"id": plain["id"], "outcome": "confirmed", "via": "auto"}]})
+    assert present.status(plain["id"])[0]["status"] == "waiting", "auto answers only a Go prompt"
 
 
 def test_the_preview_shows_the_place_without_markdown_of_its_own(home, monkeypatch):

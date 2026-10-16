@@ -46,7 +46,7 @@ ACTIONS = ("search", "lookup", "reverse_geocode", "directions", "travel_times", 
 # What a Conduit that opens Apple Maps for navigate says it can do.
 NAVIGATE_FEATURE = "maps-navigate"
 NAVIGATE_TTL_MINUTES = 15
-NAVIGATE_SPOKEN_YES = ["go", "let's go", "go ahead", "open maps"]
+NAVIGATE_SPOKEN_YES = ("go", "let's go", "go ahead", "open maps")
 # Apple Maps link travel flags; cycling has none, so Maps picks.
 _DIRFLG = {"driving": "d", "walking": "w", "transit": "r"}
 MODES = ("driving", "walking", "transit", "cycling")
@@ -438,7 +438,10 @@ def _navigate(store: LocationStore, view: dict[str, Any] | None, args: dict[str,
     if mode not in MODES:
         return {"ok": False, "error": "invalid", "note": f"mode is one of {', '.join(MODES)}."}
     if "saved" in ref:
-        to = label = ((view or {}).get("places") or {})[ref["saved"]]["name"]
+        place = ((view or {}).get("places") or {}).get(ref["saved"])
+        if not place:
+            return {"ok": False, "error": "invalid", "note": "That saved place is gone. Use conduit_location places."}
+        to = label = place["name"]
     elif "place_id" in ref:
         to, label = f"place_id:{ref['place_id']}", "the place from the earlier answer"
     elif "lat" in ref:
@@ -462,7 +465,7 @@ def _navigate(store: LocationStore, view: dict[str, Any] | None, args: dict[str,
     shown = re.sub(r"[*_`\[\]<>#~|\\]", "", label).strip() or "the place"
     preview = f"Opens Apple Maps with {mode} directions to **{shown}** from where you are."
     try:
-        prompt = present.confirm(title, preview, "Go", spoken_yes=NAVIGATE_SPOKEN_YES, session_id=session,
+        prompt = present.confirm(title, preview, "Go", spoken_yes=list(NAVIGATE_SPOKEN_YES), session_id=session,
                                  ttl_minutes=NAVIGATE_TTL_MINUTES, maps={"to": to, "mode": mode})
     except PresentError as error:
         return {"ok": False, "error": error.code, "note": str(error)}
