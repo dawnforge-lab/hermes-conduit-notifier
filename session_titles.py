@@ -66,10 +66,11 @@ def titled(prefix: str, key: Any) -> str:
 def _profile_of(home: Any) -> str:
     """The profile a Hermes home belongs to: profiles/<name>, else the default."""
     try:
-        if home.parent.name == "profiles" and home.name:
-            return home.name
-    except AttributeError:
-        pass
+        name = str(home.name).strip()
+        if home.parent.name == "profiles" and name:
+            return name
+    except Exception:  # noqa: BLE001 - a title must never break the turn
+        logger.debug("Couldn't read the profile of %s", home, exc_info=True)
     return "default"
 
 
