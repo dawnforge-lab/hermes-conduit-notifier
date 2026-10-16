@@ -88,6 +88,8 @@ def test_an_unreadable_file_reads_as_everything_on(tmp_path):
     assert all(Store(tmp_path).settings().values())
     (tmp_path / sources.FILE_NAME).write_text('{"muted_reply_sources": {"desktop": "yes", "nope": 1}}')
     assert all(Store(tmp_path).settings().values())
+    (tmp_path / sources.FILE_NAME).write_text('{"muted_reply_sources": {"desktop": 1' + "0" * 400 + '}}')
+    assert all(Store(tmp_path).settings().values())
 
 
 # --- Where a turn's message came from ----------------------------------------

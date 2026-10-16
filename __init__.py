@@ -33,7 +33,9 @@ MAX_TURN_STARTS = 256
 # says the turn finished.
 _pending_ready: dict[tuple[str, str], tuple[Any, bool, Any]] = {}
 _pending_lock = threading.Lock()
-READY_GRACE_S = 30.0
+# on_session_end follows post_llm_call in the same finalizer, after only the
+# memory sync; the grace is for a Hermes that never reports the end.
+READY_GRACE_S = 120.0
 # Parent session -> (its running turn's id, when it started by
 # time.monotonic()): a subagent that finishes inside it is part of its reply.
 _parent_turns: dict[str, tuple[str, float]] = {}

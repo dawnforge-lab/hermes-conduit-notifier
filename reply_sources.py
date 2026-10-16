@@ -92,8 +92,9 @@ class ReplySourcesStore:
         entries = raw.get("muted_reply_sources") if isinstance(raw, dict) else None
         if not isinstance(entries, dict):
             return {}
+        # A hand-edited time too big for a float reads as unset, not a crash.
         return {key: float(at) for key, at in entries.items()
-                if key in SOURCES and isinstance(at, (int, float)) and not isinstance(at, bool)}
+                if key in SOURCES and isinstance(at, (int, float)) and not isinstance(at, bool) and abs(at) < 1e15}
 
     def _save(self, state: dict[str, Any]) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
