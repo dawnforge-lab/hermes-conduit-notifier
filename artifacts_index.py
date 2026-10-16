@@ -136,7 +136,7 @@ def _media_paths(text: str) -> list:
     extract = _hermes_extract_media()
     if extract is not None:
         try:
-            return [path for path, _ in extract(text)[0]]
+            return [path for path, _ in extract(_prose(text))[0]]
         except Exception:  # noqa: BLE001 - a gateway change must not cost the list
             pass
     return [_unquote(m.group("path")) for m in _MEDIA_RE.finditer(_prose(text))]
@@ -228,10 +228,14 @@ def tool_result_items(tool_name: Any, content: Any) -> Iterable[tuple]:
                     yield ("written", kind_for(path), path, "")
 
 
+MAX_JSON_CHARS = 1_000_000
+
+
 def _json(raw: Any) -> Any:
     if isinstance(raw, (dict, list)):
         return raw
-    if not isinstance(raw, str) or not raw.strip():
+    # A tool's multi-megabyte output isn't parsed for one path.
+    if not isinstance(raw, str) or not raw.strip() or len(raw) > MAX_JSON_CHARS:
         return None
     try:
         return json.loads(raw)
