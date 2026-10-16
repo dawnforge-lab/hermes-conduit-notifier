@@ -1000,7 +1000,8 @@ returns each room's revision (`{"ok": true, "revisions": {"<room id>":
 `GET /room-images/<room id>` (`{"rev": "…", "mime": "image/jpeg",
 "data_base64": "…"}`). `PUT /room-images/<room id>` with `{"data_base64":
 "…"}` sets a JPEG or PNG of up to 512 KB; `DELETE` clears it. Records live in
-`<hermes home>/conduit/room-images/`, one per room, up to 500 rooms (the
+`<hermes home>/conduit/room-images/` (a small record plus the picture per
+room, so listing never reads picture bytes), up to 500 rooms (the
 oldest go first). Capability `room-images`.
 
 ## Artifacts (plugin 0.40+)
