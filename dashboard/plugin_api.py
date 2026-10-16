@@ -9766,10 +9766,12 @@ def list_room_images(root: str) -> Dict[str, str]:
 
 def read_room_image(root: str, room_id: str) -> Optional[Dict[str, Any]]:
     stem = _room_image_stem(root, room_id)
-    record = _read_room_record(stem + ".json")
-    if record is None or record["room_id"] != room_id:
-        return None
-    data = _read_no_follow(stem + ".img", ROOM_IMAGE_MAX_BYTES)
+    # Under the write lock, so a record and its bytes are read as a pair.
+    with _room_image_lock:
+        record = _read_room_record(stem + ".json")
+        if record is None or record["room_id"] != room_id:
+            return None
+        data = _read_no_follow(stem + ".img", ROOM_IMAGE_MAX_BYTES)
     if not data:
         return None
     return {"room_id": room_id, "rev": record["rev"], "mime": record.get("mime") or "image/jpeg",
@@ -9844,6 +9846,9 @@ def store_room_image(root: str, room_id: str, body: Any, now: Optional[float] = 
     with _room_image_lock:
         try:
             os.makedirs(root, mode=0o700, exist_ok=True)
+            with contextlib.suppress(OSError):
+                # makedirs leaves an existing folder's mode alone.
+                os.chmod(root, 0o700)
             # Bytes first: a record always names a picture that's there.
             _write_atomic(root, stem + ".img", data)
             try:
