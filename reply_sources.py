@@ -125,7 +125,7 @@ def turn_source(platform: Any, transport: Any = None) -> str | None:
         headers = _headers(transport)
         if headers is None:
             return None
-        if headers.get("x-conduit-client") is not None:
+        if str(headers.get("x-conduit-client") or "").strip().lower() == "conduit":
             return "conduit"
         if str(headers.get("user-agent") or "").startswith("Mozilla/"):
             return "desktop"

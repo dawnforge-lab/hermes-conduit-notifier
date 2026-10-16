@@ -107,6 +107,9 @@ def test_an_unreadable_file_reads_as_everything_on(tmp_path):
     ("cli", None, "terminal"),
     # Unknown: the push goes out whatever is set.
     ("tui", WSTransport({"user-agent": "python-websockets/12"}), None),
+    # Only Conduit's own value counts.
+    ("tui", WSTransport({"x-conduit-client": "", "user-agent": SAFARI}), "desktop"),
+    ("tui", WSTransport({"x-conduit-client": "other"}), None),
     ("desktop", None, None),
     ("tui", None, None),
     ("local", None, None),
