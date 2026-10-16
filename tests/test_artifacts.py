@@ -286,3 +286,13 @@ def test_a_malformed_link_or_timestamp_skips_only_its_own_row(tmp_path, monkeypa
     raw.close()
     items = _list(index.open_db(tmp_path))["items"]
     assert [i["name"] for i in items] == ["a.png"] and items[0]["timestamp"] == 0.0
+
+
+def test_tool_results_under_every_producer_key_are_read(tmp_path, monkeypatch):
+    _no_gateway(monkeypatch)
+    conn = _db(tmp_path, [
+        ("s1", "tool", json.dumps({"saved_to": "/root/b.wav"}), None, "text_to_speech"),
+        ("s1", "tool", json.dumps({"files_created": ["/root/a.png"]}), None, "generate_image"),
+        ("s1", "tool", json.dumps({"output_file": "/root/c.pdf"}), None, "export_report"),
+    ])
+    assert sorted(i["name"] for i in _list(conn)["items"]) == ["a.png", "b.wav", "c.pdf"]

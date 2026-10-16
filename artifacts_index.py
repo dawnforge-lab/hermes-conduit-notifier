@@ -326,7 +326,9 @@ def _candidate_sql(columns: set) -> str:
         "(m.role = 'assistant' AND (m.content LIKE '%MEDIA:%' OR m.content LIKE '%::preview%'"
         " OR m.content LIKE '%http%'))",
         "(m.role = 'user' AND m.content LIKE '%@file:%')",
-        "(m.role = 'tool' AND m.content LIKE '%path%')",
+        # Every key in _PRODUCER_KEYS has one of these in it.
+        "(m.role = 'tool' AND (m.content LIKE '%path%' OR m.content LIKE '%_file%'"
+        " OR m.content LIKE '%saved_to%' OR m.content LIKE '%files_%'))",
     ]
     if "tool_calls" in columns:
         parts.append("(m.role = 'assistant' AND m.tool_calls LIKE '%write_file%')")
