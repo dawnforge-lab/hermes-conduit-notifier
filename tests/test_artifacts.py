@@ -274,3 +274,15 @@ def test_a_file_reference_in_a_code_block_is_not_an_attachment(tmp_path, monkeyp
     _no_gateway(monkeypatch)
     conn = _db(tmp_path, [("s1", "user", "Use it like:\n```\n@file:/root/example.txt\n```\n")])
     assert _list(conn)["items"] == []
+
+
+def test_a_malformed_link_or_timestamp_skips_only_its_own_row(tmp_path, monkeypatch):
+    _no_gateway(monkeypatch)
+    conn = _db(tmp_path, [("s1", "assistant", "MEDIA:/root/a.png"), ("s1", "assistant", "see https://[::1 in the log")])
+    conn.close()
+    raw = sqlite3.connect(tmp_path / "state.db")
+    raw.execute("UPDATE messages SET timestamp = 'soon' WHERE id = 1")
+    raw.commit()
+    raw.close()
+    items = _list(index.open_db(tmp_path))["items"]
+    assert [i["name"] for i in items] == ["a.png"] and items[0]["timestamp"] == 0.0

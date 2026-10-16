@@ -228,6 +228,13 @@ def tool_result_items(tool_name: Any, content: Any) -> Iterable[tuple]:
                     yield ("written", kind_for(path), path, "")
 
 
+def _number(value: Any) -> float:
+    try:
+        return float(value or 0)
+    except (TypeError, ValueError):
+        return 0.0
+
+
 MAX_JSON_CHARS = 1_000_000
 
 
@@ -262,12 +269,15 @@ def _describe(source: str, kind: str, target: str, label: str, row: sqlite3.Row,
         "session_id": str(row["session_id"]),
         "session_title": _clip(title, MAX_TITLE_CHARS),
         "message_id": int(row["id"]),
-        "timestamp": float(row["timestamp"] or 0),
+        "timestamp": _number(row["timestamp"]),
     }
     if source == "link":
         if len(target) > MAX_URL_CHARS:
             return None
-        parsed = urlparse(target)
+        try:
+            parsed = urlparse(target)
+        except ValueError:  # an unclosed "[" in a reply's half-written link
+            return None
         try:
             host = (parsed.hostname or "").lower()
         except ValueError:
