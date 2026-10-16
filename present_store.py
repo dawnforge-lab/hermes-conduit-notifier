@@ -392,6 +392,9 @@ def _take_result(state: dict[str, Any], installation: str, result: Any, now: flo
     if not isinstance(prompt_id, str) or not _PROMPT_ID.match(prompt_id) or outcome not in OUTCOMES \
             or via not in VIAS:
         return
+    # Conduit opens Maps by itself only as a yes.
+    if via == "auto" and outcome != "confirmed":
+        return
     prompt = _find(state, prompt_id)
     if prompt is None or prompt["status"] != "waiting":
         return

@@ -643,6 +643,19 @@ def test_the_phone_reports_navigate_opened_by_itself(home):
                       "results": [{"id": prompt["id"], "outcome": "confirmed", "via": "auto"}]})
     assert present.status(prompt["id"])[0]["status"] == "confirmed"
     assert present.status(prompt["id"])[0]["via"] == "auto"
+    other = present.confirm("Directions to Rome?", "Opens Apple Maps.", "Go", maps={"to": "Rome"})
+    present.exchange({"installation_id": "phone-installation-1",
+                      "results": [{"id": other["id"], "outcome": "declined", "via": "auto"}]})
+    assert present.status(other["id"])[0]["status"] == "waiting", "auto is only ever a yes"
+
+
+def test_the_preview_shows_the_place_without_markdown_of_its_own(home, monkeypatch):
+    present = _present(home)
+    monkeypatch.setattr(maps, "client", Enqueued())
+    _call({"action": "navigate", "to": "**Paris** [x](y)"})
+    prompt = present.exchange({"installation_id": "phone-installation-1"})["prompts"][0]
+    assert prompt["preview"] == "Opens Apple Maps with driving directions to **Paris x(y)** from where you are."
+    assert prompt["maps"]["to"] == "**Paris** [x](y)"
 
 
 def test_a_malformed_maps_target_is_refused_and_dropped_from_disk(home):

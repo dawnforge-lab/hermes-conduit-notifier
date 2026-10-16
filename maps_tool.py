@@ -46,7 +46,7 @@ ACTIONS = ("search", "lookup", "reverse_geocode", "directions", "travel_times", 
 # What a Conduit that opens Apple Maps for navigate says it can do.
 NAVIGATE_FEATURE = "maps-navigate"
 NAVIGATE_TTL_MINUTES = 15
-NAVIGATE_SPOKEN_YES = ["go", "let's go", "start", "open maps"]
+NAVIGATE_SPOKEN_YES = ["go", "let's go", "go ahead", "open maps"]
 # Apple Maps link travel flags; cycling has none, so Maps picks.
 _DIRFLG = {"driving": "d", "walking": "w", "transit": "r"}
 MODES = ("driving", "walking", "transit", "cycling")
@@ -458,7 +458,9 @@ def _navigate(store: LocationStore, view: dict[str, Any] | None, args: dict[str,
                     "note": note + "In a text chat, give the user the link instead; it opens Apple Maps."}
         return {"ok": False, "error": "not_set_up", "note": note + "Tell the user where to go instead."}
     title = _clip(f"Directions to {label}?", 80)
-    preview = f"Opens Apple Maps with {mode} directions to **{label}** from where you are."
+    # The place is the model's text: no Markdown of its own in the preview.
+    shown = re.sub(r"[*_`\[\]<>#~|\\]", "", label).strip() or "the place"
+    preview = f"Opens Apple Maps with {mode} directions to **{shown}** from where you are."
     try:
         prompt = present.confirm(title, preview, "Go", spoken_yes=NAVIGATE_SPOKEN_YES, session_id=session,
                                  ttl_minutes=NAVIGATE_TTL_MINUTES, maps={"to": to, "mode": mode})
