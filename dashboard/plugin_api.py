@@ -9702,7 +9702,7 @@ def list_artifacts(before: Optional[int] = None, session_ids: Optional[List[str]
         ids = [sid.strip() for sid in session_ids or []
                if sid and sid.strip() and len(sid) <= ARTIFACTS_MAX_ID_LENGTH][:ARTIFACTS_MAX_SESSIONS]
         return index.list_artifacts(conn, before=before, session_ids=ids, group=kind or None,
-                                    query=q or "", limit=limit or index.DEFAULT_LIMIT)
+                                    query=q or "", limit=index.DEFAULT_LIMIT if limit is None else limit)
     finally:
         conn.close()
 

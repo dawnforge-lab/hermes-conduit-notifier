@@ -263,12 +263,17 @@ def _describe(source: str, kind: str, target: str, label: str, row: sqlite3.Row,
         if len(target) > MAX_URL_CHARS:
             return None
         parsed = urlparse(target)
-        if parsed.scheme not in ("http", "https") or not parsed.netloc:
+        try:
+            host = (parsed.hostname or "").lower()
+        except ValueError:
+            host = ""
+        if parsed.scheme not in ("http", "https") or not host:
             return None
         item["url"] = target
-        item["name"] = _clip(label or parsed.netloc + (parsed.path if parsed.path not in ("", "/") else ""),
+        # The host alone, never a URL's user:password@.
+        item["name"] = _clip(label or host + (parsed.path if parsed.path not in ("", "/") else ""),
                              MAX_NAME_CHARS)
-        item["host"] = parsed.netloc
+        item["host"] = host
         return item
     if len(target) > MAX_PATH_CHARS or "\x00" in target:
         return None
@@ -442,10 +447,12 @@ def list_artifacts(conn: sqlite3.Connection, *, before: Optional[int] = None,
                 key = target.rstrip("/") if source != "link" else target
                 if key in seen:
                     continue
-                seen.add(key)
                 item = _describe(source, kind, target, label, row,
                                  title_for(str(row["session_id"]), row["title"]), stat)
+                # Seen once listed: a newer mention the filter leaves out
+                # doesn't hide an older one it keeps.
                 if item is not None and _matches(item, kinds, query):
+                    seen.add(key)
                     items.append(item)
             if len(items) >= limit:
                 stopped_at = int(row["id"])

@@ -215,3 +215,19 @@ def test_a_profile_without_a_store_has_no_artifacts(tmp_path, monkeypatch):
     monkeypatch.setattr(sys.modules["hermes_constants"], "get_hermes_home", lambda: tmp_path / "missing")
     monkeypatch.setattr(api, "_artifacts_index", lambda: index)
     assert api.list_artifacts() == {"items": [], "next_before": None}
+
+
+def test_a_newer_mention_the_filter_leaves_out_keeps_an_older_one(tmp_path, monkeypatch):
+    _no_gateway(monkeypatch)
+    conn = _db(tmp_path, [("s1", "assistant", "MEDIA:/root/plan.pdf"), ("s2", "assistant", "again MEDIA:/root/plan.pdf")],
+               sessions=[("s1", "Budget review"), ("s2", "Weekend trip")])
+    items = _list(conn, query="budget")["items"]
+    assert [(i["name"], i["session_title"]) for i in items] == [("plan.pdf", "Budget review")]
+
+
+def test_a_links_host_leaves_out_credentials(tmp_path, monkeypatch):
+    _no_gateway(monkeypatch)
+    conn = _db(tmp_path, [("s1", "assistant", "See https://user:secret@Example.com/")])
+    item = _list(conn)["items"][0]
+    assert item["host"] == "example.com" and item["name"] == "example.com"
+    assert "secret" not in item["name"]
