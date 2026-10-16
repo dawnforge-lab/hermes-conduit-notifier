@@ -107,6 +107,32 @@ def test_stale_temp_files_are_swept_on_a_write(tmp_path):
     assert not stale.exists()
 
 
+def test_orphaned_picture_bytes_are_swept_on_a_write(tmp_path):
+    orphan = tmp_path / ("0" * 64 + ".img")
+    orphan.write_bytes(JPEG)
+    os.utime(orphan, (1_000, 1_000))
+    api.store_room_image(str(tmp_path), "room_1", _body(JPEG), now=1_760_000_000)
+    assert not orphan.exists()
+    assert api.read_room_image(str(tmp_path), "room_1") is not None
+
+
+def test_a_failed_record_write_drops_the_room(tmp_path, monkeypatch):
+    api.store_room_image(str(tmp_path), "room_1", _body(JPEG), now=1_760_000_000)
+    real = api._write_atomic
+
+    def failing(root, path, data):
+        if path.endswith(".json"):
+            raise OSError(api.errno.ENOSPC, "full")
+        return real(root, path, data)
+
+    monkeypatch.setattr(api, "_write_atomic", failing)
+    with pytest.raises(HTTPException) as caught:
+        api.store_room_image(str(tmp_path), "room_1", _body(PNG), now=1_760_000_001)
+    assert caught.value.status_code == 507
+    assert api.read_room_image(str(tmp_path), "room_1") is None
+    assert api.list_room_images(str(tmp_path)) == {}
+
+
 def test_clearing_removes_only_that_room(tmp_path):
     api.store_room_image(str(tmp_path), "room_1", _body(JPEG))
     api.store_room_image(str(tmp_path), "room_2", _body(JPEG))

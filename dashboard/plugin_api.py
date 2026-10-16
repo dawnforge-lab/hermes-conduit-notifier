@@ -9702,8 +9702,9 @@ def _room_image_mime(data: bytes) -> Optional[str]:
 
 
 def _read_no_follow(path: str, limit: int) -> Optional[bytes]:
-    """A regular file's bytes up to ``limit``, never through a symlink;
-    None when missing, larger, or not a plain file."""
+    """A regular file's bytes up to ``limit``, never through a symlink
+    (where the platform has O_NOFOLLOW); None when missing, larger, or not
+    a plain file."""
     try:
         fd = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
     except OSError:
@@ -9727,7 +9728,8 @@ def _read_room_record(path: str) -> Optional[Dict[str, Any]]:
     except (ValueError, UnicodeDecodeError):
         return None
     if not isinstance(record, dict) or not isinstance(record.get("room_id"), str) \
-            or not isinstance(record.get("rev"), str):
+            or not isinstance(record.get("rev"), str) \
+            or record.get("mime", "image/jpeg") not in ("image/jpeg", "image/png"):
         return None
     return record
 
@@ -9789,6 +9791,7 @@ def _prune_room_images(root: str, keep: str, now: float) -> None:
             entries = list(it)
     except OSError:
         return
+    names = {entry.name for entry in entries}
     for entry in entries:
         try:
             if not entry.is_file(follow_symlinks=False):
@@ -9796,7 +9799,11 @@ def _prune_room_images(root: str, keep: str, now: float) -> None:
             mtime = entry.stat(follow_symlinks=False).st_mtime
         except OSError:
             continue
-        if entry.name.startswith(".room-image.") and entry.name.endswith(".tmp"):
+        # Leftovers of a crashed write: a temp file, or bytes whose record
+        # was never written.
+        leftover = (entry.name.startswith(".room-image.") and entry.name.endswith(".tmp")) \
+            or (entry.name.endswith(".img") and entry.name[:-len(".img")] + ".json" not in names)
+        if leftover:
             if now - mtime > ROOM_IMAGE_STALE_TEMP_S:
                 with contextlib.suppress(OSError):
                     os.unlink(entry.path)
@@ -9839,7 +9846,13 @@ def store_room_image(root: str, room_id: str, body: Any, now: Optional[float] = 
             os.makedirs(root, mode=0o700, exist_ok=True)
             # Bytes first: a record always names a picture that's there.
             _write_atomic(root, stem + ".img", data)
-            _write_atomic(root, stem + ".json", record)
+            try:
+                _write_atomic(root, stem + ".json", record)
+            except OSError:
+                # The old record would now label the new bytes with its
+                # revision: drop the room instead, so clients refetch.
+                _remove_room_image_files(stem)
+                raise
         except OSError as exc:
             if exc.errno in (errno.ENOSPC, errno.EDQUOT):
                 raise HTTPException(status_code=507, detail="The host is low on disk space", headers=no_store)
