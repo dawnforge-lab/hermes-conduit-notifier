@@ -173,6 +173,16 @@ def test_one_chat_is_read_in_one_call_under_a_busy_history(tmp_path, monkeypatch
     assert [i["name"] for i in first["items"]] == ["new.png"] and first["next_before"] is not None
     rest = _list(conn, session_ids=["s1"], before=first["next_before"], window_rows=10, max_scan_rows=50)
     assert [i["name"] for i in rest["items"]] == ["old.png"] and rest["next_before"] is None
+    capped = _list(conn, session_ids=["s1"], window_rows=10, max_scan_rows=1)
+    assert [i["name"] for i in capped["items"]] == ["new.png"] and capped["next_before"] is not None
+    tail = _list(conn, session_ids=["s1"], before=capped["next_before"], window_rows=10, max_scan_rows=1)
+    assert [i["name"] for i in tail["items"]] == ["old.png"]
+
+
+def test_a_chat_with_no_usable_id_lists_nothing(tmp_path, monkeypatch):
+    _no_gateway(monkeypatch)
+    conn = _db(tmp_path, [("s1", "assistant", "MEDIA:/root/a.png")])
+    assert _list(conn, session_ids=[""]) == {"items": [], "next_before": None}
 
 
 def test_a_parent_loop_ends(tmp_path, monkeypatch):

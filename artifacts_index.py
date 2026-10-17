@@ -423,8 +423,11 @@ def list_artifacts(conn: sqlite3.Connection, *, before: Optional[int] = None,
                    stat: Callable[[str], Optional[int]] = _file_size,
                    window_rows: int = WINDOW_ROWS, max_scan_rows: int = MAX_SCAN_ROWS) -> dict:
     """One page of artifacts, newest first, and where the next page starts
-    (``next_before``, None once the history is read to its start)."""
+    (``next_before``, None once the history is read to its start). One chat
+    (``session_id``/``session_ids``) reads only its own rows, up to
+    ``max_scan_rows`` of them, and ignores ``window_rows``."""
     limit = max(1, min(int(limit), MAX_LIMIT))
+    max_scan_rows = max(1, int(max_scan_rows))
     kinds = GROUPS.get(group) if group else None
     query = " ".join(str(query or "").lower().split())[:MAX_QUERY_CHARS]
     message_columns = _columns(conn, "messages")
@@ -472,10 +475,12 @@ def list_artifacts(conn: sqlite3.Connection, *, before: Optional[int] = None,
         # runs, an older chat sat behind thousands of other rows and its
         # sheet paged through all of them before showing anything.
         chat = lineage(conn, wanted)
+        if not chat:
+            return {"items": items, "next_before": None}
         sql = (select + f"WHERE m.session_id IN ({','.join('?' * len(chat))}) AND m.id < ?{candidate} "
-               "ORDER BY m.id DESC")
+               "ORDER BY m.id DESC LIMIT ?")
         scanned = 0
-        for row in conn.execute(sql, [*chat, top]):
+        for row in conn.execute(sql, [*chat, top, max_scan_rows]):
             scanned += 1
             if take(row):
                 return {"items": items, "next_before": int(row["id"]) if row["id"] > lowest else None}
