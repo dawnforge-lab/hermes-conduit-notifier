@@ -679,11 +679,16 @@ def test_change_fields_follow_the_contract(store, iphone):
                                   "priority": 1, "notes": None, "url": None,
                                   "location_alarm": {"name": "Home", "proximity": "leave"}}
     done = store.add_change("complete_reminder", None, {"reminder_id": "r_milk"})
-    assert done["fields"] == {"completed": True} and done["target"] == {"reminder_id": "r_milk"}
+    # Title and due ride along for the phone's card; only completed applies.
+    assert done["fields"] == {"title": "Buy milk", "due": "2026-10-15T09:00:00+01:00", "completed": True}
+    assert done["target"] == {"reminder_id": "r_milk"}
     assert done["summary"] == "Buy milk · Thu 15 Oct 09:00"
     gone = store.add_change("delete_reminder", None, {"reminder_id": "r_milk"})
-    assert gone["fields"] == {} and gone["target"] == {"reminder_id": "r_milk"}
+    assert gone["fields"] == {"title": "Buy milk", "due": "2026-10-15T09:00:00+01:00"}
+    assert gone["target"] == {"reminder_id": "r_milk"}
     assert gone["summary"] == "Buy milk · Thu 15 Oct 09:00"
+    removed = store.add_change("delete_event", None, {"event_id": "e_dentist"})
+    assert removed["fields"]["title"] == "Dentist" and removed["fields"]["start"]
 
 
 @pytest.mark.parametrize("results", [

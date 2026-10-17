@@ -93,6 +93,8 @@ SPANS = ("this", "future")
 
 CALENDAR_CHANGE_KINDS = ("add_event", "update_event", "delete_event", "add_reminder", "update_reminder",
                          "complete_reminder", "delete_reminder")
+# Kinds whose fields carry the item's title and time for the phone's card.
+_DISPLAY_ONLY_KINDS = ("delete_event", "complete_reminder", "delete_reminder")
 ALARM_CHANGE_KINDS = ("set_alarm", "set_timer", "cancel_alarm")
 CHANGE_KINDS = CALENDAR_CHANGE_KINDS + ALARM_CHANGE_KINDS
 OUTCOMES = ("applied", "edited", "dismissed", "failed", "expired")
@@ -1878,6 +1880,11 @@ def _check_change(db: sqlite3.Connection, device_id: str, kind: str, fields: dic
         if calendar is not None and not calendar["writable"]:
             raise PhoneError("read_only", f"The {word} {calendar['title'] or collection!r} is read-only on the phone")
     merged = {**(existing or {}), **{key: value for key, value in clean_fields.items() if value is not None}}
+    if kind in _DISPLAY_ONLY_KINDS and existing is not None:
+        # The phone ignores these when applying; its card shows them, so the
+        # user sees which item a delete or completion is about.
+        keys = ("title", "start", "all_day") if is_event else ("title", "due")
+        clean_fields = {**{key: existing[key] for key in keys if existing.get(key) is not None}, **clean_fields}
     return clean_target, clean_fields, _summary(kind, merged), collection
 
 
