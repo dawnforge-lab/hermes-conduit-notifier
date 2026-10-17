@@ -3,6 +3,7 @@ import asyncio
 import contextlib
 import dataclasses
 import importlib.util
+import base64
 import json
 import os
 import sys
@@ -538,3 +539,28 @@ def test_a_verify_racing_a_rotation_does_not_cache_the_old_key(monkeypatch):
     monkeypatch.setattr(api, "_local_live_check_key", check_during_rotation)
     assert api.local_live_profile_for_key("cll1.d29yaw.old") == "work"
     assert "cll1.d29yaw.old" not in api._local_live_verified
+
+
+def test_malformed_keys_spend_no_checks_and_one_profile_cant_lock_out_another(monkeypatch):
+    monkeypatch.setattr(api, "_local_live_key_check_limiter", api._MintLimiter(2, 60.0, message="Too many"))
+    checked = []
+    monkeypatch.setattr(api, "_local_live_check_key", lambda token: checked.append(token))
+    for n in range(5):
+        assert api.local_live_profile_for_key(f"garbage{n}") is None
+    assert checked == []
+    for n in range(3):
+        api.local_live_profile_for_key(f"cll1.-.wrong{n}")
+    work = "cll1." + base64.urlsafe_b64encode(b"work").decode().rstrip("=") + ".wrong"
+    api.local_live_profile_for_key(work)
+    assert len(checked) == 3 and checked[-1] == work
+
+
+def test_an_unforeseen_error_starting_auth_retries_with_a_true_reason(monkeypatch):
+    def broken():
+        raise RuntimeError("registry broke")
+
+    monkeypatch.setattr(api, "_local_live_register_auth", broken)
+    monkeypatch.setitem(api._local_live_auth_state, "started", True)
+    api._local_live_register_auth_thread()
+    assert api._local_live_auth_state["started"] is False
+    assert "RuntimeError" in api._local_live_auth_state["reason"]
