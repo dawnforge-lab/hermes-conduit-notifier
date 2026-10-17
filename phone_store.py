@@ -92,7 +92,7 @@ PROXIMITY = ("arrive", "leave")
 SPANS = ("this", "future")
 
 CALENDAR_CHANGE_KINDS = ("add_event", "update_event", "delete_event", "add_reminder", "update_reminder",
-                         "complete_reminder")
+                         "complete_reminder", "delete_reminder")
 ALARM_CHANGE_KINDS = ("set_alarm", "set_timer", "cancel_alarm")
 CHANGE_KINDS = CALENDAR_CHANGE_KINDS + ALARM_CHANGE_KINDS
 OUTCOMES = ("applied", "edited", "dismissed", "failed", "expired")
@@ -1841,7 +1841,7 @@ def _check_change(db: sqlite3.Connection, device_id: str, kind: str, fields: dic
         if span == "future" and not row[5]:
             span = "this"
         clean_target = {"event_id": event_id, "span": span}
-    elif kind in ("update_reminder", "complete_reminder"):
+    elif kind in ("update_reminder", "complete_reminder", "delete_reminder"):
         unknown = sorted(set(target) - {"reminder_id"})
         if unknown:
             raise PhoneError("malformed", "target is {reminder_id}")
@@ -1855,9 +1855,9 @@ def _check_change(db: sqlite3.Connection, device_id: str, kind: str, fields: dic
     elif target:
         raise PhoneError("malformed", f"{kind} takes no target")
 
-    if kind == "delete_event":
+    if kind in ("delete_event", "delete_reminder"):
         if fields:
-            raise PhoneError("malformed", "delete_event takes no fields")
+            raise PhoneError("malformed", f"{kind} takes no fields")
         clean_fields: dict[str, Any] = {}
     elif kind == "complete_reminder":
         unknown = sorted(set(fields) - {"completed"})
