@@ -2720,7 +2720,9 @@ LOCAL_LIVE_VERIFIED_TTL_S = 30.0
 # names and in all: past this, an unknown key is refused without reading
 # anything, so a flood of wrong keys can't keep the event loop reading files.
 # Malformed keys never count, and keys verified lately still work.
-LOCAL_LIVE_KEY_CHECK_LIMIT = 30
+# Per profile as many as the one shared budget allowed before, so junk keys
+# naming one profile cost no less than they did.
+LOCAL_LIVE_KEY_CHECK_LIMIT = 60
 LOCAL_LIVE_KEY_CHECK_TOTAL_LIMIT = 300
 _local_live_key_check_limiter = _MintLimiter(LOCAL_LIVE_KEY_CHECK_LIMIT, 60.0, message="Too many Local Live key checks")
 _local_live_key_check_total_limiter = _MintLimiter(LOCAL_LIVE_KEY_CHECK_TOTAL_LIMIT, 60.0,
@@ -2764,6 +2766,8 @@ def local_live_profile_for_key(token: str) -> Optional[str]:
 
 def _local_live_key_profile(token: str) -> Optional[str]:
     """The profile a well-formed key names, without reading anything; else None."""
+    if not isinstance(token, str):
+        return None
     parts = token.split(".")
     if len(parts) != 3 or parts[0] != LOCAL_LIVE_KEY_PREFIX or not parts[2]:
         return None
@@ -3056,8 +3060,9 @@ def _local_live_spawn(coroutine: Any) -> None:
 
 def _local_live_task_done(task: "asyncio.Task[Any]") -> None:
     _local_live_tasks.discard(task)
-    if not task.cancelled() and task.exception() is not None:
-        logger.warning("Local Live background task failed: %s", task.exception())
+    error = None if task.cancelled() else task.exception()
+    if error is not None:
+        logger.warning("Local Live background task failed: %r", error, exc_info=error)
 
 
 def _local_live_profile_key(profile: Optional[str]) -> str:
@@ -3164,6 +3169,8 @@ async def post_local_live_key(response: Response, profile: Optional[str] = None)
         raise HTTPException(status_code=400, detail=LOCAL_LIVE_PROFILE_NAME_REASON, headers={"Cache-Control": "no-store"})
     try:
         key = await _run_scoped(profile, lambda: local_live_key(profile, rotate=True), _speech_server_executor)
+    except TokenError as exc:
+        raise HTTPException(status_code=exc.status, detail=str(exc), headers={"Cache-Control": "no-store"})
     except Exception as exc:
         raise _unexpected("key", exc, feature="Local Live")
     return {"ok": True, "api_key": key}

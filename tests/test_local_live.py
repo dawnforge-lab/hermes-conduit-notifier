@@ -1,9 +1,9 @@
 import abc
 import asyncio
+import base64
 import contextlib
 import dataclasses
 import importlib.util
-import base64
 import json
 import os
 import sys
@@ -522,6 +522,7 @@ def test_non_text_message_content_is_no_turn():
 
 def test_a_flood_of_wrong_keys_stops_reading_files(monkeypatch):
     monkeypatch.setattr(api, "_local_live_key_check_limiter", api._MintLimiter(2, 60.0, message="Too many"))
+    monkeypatch.setattr(api, "_local_live_key_check_total_limiter", api._MintLimiter(100, 60.0, message="Too many"))
     checked = []
     monkeypatch.setattr(api, "_local_live_check_key", lambda token: checked.append(token))
     for n in range(4):
@@ -543,6 +544,7 @@ def test_a_verify_racing_a_rotation_does_not_cache_the_old_key(monkeypatch):
 
 def test_malformed_keys_spend_no_checks_and_one_profile_cant_lock_out_another(monkeypatch):
     monkeypatch.setattr(api, "_local_live_key_check_limiter", api._MintLimiter(2, 60.0, message="Too many"))
+    monkeypatch.setattr(api, "_local_live_key_check_total_limiter", api._MintLimiter(100, 60.0, message="Too many"))
     checked = []
     monkeypatch.setattr(api, "_local_live_check_key", lambda token: checked.append(token))
     for n in range(5):
@@ -560,7 +562,18 @@ def test_an_unforeseen_error_starting_auth_retries_with_a_true_reason(monkeypatc
         raise RuntimeError("registry broke")
 
     monkeypatch.setattr(api, "_local_live_register_auth", broken)
-    monkeypatch.setitem(api._local_live_auth_state, "started", True)
+    monkeypatch.setattr(api, "_local_live_auth_state", {**api._local_live_auth_state, "started": True})
     api._local_live_register_auth_thread()
     assert api._local_live_auth_state["started"] is False
     assert "RuntimeError" in api._local_live_auth_state["reason"]
+
+
+def test_the_total_key_check_budget_backs_up_every_profile(monkeypatch):
+    monkeypatch.setattr(api, "_local_live_key_check_limiter", api._MintLimiter(100, 60.0, message="Too many"))
+    monkeypatch.setattr(api, "_local_live_key_check_total_limiter", api._MintLimiter(2, 60.0, message="Too many"))
+    checked = []
+    monkeypatch.setattr(api, "_local_live_check_key", lambda token: checked.append(token))
+    for name in (b"a", b"b", b"c"):
+        api.local_live_profile_for_key("cll1." + base64.urlsafe_b64encode(name).decode().rstrip("=") + ".wrong")
+    assert len(checked) == 2
+    assert api.local_live_profile_for_key(None) is None
