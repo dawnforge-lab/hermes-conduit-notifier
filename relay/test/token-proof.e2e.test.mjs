@@ -203,6 +203,11 @@ test("another phone's PushKit token is left out, on registering and on updating"
   assert.equal(update.status, 200);
   assert.equal(update.json.installation.voip, false);
 
+  // An update naming it keeps the PushKit token the phone already had.
+  const own = await registerProven('d'.repeat(64), { voip_token: 'e'.repeat(64) });
+  const kept = await api(`/v1/installations/${own.json.installation.id}`, { method: 'PUT', credential: own.json.credential, body: { voip_token: VICTIM_VOIP } });
+  assert.equal(kept.json.installation.voip, true);
+
   // The phone that holds it still rings.
   const victimMeta = await api(`/v1/installations/${victim.id}`, { method: 'PUT', credential: victim.credential, body: {} });
   assert.equal(victimMeta.json.installation.voip, true);

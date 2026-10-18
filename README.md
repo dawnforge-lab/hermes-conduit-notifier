@@ -299,8 +299,9 @@ else's installation, and filling the relay's installation slots takes real
 phones running the app rather than a script. A proven registration retires
 the same phone's earlier installations for that token. PushKit and location
 tokens can't be challenged this way, so a registration or update naming one
-that another active installation already holds is accepted without it
-(`voip`, `watch_voip` or `location` comes back `false`).
+that another active installation already holds is accepted without it: a
+registration gets none (`voip`, `watch_voip` or `location` comes back
+`false`), and an update keeps the token the installation had.
 
 A challenge answers `400 invalid_device_token` when APNs refuses the token,
 so it shows whether a token is currently live for the app. The nonce never

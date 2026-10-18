@@ -120,7 +120,10 @@ function main() {
   rings = new Rings();
   tokenChallenges = new TokenChallenges({ ttlMs: TOKEN_CHALLENGE_TTL_S * 1000 });
   // A reclaimed slot's installation leaves nothing behind in memory either.
-  store.onReclaim = (id) => liveActivities?.removeInstallation(id);
+  store.onReclaim = (id) => {
+    liveActivities?.removeInstallation(id);
+    console.warn(JSON.stringify({ level: 'warn', message: 'relay full: reclaimed the longest-inactive installation', installation_id: id }));
+  };
   setInterval(() => tokenChallenges.sweep(), 60_000).unref();
   const watchGrants = new WatchToolGrants({
     maxGrants: config.watchLimits.maxGrants,
@@ -309,6 +312,7 @@ async function route(request, response) {
       result = await apnsSend(deviceToken, tokenChallengePush(nonce, { topic: config.topic, ttlSeconds: TOKEN_CHALLENGE_TTL_S }));
     } catch (error) {
       console.error(JSON.stringify({ level: 'error', message: 'apns token challenge send threw', error: error instanceof Error ? error.message : String(error) }));
+      tokenChallenges.withdraw(deviceToken, nonce);
       return sendJson(response, 502, { error: 'apns_unreachable' });
     }
     if (!result.ok) {
@@ -332,10 +336,12 @@ async function route(request, response) {
     let locationToken = validateLocationToken(body.location_token) ?? undefined;
     if (body.bundle_id !== config.topic) return sendJson(response, 400, { error: 'invalid_topic' });
     if (body.environment !== 'production') return sendJson(response, 400, { error: 'production_only' });
-    // Proof first: only a registration that can succeed may reclaim a slot.
+    store.assertInstallationRoom();
+    enforceRegistrationBudget();
+    // Proof before reclaiming: only a registration that can succeed may
+    // take an inactive installation's slot.
     const proven = proveDeviceToken(deviceToken, body.token_proof);
     store.assertInstallationCapacity();
-    enforceRegistrationBudget();
     if (proven) retireOtherInstallations(deviceToken);
     voipToken = unclaimedToken('voipToken', voipToken) ?? undefined;
     watchVoipToken = unclaimedToken('watchVoipToken', watchVoipToken) ?? undefined;
@@ -355,10 +361,6 @@ async function route(request, response) {
     enforceRateLimit(`installation-update:${installation.id}`, 30, 60_000);
     const body = await readJson(request);
     const deviceToken = body.device_token === undefined ? undefined : validateDeviceToken(body.device_token);
-    // Moving to another device token takes the same proof as registering it.
-    if (deviceToken && deviceToken !== installation.deviceToken && proveDeviceToken(deviceToken, body.token_proof)) {
-      retireOtherInstallations(deviceToken, installation.id);
-    }
     const changes = {
       deviceToken,
       voipToken: unclaimedToken('voipToken', validateVoipToken(body.voip_token), installation.id),
@@ -367,6 +369,10 @@ async function route(request, response) {
       preferences: body.preferences,
     };
     if (store.wouldUpdateInstallation(installation.id, changes)) enforceDeviceChangeBudget();
+    // Moving to another device token takes the same proof as registering it.
+    if (deviceToken && deviceToken !== installation.deviceToken && proveDeviceToken(deviceToken, body.token_proof)) {
+      retireOtherInstallations(deviceToken, installation.id);
+    }
     return sendJson(response, 200, { installation: store.updateInstallation(installation.id, changes) });
   }
   if (installationMatch && request.method === 'DELETE') {
@@ -865,13 +871,14 @@ function retireOtherInstallations(deviceToken, exceptId) {
 
 // A PushKit or location token another active installation registered is
 // left out: it can't be proven like the device token, and taking it would
-// let a leaked token ring or locate someone else's phone (#146). The phone's
-// own stale records were retired first, so this is someone else's.
+// let a leaked token ring or locate someone else's phone (#146). On a
+// registration the phone's own stale records were retired first, so this is
+// someone else's. Left out means unchanged: an update keeps the token it had.
 function unclaimedToken(field, token, exceptId) {
   if (!token) return token;
   if (!store.activeInstallationWithToken(field, token, exceptId)) return token;
   console.warn(JSON.stringify({ level: 'warn', message: 'push token already registered elsewhere; left out', field }));
-  return null;
+  return undefined;
 }
 
 // The authenticated gateway's ids, or null.

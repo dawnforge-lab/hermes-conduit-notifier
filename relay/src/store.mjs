@@ -227,6 +227,14 @@ export class RelayStore {
     return true;
   }
 
+  // Refuses only a relay full of active installations; reclaiming waits for
+  // a registration that will go through (assertInstallationCapacity).
+  assertInstallationRoom() {
+    if (Object.keys(this.data.installations).length < this.limits.maxInstallations) return true;
+    if (Object.values(this.data.installations).some((installation) => installation && typeof installation === 'object' && !installation.active)) return true;
+    throw capacityError('installation_limit_reached');
+  }
+
   // A full relay makes room by forgetting the longest-inactive installation
   // (#142). Inactive is final: its credential no longer authenticates and
   // its hosts' events are refused, so the record only takes a slot.
