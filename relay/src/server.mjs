@@ -342,11 +342,14 @@ async function route(request, response) {
     // take an inactive installation's slot.
     const proven = proveDeviceToken(deviceToken, body.token_proof);
     store.assertInstallationCapacity();
-    if (proven) retireOtherInstallations(deviceToken);
-    voipToken = unclaimedToken('voipToken', voipToken) ?? undefined;
-    watchVoipToken = unclaimedToken('watchVoipToken', watchVoipToken) ?? undefined;
-    locationToken = unclaimedToken('locationToken', locationToken) ?? undefined;
+    // A proven phone's earlier installations are its own stale records:
+    // their tokens are its own, and they're retired once this one exists.
+    const sameDeviceToken = proven ? deviceToken : undefined;
+    voipToken = unclaimedToken('voipToken', voipToken, undefined, sameDeviceToken) ?? undefined;
+    watchVoipToken = unclaimedToken('watchVoipToken', watchVoipToken, undefined, sameDeviceToken) ?? undefined;
+    locationToken = unclaimedToken('locationToken', locationToken, undefined, sameDeviceToken) ?? undefined;
     const created = store.createInstallation({ bundleId: body.bundle_id, deviceToken, voipToken, watchVoipToken, locationToken, environment: body.environment, preferences: body.preferences });
+    if (proven) retireOtherInstallations(deviceToken, created.installation.id);
     return sendJson(response, 201, {
       installation: created.installation,
       credential: `${created.installation.id}.${created.deviceSecret}`,
@@ -364,11 +367,15 @@ async function route(request, response) {
     const moving = Boolean(deviceToken && deviceToken !== installation.deviceToken);
     // Other installations for a proven new device token are this phone's
     // stale records, so the PushKit and location tokens they hold are its own.
+    // Checked before any proof is spent, so a malformed token doesn't burn it.
+    const voipToken = validateVoipToken(body.voip_token);
+    const watchVoipToken = validateWatchVoipToken(body.watch_voip_token);
+    const locationToken = validateLocationToken(body.location_token);
     const changesFor = (sameDeviceToken) => ({
       deviceToken,
-      voipToken: unclaimedToken('voipToken', validateVoipToken(body.voip_token), installation.id, sameDeviceToken),
-      watchVoipToken: unclaimedToken('watchVoipToken', validateWatchVoipToken(body.watch_voip_token), installation.id, sameDeviceToken),
-      locationToken: unclaimedToken('locationToken', validateLocationToken(body.location_token), installation.id, sameDeviceToken),
+      voipToken: unclaimedToken('voipToken', voipToken, installation.id, sameDeviceToken),
+      watchVoipToken: unclaimedToken('watchVoipToken', watchVoipToken, installation.id, sameDeviceToken),
+      locationToken: unclaimedToken('locationToken', locationToken, installation.id, sameDeviceToken),
       preferences: body.preferences,
     });
     let changes;
@@ -882,9 +889,9 @@ function retireOtherInstallations(deviceToken, exceptId) {
 
 // A PushKit or location token another active installation registered is
 // left out: it can't be proven like the device token, and taking it would
-// let a leaked token ring or locate someone else's phone (#146). On a
-// registration the phone's own stale records were retired first, so this is
-// someone else's. Left out means unchanged: an update keeps the token it had.
+// let a leaked token ring or locate someone else's phone (#146). Records for
+// `sameDeviceToken` (the proven phone's own) don't count. Left out means
+// unchanged: an update keeps the token it had.
 function unclaimedToken(field, token, exceptId, sameDeviceToken) {
   if (!token) return token;
   if (!store.activeInstallationWithToken(field, token, exceptId, sameDeviceToken)) return token;

@@ -262,3 +262,14 @@ test("moving to a proven token takes back the PushKit token the phone's stale in
   assert.equal(moved.json.installation.voip, true);
   assert.equal((await api('/v1/meta', { credential: stale.json.credential })).status, 401, 'the stale one is retired');
 });
+
+test('a move with a malformed PushKit token is refused without spending its proof', async () => {
+  const registered = await registerProven('c'.repeat(63) + 'd');
+  const { id } = registered.json.installation;
+  const next = 'c'.repeat(63) + 'e';
+  const proof = await challenge(next);
+  const bad = await api(`/v1/installations/${id}`, { method: 'PUT', credential: registered.json.credential, body: { device_token: next, token_proof: proof, voip_token: 'nope' } });
+  assert.equal(bad.status, 400);
+  const moved = await api(`/v1/installations/${id}`, { method: 'PUT', credential: registered.json.credential, body: { device_token: next, token_proof: proof } });
+  assert.equal(moved.status, 200);
+});
