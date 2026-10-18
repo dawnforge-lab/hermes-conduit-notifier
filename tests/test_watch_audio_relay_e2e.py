@@ -95,6 +95,7 @@ def relay():
             "APNS_TOPIC": "com.milim.relay",
             "RELAY_TOKEN_PROOF": "optional",
             "APNS_MODE": "accept",
+            "RELAY_TEST_SEAMS": "1",
         },
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,

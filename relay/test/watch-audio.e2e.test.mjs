@@ -51,6 +51,7 @@ before(async () => {
       APNS_TOPIC: 'com.milim.relay',
       RELAY_TOKEN_PROOF: 'optional',
       APNS_MODE: 'accept',
+      RELAY_TEST_SEAMS: '1',
       WATCH_AUDIO_IDLE_MS: String(IDLE_MS),
       RELAY_MAX_WATCH_AUDIO_BRIDGES_PER_GATEWAY: '2',
     },

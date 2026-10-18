@@ -100,6 +100,7 @@ before(async () => {
       APNS_MODE: 'accept',
       APNS_CAPTURE_PATH: capturePath,
       RELAY_TOKEN_PROOF: '',
+      RELAY_TEST_SEAMS: '1',
       TRUST_PROXY: '1',
     },
     stdio: 'ignore',
