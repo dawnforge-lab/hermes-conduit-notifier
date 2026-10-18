@@ -482,8 +482,35 @@ def test_a_rejoining_watch_carries_on_in_the_same_chat_and_the_grants_end_closes
     chats = dict(bridge.call_chats)
     bridge.stop_requested.set()
     bridge._run()
-    assert bridge.call_chats == {} and all(chat.closed for chat in chats.values())
+    assert bridge.call_chats == {}
+    # Closed in the background, so the bridge's end doesn't wait on Hermes.
+    deadline = time.monotonic() + 5
+    while not all(chat.closed for chat in chats.values()) and time.monotonic() < deadline:
+        time.sleep(0.01)
+    assert all(chat.closed for chat in chats.values())
     assert ("session.close", {"session_id": "s1"}) in call.hermes.calls
+
+
+def test_a_watch_call_waits_while_another_local_live_call_runs_on_the_profile(call):
+    class PhoneCall:
+        speaks = False
+        closed = False
+        profile = ""
+
+    phone = PhoneCall()
+    api._local_live_register(phone)
+    try:
+        async def scenario():
+            bridge = _bridge()
+            socket = await _attach(bridge)
+            error = await _start(bridge, socket, Watch())
+            assert error["type"] == "error" and error["code"] == "busy"
+            # Refused before it dialled the server or opened a chat.
+            assert call.speech.connects == [] and call.hermes.sessions == 0
+
+        _run(scenario())
+    finally:
+        api._local_live_unregister(phone)
 
 
 def test_a_profile_call_is_filed_under_its_profile(call, monkeypatch):

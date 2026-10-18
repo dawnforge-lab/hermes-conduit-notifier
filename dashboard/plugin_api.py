@@ -3108,17 +3108,25 @@ def _local_live_profile_key(profile: Optional[str]) -> str:
     return "" if name.lower() in ("", "current") else name
 
 
-def _local_live_open_calls(profile: str) -> List[_LocalLiveCall]:
-    return [call for call in _local_live_calls.get(_local_live_profile_key(profile), []) if not call.closed]
+# The phone's _LocalLiveCall or a Watch's _LocalLiveWatchCall: the same
+# take_words / start_turn / cancel_turn / speaks / closed surface.
+_LocalLiveAnyCall = Any
 
 
-def _local_live_active_call(profile: str) -> Optional[_LocalLiveCall]:
+def _local_live_open_calls(profile: str) -> List[_LocalLiveAnyCall]:
+    # A copy taken under the lock: Watch bridges register from their own threads.
+    with _local_live_calls_lock:
+        calls = list(_local_live_calls.get(_local_live_profile_key(profile), ()))
+    return [call for call in calls if not call.closed]
+
+
+def _local_live_active_call(profile: str) -> Optional[_LocalLiveAnyCall]:
     """The newest live call (not a speak socket), where turns go."""
     calls = [call for call in _local_live_open_calls(profile) if not call.speaks]
     return calls[-1] if calls else None
 
 
-def _local_live_route(profile: str, text: str) -> Tuple[Optional[_LocalLiveCall], bool]:
+def _local_live_route(profile: str, text: str) -> Tuple[Optional[_LocalLiveAnyCall], bool]:
     """Who answers a request: (call, read back). Words a speak socket sent are
     read back; anything else is a live call's turn. With no live call but a
     speak socket open, the request is read back too."""
@@ -9828,7 +9836,8 @@ class _LocalLiveWatchTurns:
             self.generation += 1
             self.turn = None
             self.reply = None
-        self.worker.shutdown(wait=False)
+        # Turns still queued would only submit to a chat that's closing.
+        self.worker.shutdown(wait=False, cancel_futures=True)
 
     def _current(self, generation: int) -> bool:
         with self.lock:
@@ -10006,11 +10015,18 @@ class _LocalLiveWatchCall:
         self.turns: Dict[str, Tuple[_LocalLiveTurn, asyncio.AbstractEventLoop, bool]] = {}
         self.numbers = itertools.count(1)
         self.closed = False
+        # As _LocalLiveCall's: turns never overlap. Only used on the
+        # dashboard's loop, where turns start.
+        self.turn_lock = asyncio.Lock()
 
     def take_words(self, text: str) -> bool:
         return False
 
     async def start_turn(self, text: str) -> Optional[_LocalLiveTurn]:
+        async with self.turn_lock:
+            return await self._start_turn(text)
+
+    async def _start_turn(self, text: str) -> Optional[_LocalLiveTurn]:
         if self.closed:
             return None
         for old, _, _ in list(self.turns.values()):
@@ -10119,6 +10135,11 @@ class _LocalLiveWatchSession(_WatchAudioSession):
             raise _watch_audio_failure(exc)
         if server is None:
             raise WatchAudioFailure("unavailable", LOCAL_LIVE_WATCH_NO_SESSIONS)
+        # The speech server's turns go to the profile's newest live call: one
+        # running elsewhere (the phone, another Watch grant) would take them.
+        if any(not call.speaks and not (isinstance(call, _LocalLiveWatchCall) and call.session.bridge is self.bridge)
+               for call in _local_live_open_calls(profile)):
+            raise WatchAudioFailure("busy", "A Local Live call is already running on this Hermes profile")
         open_key = _limiter_key(profile)
         if not _speech_server_take_open(open_key):
             raise WatchAudioFailure("busy", "Too many speech server connections are open on this host")
@@ -10190,6 +10211,10 @@ class _LocalLiveWatchSession(_WatchAudioSession):
             if isinstance(exc, asyncio.TimeoutError):
                 raise WatchAudioFailure("unreachable", "Hermes took too long to open the call's chat")
             raise
+        replaced = chats.get(chat.public_id)
+        if replaced is not None and replaced is not chat:
+            # Hermes named a chat this grant already had: the old one closes.
+            _local_live_watch_executor.submit(replaced.close)
         chats[chat.public_id] = chat
         return chat, False
 
@@ -10378,8 +10403,13 @@ class _WatchAudioBridge:
         except Exception as exc:  # noqa: BLE001 — the grant's lookups go on without audio
             logger.warning("The Watch audio bridge stopped: %s", type(exc).__name__)
         finally:
+            # Each close can wait on Hermes: they go on in the background, so
+            # the bridge's end isn't held up by one that hangs.
             for chat in list(self.call_chats.values()):
-                chat.close()
+                try:
+                    _local_live_watch_executor.submit(chat.close)
+                except RuntimeError:  # the executor already shut down
+                    chat.close()
             self.call_chats.clear()
             self.finished.set()
 
