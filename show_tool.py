@@ -54,7 +54,7 @@ SCHEMA: dict[str, Any] = {
         "place ids, and only ratings, hours, prices and photos you actually found, each with its source; never draw "
         "a map of your own as an HTML page. Name the "
         "source of numbers, forecasts, media and statuses you got from a tool or site; a forecast and media need "
-        "one, and media must be direct links to files you actually found. For anything else, "
+        "one, and media must be direct https links to files you actually found. For anything else, "
         "write Markdown: tables for data, numbered lists for steps, ![description](url) for images (direct image "
         "URLs you actually found) and [title](url) for links. Then say in a sentence that it's on their screen and "
         "give the gist; don't read it out, and don't repeat it in your reply. In a typed chat, use it only for "

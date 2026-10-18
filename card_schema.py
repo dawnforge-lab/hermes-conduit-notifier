@@ -232,10 +232,15 @@ def _apply_rules(card: dict[str, Any], raw: dict[str, Any]) -> dict[str, Any] | 
     elif kind == "media":
         if "source" not in card:
             return None
+        # The phone loads media over https only.
+        card["media"] = [item for item in card["media"] if _is_https(item["url"])]
+        if not card["media"]:
+            return None
         for item in card["media"]:
+            if item["kind"] == "image" or not _is_https(item.get("artwork", "https://")):
+                item.pop("artwork", None)
             if item["kind"] == "image":
                 item.pop("duration", None)
-                item.pop("artwork", None)
     elif kind == "contact":
         for person in card["people"]:
             if "phone" in person and not _phone_ok(person["phone"]):
@@ -243,6 +248,10 @@ def _apply_rules(card: dict[str, Any], raw: dict[str, Any]) -> dict[str, Any] | 
             if "email" in person and not _EMAIL.match(person["email"]):
                 del person["email"]
     return card
+
+
+def _is_https(url: str) -> bool:
+    return url[:8].lower() == "https://"
 
 
 def _phone_ok(phone: str) -> bool:
