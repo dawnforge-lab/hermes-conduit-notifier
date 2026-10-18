@@ -361,19 +361,30 @@ async function route(request, response) {
     enforceRateLimit(`installation-update:${installation.id}`, 30, 60_000);
     const body = await readJson(request);
     const deviceToken = body.device_token === undefined ? undefined : validateDeviceToken(body.device_token);
-    const changes = {
+    const moving = Boolean(deviceToken && deviceToken !== installation.deviceToken);
+    // Other installations for a proven new device token are this phone's
+    // stale records, so the PushKit and location tokens they hold are its own.
+    const changesFor = (sameDeviceToken) => ({
       deviceToken,
-      voipToken: unclaimedToken('voipToken', validateVoipToken(body.voip_token), installation.id),
-      watchVoipToken: unclaimedToken('watchVoipToken', validateWatchVoipToken(body.watch_voip_token), installation.id),
-      locationToken: unclaimedToken('locationToken', validateLocationToken(body.location_token), installation.id),
+      voipToken: unclaimedToken('voipToken', validateVoipToken(body.voip_token), installation.id, sameDeviceToken),
+      watchVoipToken: unclaimedToken('watchVoipToken', validateWatchVoipToken(body.watch_voip_token), installation.id, sameDeviceToken),
+      locationToken: unclaimedToken('locationToken', validateLocationToken(body.location_token), installation.id, sameDeviceToken),
       preferences: body.preferences,
-    };
-    if (store.wouldUpdateInstallation(installation.id, changes)) enforceDeviceChangeBudget();
-    // Moving to another device token takes the same proof as registering it.
-    if (deviceToken && deviceToken !== installation.deviceToken && proveDeviceToken(deviceToken, body.token_proof)) {
-      retireOtherInstallations(deviceToken, installation.id);
+    });
+    let changes;
+    let proven = false;
+    if (moving) {
+      enforceDeviceChangeBudget();
+      // Moving to another device token takes the same proof as registering it.
+      proven = proveDeviceToken(deviceToken, body.token_proof);
+      changes = changesFor(proven ? deviceToken : undefined);
+    } else {
+      changes = changesFor();
+      if (store.wouldUpdateInstallation(installation.id, changes)) enforceDeviceChangeBudget();
     }
-    return sendJson(response, 200, { installation: store.updateInstallation(installation.id, changes) });
+    const updated = store.updateInstallation(installation.id, changes);
+    if (proven) retireOtherInstallations(deviceToken, installation.id);
+    return sendJson(response, 200, { installation: updated });
   }
   if (installationMatch && request.method === 'DELETE') {
     const installation = authorize(request, installationMatch[1], 'device');
@@ -874,9 +885,9 @@ function retireOtherInstallations(deviceToken, exceptId) {
 // let a leaked token ring or locate someone else's phone (#146). On a
 // registration the phone's own stale records were retired first, so this is
 // someone else's. Left out means unchanged: an update keeps the token it had.
-function unclaimedToken(field, token, exceptId) {
+function unclaimedToken(field, token, exceptId, sameDeviceToken) {
   if (!token) return token;
-  if (!store.activeInstallationWithToken(field, token, exceptId)) return token;
+  if (!store.activeInstallationWithToken(field, token, exceptId, sameDeviceToken)) return token;
   console.warn(JSON.stringify({ level: 'warn', message: 'push token already registered elsewhere; left out', field }));
   return undefined;
 }

@@ -244,3 +244,21 @@ test('challenges check the app and token shape before pushing', async () => {
   assert.equal((await api('/v1/token-challenges', { method: 'POST', body: registration('not-a-token') })).status, 400);
   assert.equal(captured().length, before);
 });
+
+test("moving to a proven token takes back the PushKit token the phone's stale installation held", async () => {
+  // The phone registered once with token T and PushKit token V, then (say,
+  // after a restore) registered again with another token, and now moves
+  // that installation back to T.
+  const token = 'f'.repeat(64);
+  const voip = '0'.repeat(63) + '1';
+  const stale = await registerProven(token, { voip_token: voip });
+  assert.equal(stale.json.installation.voip, true);
+  const current = await registerProven('0'.repeat(63) + '2');
+  const proof = await challenge(token);
+  const moved = await api(`/v1/installations/${current.json.installation.id}`, {
+    method: 'PUT', credential: current.json.credential, body: { device_token: token, token_proof: proof, voip_token: voip },
+  });
+  assert.equal(moved.status, 200);
+  assert.equal(moved.json.installation.voip, true);
+  assert.equal((await api('/v1/meta', { credential: stale.json.credential })).status, 401, 'the stale one is retired');
+});

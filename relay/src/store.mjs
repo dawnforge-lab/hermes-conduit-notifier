@@ -259,9 +259,11 @@ export class RelayStore {
 
   // Another active installation that registered this push token, or null.
   // `field` is deviceToken, voipToken, watchVoipToken or locationToken.
-  activeInstallationWithToken(field, token, exceptId) {
+  // Installations registered for `sameDeviceToken` (the same phone) don't count.
+  activeInstallationWithToken(field, token, exceptId, sameDeviceToken) {
     if (!token) return null;
     for (const installation of Object.values(this.data.installations)) {
+      if (sameDeviceToken && installation?.deviceToken === sameDeviceToken) continue;
       if (installation?.active && installation.id !== exceptId && installation[field] === token) return installation;
     }
     return null;
