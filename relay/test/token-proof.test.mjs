@@ -75,11 +75,24 @@ test('a full relay reclaims the longest-inactive installation, never an active o
     assert.ok(store.data.installations[newer]);
     assert.ok(!Object.values(store.data.pairings).some((pairing) => pairing.installationId === older));
 
+    const reclaimed = [];
+    store.onReclaim = (id) => reclaimed.push(id);
     make('5');
     assert.equal(store.data.installations[newer], undefined);
+    assert.deepEqual(reclaimed, [newer]);
     assert.throws(() => make('6'), /installation_limit_reached/);
     assert.ok(store.data.installations[active] && store.data.installations[fourth]);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
+});
+
+test('withdrawing a nonce whose push failed keeps the earlier ones', () => {
+  const challenges = new TokenChallenges();
+  const delivered = challenges.issue(TOKEN);
+  const failed = challenges.issue(TOKEN);
+  challenges.withdraw(TOKEN, failed);
+  assert.equal(challenges.count, 1);
+  assert.equal(challenges.verify(TOKEN, failed), false);
+  assert.equal(challenges.verify(TOKEN, delivered), true);
 });

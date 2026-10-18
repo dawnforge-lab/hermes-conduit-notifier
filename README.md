@@ -302,6 +302,11 @@ tokens can't be challenged this way, so a registration or update naming one
 that another active installation already holds is accepted without it
 (`voip`, `watch_voip` or `location` comes back `false`).
 
+A challenge answers `400 invalid_device_token` when APNs refuses the token,
+so it shows whether a token is currently live for the app. The nonce never
+reaches whoever asked, so that grants nothing else, and per-token, per-IP
+and relay-wide limits bound such probing.
+
 `RELAY_TOKEN_PROOF` is `required` by default. `optional` still accepts
 registrations and token changes without a proof (a proof that is sent must
 be valid): use it only while app builds from before token proof still need

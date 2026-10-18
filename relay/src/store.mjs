@@ -245,6 +245,7 @@ export class RelayStore {
       if (decision?.installationId === oldest.id) delete this.data.pendingDecisions[key];
     }
     this.save();
+    this.onReclaim?.(oldest.id);
     return true;
   }
 

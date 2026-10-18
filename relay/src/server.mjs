@@ -119,6 +119,8 @@ function main() {
   limits = new Map();
   rings = new Rings();
   tokenChallenges = new TokenChallenges({ ttlMs: TOKEN_CHALLENGE_TTL_S * 1000 });
+  // A reclaimed slot's installation leaves nothing behind in memory either.
+  store.onReclaim = (id) => liveActivities?.removeInstallation(id);
   setInterval(() => tokenChallenges.sweep(), 60_000).unref();
   const watchGrants = new WatchToolGrants({
     maxGrants: config.watchLimits.maxGrants,
@@ -310,8 +312,12 @@ async function route(request, response) {
       return sendJson(response, 502, { error: 'apns_unreachable' });
     }
     if (!result.ok) {
-      tokenChallenges.forget(deviceToken);
-      if (result.status === 410 || DEVICE_TOKEN_REFUSED.has(result.reason)) return sendJson(response, 400, { error: 'invalid_device_token' });
+      if (result.status === 410 || DEVICE_TOKEN_REFUSED.has(result.reason)) {
+        tokenChallenges.forget(deviceToken);
+        return sendJson(response, 400, { error: 'invalid_device_token' });
+      }
+      // An earlier challenge the phone already got stays usable.
+      tokenChallenges.withdraw(deviceToken, nonce);
       return sendJson(response, 502, { error: 'apns_rejected', reason: result.reason, status: result.status });
     }
     return sendJson(response, 202, { challenge_sent: true, expires_in: TOKEN_CHALLENGE_TTL_S });
@@ -326,10 +332,11 @@ async function route(request, response) {
     let locationToken = validateLocationToken(body.location_token) ?? undefined;
     if (body.bundle_id !== config.topic) return sendJson(response, 400, { error: 'invalid_topic' });
     if (body.environment !== 'production') return sendJson(response, 400, { error: 'production_only' });
+    // Proof first: only a registration that can succeed may reclaim a slot.
+    const proven = proveDeviceToken(deviceToken, body.token_proof);
     store.assertInstallationCapacity();
     enforceRegistrationBudget();
-    const proven = proveDeviceToken(deviceToken, body.token_proof);
-    if (proven) store.retireOtherInstallationsWithDeviceToken(deviceToken);
+    if (proven) retireOtherInstallations(deviceToken);
     voipToken = unclaimedToken('voipToken', voipToken) ?? undefined;
     watchVoipToken = unclaimedToken('watchVoipToken', watchVoipToken) ?? undefined;
     locationToken = unclaimedToken('locationToken', locationToken) ?? undefined;
@@ -350,7 +357,7 @@ async function route(request, response) {
     const deviceToken = body.device_token === undefined ? undefined : validateDeviceToken(body.device_token);
     // Moving to another device token takes the same proof as registering it.
     if (deviceToken && deviceToken !== installation.deviceToken && proveDeviceToken(deviceToken, body.token_proof)) {
-      store.retireOtherInstallationsWithDeviceToken(deviceToken, installation.id);
+      retireOtherInstallations(deviceToken, installation.id);
     }
     const changes = {
       deviceToken,
@@ -848,6 +855,12 @@ function proveDeviceToken(deviceToken, proof) {
   }
   if (!tokenChallenges.verify(deviceToken, proof)) throw httpError(403, 'token_proof_invalid');
   return true;
+}
+
+// The same phone's earlier installations for a token it just proved, with
+// their Live Activities.
+function retireOtherInstallations(deviceToken, exceptId) {
+  for (const id of store.retireOtherInstallationsWithDeviceToken(deviceToken, exceptId)) liveActivities.removeInstallation(id);
 }
 
 // A PushKit or location token another active installation registered is

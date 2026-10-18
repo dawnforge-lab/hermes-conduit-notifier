@@ -56,6 +56,17 @@ export class TokenChallenges {
     return matched;
   }
 
+  // Drops one nonce whose push never went out.
+  withdraw(deviceToken, nonce) {
+    const entries = this.pending.get(deviceToken);
+    if (!entries) return;
+    const hash = hashNonce(nonce);
+    const kept = entries.filter((entry) => !entry.hash.equals(hash));
+    this.count -= entries.length - kept.length;
+    if (kept.length) this.pending.set(deviceToken, kept);
+    else this.pending.delete(deviceToken);
+  }
+
   sweep() {
     const now = this.now();
     for (const [token, entries] of this.pending) {
