@@ -29,6 +29,8 @@ logger = logging.getLogger(__name__)
 
 PROBE = "probe"
 TICK_S = 30.0
+# `pulse status` calls the gateway's loop stopped after this many missed ticks.
+STALE_TICK_S = 10 * TICK_S
 MAX_TURNS = 256
 PROBE_TEXT = "Pulse delivery check {tag}. Nothing to do: reply with one short line."
 PROBE_NOTE = ("This turn was started by Pulse, the plugin that lets Hermes speak up on its own, to check that "
@@ -44,6 +46,8 @@ _started_at = 0.0
 # (session id, turn id) -> tag, for the Pulse turns that ran in this process.
 _turns: dict[tuple[str, str], str] = {}
 _turns_lock = threading.Lock()
+# The last problem logged, so a missing home chat isn't logged every tick.
+_last_problem = ""
 
 
 def register(ctx: Any) -> None:
@@ -155,6 +159,8 @@ def tick(now: Optional[float] = None) -> None:
     if not pulse_store.get("enabled"):
         return
     now = time.time() if now is None else now
+    # The loop's heartbeat: `pulse status` warns when the gateway stops ticking.
+    pulse_store.set("last_tick_at", now)
     delivery.reconcile(pulse_store, home, plugin_id=_plugin_id(), process_started_at=_started_at, now=now)
     asked = pulse_store.take_probe_request()
     if not asked and not _probe_due(pulse_store, now):
@@ -164,12 +170,21 @@ def tick(now: Optional[float] = None) -> None:
             logger.info("conduit_push: Pulse: a delivery check is already in flight; not sending another")
         return
     chat, problem = home_chat(pulse_store, home)
-    if problem:
-        logger.info("conduit_push: Pulse: %s", problem)
+    _log_problem(problem)
     if chat is None:
+        if asked:
+            logger.info("conduit_push: Pulse: the requested delivery check wasn't sent; run `pulse probe` again "
+                        "once the home chat is there")
         return
     delivery.submit(pulse_store, _ctx.inject_message, kind=PROBE, session_key=chat.session_key,
                     text=lambda tag: PROBE_TEXT.format(tag=tag))
+
+
+def _log_problem(problem: str) -> None:
+    global _last_problem
+    if problem and problem != _last_problem:
+        logger.info("conduit_push: Pulse: %s", problem)
+    _last_problem = problem
 
 
 def _probe_due(pulse_store: store.PulseStore, now: float) -> bool:
