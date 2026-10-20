@@ -605,11 +605,24 @@ class PhoneStore:
                 raise PhoneError("malformed", "The sealed batch isn't JSON") from None
             if not isinstance(batch, dict) or batch.get("batch_id") != batch_id:
                 raise PhoneError("malformed", "The sealed batch doesn't match its envelope")
-            result = _apply(db, device_id, batch, now)
-            _expire(db, now)
-            result["pending"] = db.execute("SELECT COUNT(*) FROM changes WHERE device=? AND state='pending'",
-                                           (device_id,)).fetchone()[0]
-            generation = _meta(db, "generation")
+            try:
+                result = _apply(db, device_id, batch, now)
+            except PhoneError as error:
+                if error.code != "clock_skew":
+                    raise
+                # Refused, but what it turns off still goes (committed below):
+                # a phone whose clock runs fast can always take sharing back.
+                skewed = error
+                _forget_unshared(db, device_id, _parse_sharing(batch.get("sharing")))
+                db.execute("UPDATE devices SET last_seen=? WHERE id=?", (now, device_id))
+            else:
+                skewed = None
+                _expire(db, now)
+                result["pending"] = db.execute("SELECT COUNT(*) FROM changes WHERE device=? AND state='pending'",
+                                               (device_id,)).fetchone()[0]
+                generation = _meta(db, "generation")
+        if skewed is not None:
+            raise skewed
         return {**result, "generation": generation}
 
     # Exchange --------------------------------------------------------------------
@@ -1311,6 +1324,38 @@ def _parse_sharing(value: Any) -> dict[str, Any]:
     return sharing
 
 
+def _forget_unshared(db: sqlite3.Connection, device_id: str, sharing: dict[str, Any]) -> None:
+    """Sharing turned off: forget what was kept."""
+    if sharing["calendar"] != "full":
+        db.execute("DELETE FROM events WHERE device=?", (device_id,))
+    if sharing["calendar"] == "off":
+        db.execute("DELETE FROM calendars WHERE device=? AND kind='event'", (device_id,))
+    elif sharing["calendar"] == "write_only":
+        db.execute("DELETE FROM calendars WHERE device=? AND kind='event' AND writable=0", (device_id,))
+    if not sharing["reminders"]:
+        db.execute("DELETE FROM reminders WHERE device=?", (device_id,))
+        db.execute("DELETE FROM calendars WHERE device=? AND kind='reminder'", (device_id,))
+    if not sharing["details"]:
+        for table in ("events", "reminders"):
+            db.execute(f"UPDATE {table} SET notes=NULL, url=NULL WHERE device=?", (device_id,))
+        db.execute("UPDATE events SET attendees=NULL WHERE device=?", (device_id,))
+    elif not sharing["attendee_emails"]:
+        for event_id, attendees in db.execute("SELECT id, attendees FROM events WHERE device=? AND attendees"
+                                              " LIKE '%\"email\"%'", (device_id,)).fetchall():
+            kept = [{key: value for key, value in person.items() if key != "email"}
+                    for person in _decode(attendees, [])]
+            db.execute("UPDATE events SET attendees=? WHERE device=? AND id=?",
+                       (json.dumps(kept) if kept else None, device_id, event_id))
+    if not sharing["status"]:
+        db.execute("UPDATE devices SET status=NULL, status_at=NULL WHERE id=?", (device_id,))
+    if not sharing["focus"]:
+        db.execute("UPDATE devices SET focus=NULL, focus_at=NULL WHERE id=?", (device_id,))
+    if not sharing["alarms"]:
+        db.execute("UPDATE devices SET alarms=NULL, alarms_at=NULL WHERE id=?", (device_id,))
+    if not sharing["contacts"]:
+        db.execute("DELETE FROM contacts WHERE device=?", (device_id,))
+
+
 def _not_ahead(at: datetime, field: str, now: int) -> datetime:
     if at.timestamp() > now + MAX_CLOCK_SKEW_S:
         raise PhoneError("clock_skew", f"{field} is more than {MAX_CLOCK_SKEW_S // 60} minutes ahead of this host;"
@@ -1406,35 +1451,7 @@ def _apply(db: sqlite3.Connection, device_id: str, batch: dict[str, Any], now: i
         db.execute("UPDATE devices SET last_seen=? WHERE id=?", (now, device_id))
         return {**counts, "stale": True}
 
-    # Sharing turned off: forget what was kept.
-    if sharing["calendar"] != "full":
-        db.execute("DELETE FROM events WHERE device=?", (device_id,))
-    if sharing["calendar"] == "off":
-        db.execute("DELETE FROM calendars WHERE device=? AND kind='event'", (device_id,))
-    elif sharing["calendar"] == "write_only":
-        db.execute("DELETE FROM calendars WHERE device=? AND kind='event' AND writable=0", (device_id,))
-    if not share_reminders:
-        db.execute("DELETE FROM reminders WHERE device=?", (device_id,))
-        db.execute("DELETE FROM calendars WHERE device=? AND kind='reminder'", (device_id,))
-    if not sharing["details"]:
-        for table in ("events", "reminders"):
-            db.execute(f"UPDATE {table} SET notes=NULL, url=NULL WHERE device=?", (device_id,))
-        db.execute("UPDATE events SET attendees=NULL WHERE device=?", (device_id,))
-    elif not sharing["attendee_emails"]:
-        for event_id, attendees in db.execute("SELECT id, attendees FROM events WHERE device=? AND attendees"
-                                              " LIKE '%\"email\"%'", (device_id,)).fetchall():
-            kept = [{key: value for key, value in person.items() if key != "email"}
-                    for person in _decode(attendees, [])]
-            db.execute("UPDATE events SET attendees=? WHERE device=? AND id=?",
-                       (json.dumps(kept) if kept else None, device_id, event_id))
-    if not sharing["status"]:
-        db.execute("UPDATE devices SET status=NULL, status_at=NULL WHERE id=?", (device_id,))
-    if not sharing["focus"]:
-        db.execute("UPDATE devices SET focus=NULL, focus_at=NULL WHERE id=?", (device_id,))
-    if not sharing["alarms"]:
-        db.execute("UPDATE devices SET alarms=NULL, alarms_at=NULL WHERE id=?", (device_id,))
-    if not sharing["contacts"]:
-        db.execute("DELETE FROM contacts WHERE device=?", (device_id,))
+    _forget_unshared(db, device_id, sharing)
 
     if parsed_calendars is not None:
         db.execute("DELETE FROM calendars WHERE device=?", (device_id,))

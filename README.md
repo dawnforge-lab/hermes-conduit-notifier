@@ -1929,7 +1929,8 @@ whether notes and attendees are included (off by default).
   deleted. Status and Focus are the latest value only. A batch, status or
   Focus time more than 5 minutes ahead of this host's clock is refused
   with code `clock_skew`, so a future-dated batch can't make the real ones
-  after it (a sharing change included) look out of date.
+  after it (a sharing change included) look out of date. What a refused
+  batch turns off is still forgotten.
 - **Writes are changes the phone applies.** Hermes can't touch the phone's
   calendar, so `conduit_calendar`'s write actions queue a pending change.
   The plugin nudges the phone with a `phone.changes` relay event (sealed
