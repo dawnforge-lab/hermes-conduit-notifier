@@ -1296,8 +1296,10 @@ def _parse_sharing(value: Any) -> dict[str, Any]:
 def _apply(db: sqlite3.Connection, device_id: str, batch: dict[str, Any], now: int) -> dict[str, Any]:
     # A batch from the future would shut out every real one after it (they'd
     # all look older), revocations included: only clock skew is allowed.
-    sent_at = parse_time(batch.get("sent_at"), "sent_at",
-                         latest=datetime.fromtimestamp(now + MAX_CLOCK_SKEW_S, timezone.utc))
+    sent_at = parse_time(batch.get("sent_at"), "sent_at")
+    if sent_at.timestamp() > now + MAX_CLOCK_SKEW_S:
+        raise PhoneError("clock_skew", "sent_at is more than 5 minutes ahead of this host; check the iPhone's"
+                         " clock and the host's")
     sharing = _parse_sharing(batch.get("sharing"))
     tz = batch.get("time_zone")
     if tz is not None and (not isinstance(tz, str) or not _TZ.match(tz)):
@@ -1364,9 +1366,12 @@ def _apply(db: sqlite3.Connection, device_id: str, batch: dict[str, Any], now: i
     # A watermark further ahead than skew allows came from before that
     # limit; it doesn't get to hold newer batches off.
     stale = stored[0] is not None and stored[0] <= now + MAX_CLOCK_SKEW_S and sent_epoch < stored[0]
-    if window is None and event_upserts and stored[3] and stored[4]:
+    if window is None and share_events and event_upserts and stored[3] and stored[4]:
         # A diff without a range stays inside the one the user last shared.
-        window = (datetime.fromisoformat(stored[3]), datetime.fromisoformat(stored[4]))
+        try:
+            window = (datetime.fromisoformat(stored[3]), datetime.fromisoformat(stored[4]))
+        except ValueError:
+            window = None
 
     counts = {"events": 0, "reminders": 0, "deleted": 0}
     if stale:
@@ -1456,9 +1461,10 @@ def _apply(db: sqlite3.Connection, device_id: str, batch: dict[str, Any], now: i
         # A calendar or list taken out of the selection takes its items along.
         for table, column, kind in (("events", "calendar_id", "event"), ("reminders", "list_id", "reminder")):
             kept = [entry["id"] for entry in parsed_calendars if entry["kind"] == kind]
-            counts["deleted"] += db.execute(
-                f"DELETE FROM {table} WHERE device=? AND {column} IS NOT NULL"
-                f" AND {column} NOT IN ({','.join('?' * len(kept))})", (device_id, *kept)).rowcount
+            sql = f"DELETE FROM {table} WHERE device=? AND {column} IS NOT NULL"
+            if kept:
+                sql += f" AND {column} NOT IN ({','.join('?' * len(kept))})"
+            counts["deleted"] += db.execute(sql, (device_id, *kept)).rowcount
 
     # The alarms Conduit set and the people the user picked: replaced whole.
     if parsed_alarms is not None:
