@@ -13395,20 +13395,20 @@ def _read_room_record(path: str) -> Optional[Dict[str, Any]]:
 @contextlib.contextmanager
 def _room_images_locked(root: str, *, create: bool = False):
     """A picture's bytes and its record change and are read as a pair: under
-    this process's lock and a lock file in the folder, which a second
-    dashboard process takes too. Without ``create`` and with no folder yet
-    there is nothing to pair, so only the thread lock is taken."""
-    with _room_image_lock:
-        if create:
-            os.makedirs(root, mode=0o700, exist_ok=True)
-            with contextlib.suppress(OSError):
-                # makedirs leaves an existing folder's mode alone.
-                os.chmod(root, 0o700)
-        elif not os.path.isdir(root):
+    a lock file in the folder, which every process and thread takes through
+    its own handle, then this process's lock. Without ``create`` and with no
+    folder yet there is nothing to pair, so only the thread lock is taken."""
+    if create:
+        os.makedirs(root, mode=0o700, exist_ok=True)
+        with contextlib.suppress(OSError):
+            # makedirs leaves an existing folder's mode alone.
+            os.chmod(root, 0o700)
+    elif not os.path.isdir(root):
+        with _room_image_lock:
             yield
-            return
-        with _file_lock(os.path.join(root, ROOM_IMAGE_LOCK_FILE)):
-            yield
+        return
+    with _file_lock(os.path.join(root, ROOM_IMAGE_LOCK_FILE)), _room_image_lock:
+        yield
 
 
 def _write_atomic(root: str, path: str, data: bytes) -> None:

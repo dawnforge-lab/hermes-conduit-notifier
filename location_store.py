@@ -400,14 +400,16 @@ class LocationStore:
 
     @contextlib.contextmanager
     def _locked(self) -> Iterator[None]:
-        """The writers' lock: this process's threads and, through a lock
-        file beside the database, every other process (two dashboards, the
-        agent). The lock file outlives a wipe, so a writer waiting on it
-        never races the unlink."""
+        """The writers' lock: a lock file beside the database, which every
+        process (two dashboards, the agent) and thread takes through its own
+        handle, then this process's thread lock. The file lock comes first,
+        so waiting on another process never holds up other profiles' stores
+        here. The lock file outlives a wipe, so a writer waiting on it never
+        races the unlink."""
         lock_path = self.path.with_name(f".{self.path.name}.lock")
         self.path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
         flags = os.O_RDWR | os.O_CREAT | os.O_APPEND | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_BINARY", 0)
-        with _thread_lock, os.fdopen(os.open(lock_path, flags, 0o600), "a+b") as handle, _exclusive(handle):
+        with os.fdopen(os.open(lock_path, flags, 0o600), "a+b") as handle, _exclusive(handle), _thread_lock:
             yield
 
     @contextlib.contextmanager
