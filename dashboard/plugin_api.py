@@ -8578,7 +8578,8 @@ def open_watch_grant(body: Any, *, profile: Optional[str], ticket_home: Optional
     sits behind the dashboard's own auth, whose holder can already start
     chats on any profile; the list only narrows what the Watch may name. A
     native-http ticket is not that holder: Hermes binds it to one home
-    (``ticket_home``, the principal's ``profile_id``), so its list keeps only
+    (``ticket_home``, the principal's ``profile_id``): its grant runs jobs
+    only when the request's own profile is that home, its list keeps only
     profiles on that home (_clean_job_profiles), and its renewal carries the
     call's jobs only while they all stay on that home (_carry_watch_jobs).
     """
@@ -8609,6 +8610,10 @@ def open_watch_grant(body: Any, *, profile: Optional[str], ticket_home: Optional
     wants_jobs = any(tool in WATCH_JOB_TOOLS or tool == WATCH_JOB_FOLLOW_UP for tool in requested)
     server = session_api() if max_jobs > 0 and wants_jobs else None
     # Only a grant that runs jobs reads them, as job_options.
+    if server is not None and ticket_home is not None and not _grant_home_is(ticket_home):
+        # The grant's own jobs run on the request's profile: a ticket's
+        # only while that is its own home.
+        raise TokenError(403, "This ticket can't run jobs on another profile")
     job_profiles = _clean_job_profiles(body.get("job_profiles"), own=profile, ticket_home=ticket_home) if server is not None else ()
     tools = tuple(tool for tool in WATCH_TOOLS if tool in requested)
     if any(tool in WATCH_CHAT_TOOLS for tool in tools) and session_routes() is None:
@@ -8748,7 +8753,9 @@ def _carry_watch_jobs(old_id: str, grant: _WatchGrant, *, max_jobs: Optional[int
     A native ticket's renewal (``ticket_home``) carries only jobs bound to
     its home: the old grant may be the owner's, whose profiles and running
     jobs reach other homes, and carrying would hand their news, cancels and
-    approvals to the ticket. Such a renewal starts with jobs of its own."""
+    approvals to the ticket. Such a renewal, and any from a ticket whose
+    home isn't known, starts with jobs of its own. Finished jobs count too:
+    their untold results are news the carry would hand on."""
     old = _watch_grants.get(old_id)
     if old is None or old is grant or old.profile != grant.profile:
         return None
@@ -8761,7 +8768,7 @@ def _carry_watch_jobs(old_id: str, grant: _WatchGrant, *, max_jobs: Optional[int
         with jobs.changed:
             if jobs.ended:
                 return None
-            if ticket_home is not None and not _watch_jobs_on_home(jobs, ticket_home):
+            if ticket_home is not None and (not ticket_home or not _watch_jobs_on_home(jobs, ticket_home)):
                 return None
             jobs.grant = grant
             if max_jobs is not None:
@@ -9081,7 +9088,27 @@ def _native_ticket_home(request: Any) -> Optional[str]:
         # A stamp this plugin can't read is still a ticket: name nothing.
         return ""
     home = grant.get("profile_id")
-    return str(home) if isinstance(home, str) and home else ""
+    if not isinstance(home, str) or not home:
+        return ""
+    if Path(home).is_absolute():
+        return home
+    # A profile name rather than its home: Hermes' own resolution.
+    try:
+        from hermes_cli.profiles import get_profile_dir
+        return str(get_profile_dir(home))
+    except Exception:  # noqa: BLE001 — a name this Hermes can't place names nothing
+        return ""
+
+
+def _grant_home_is(ticket_home: str) -> bool:
+    """Whether the home this request is scoped to (_run_scoped) is ``ticket_home``."""
+    if not ticket_home:
+        return False
+    try:
+        from hermes_constants import get_hermes_home
+        return Path(get_hermes_home()).resolve() == Path(ticket_home).resolve()
+    except Exception:  # noqa: BLE001 — an unresolvable home is on no home
+        return False
 
 
 def _job_profile_on_home(name: str, ticket_home: str) -> bool:

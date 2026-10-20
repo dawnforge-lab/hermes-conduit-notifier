@@ -490,6 +490,10 @@ def fake_profile_dirs(monkeypatch, root):
     monkeypatch.setattr(package, "profiles", module, raising=False)
     for name in ("coder", "fam"):
         (root / "profiles" / name).mkdir(parents=True, exist_ok=True)
+    # The request is scoped to coder (_run_scoped).
+    constants = sys.modules.get("hermes_constants") or types.ModuleType("hermes_constants")
+    monkeypatch.setitem(sys.modules, "hermes_constants", constants)
+    monkeypatch.setattr(constants, "get_hermes_home", lambda: root / "profiles" / "coder", raising=False)
     return root / "profiles" / "coder"
 
 
@@ -503,11 +507,29 @@ def test_a_ticket_names_only_profiles_on_its_own_home(tmp_path, monkeypatch):
 
 
 @pytest.mark.parametrize("stamp, home", [(None, ""), ("coder", ""), ({}, ""), ({"profile_id": 3}, ""),
-                                          ({"profile_id": "/h/coder"}, "/h/coder")])
-def test_a_ticket_stamp_this_plugin_cant_read_names_nothing(stamp, home):
+                                          ({"profile_id": "/h/coder"}, "/h/coder"), ({"profile_id": "Fam"}, "fam")])
+def test_a_ticket_stamp_this_plugin_cant_read_names_nothing(tmp_path, monkeypatch, stamp, home):
+    fake_profile_dirs(monkeypatch, tmp_path / "hermes")
+    if home == "fam":
+        # A profile name, placed as Hermes places it.
+        home = str(tmp_path / "hermes" / "profiles" / "fam")
     request = types.SimpleNamespace(state=types.SimpleNamespace(native_http_principal=stamp))
     assert api._native_ticket_home(request) == home
     assert api._native_ticket_home(types.SimpleNamespace(state=types.SimpleNamespace())) is None
+
+
+@pytest.mark.parametrize("ticket", ["fam", ""])
+def test_a_ticket_cant_run_jobs_on_a_profile_that_isnt_its_home(tmp_path, monkeypatch, ticket):
+    fake_profile_dirs(monkeypatch, tmp_path / "hermes")
+    home = str(tmp_path / "hermes" / "profiles" / ticket) if ticket else ""
+    with pytest.raises(api.TokenError) as err:
+        open_jobs_grant(tmp_path, FakeHermes(), RenewingRelay(), ticket_home=home)
+    assert err.value.status == 403
+    # Lookups alone run nothing on the profile.
+    grant = api.open_watch_grant({"tools": ["web_search"]}, profile="coder", ticket_home=home,
+                                 path=write_pairing(tmp_path), relay=FakeRelay(), start=lambda g: None,
+                                 session_api=FakeHermes)
+    assert grant["tools"] == ["web_search"]
 
 
 def test_a_tickets_renewal_doesnt_carry_an_owner_grants_other_homes(tmp_path, monkeypatch):
