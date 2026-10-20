@@ -376,10 +376,10 @@ twice. A clarify decision is the exception: it keeps its ID, because a retry
 can't re-park it, and the plugin falls back to Hermes' own clarify path. An
 installation at its event-ID bound forgets its own oldest ID, and at the
 relay-wide bound the installation holding the most IDs forgets its oldest, so
-neither bound rejects an event. A gateway's last-seen time and plugin version are written
-at most every five seconds, and on shutdown, instead of on every event. Each
-of those writes is still a full rewrite of the data file, so a busy relay
-spends one whole-file write per five seconds on them rather than two per
+neither bound rejects an event. A gateway's last-seen time and plugin version
+are written at most every five seconds, and on shutdown, instead of on every
+event. Each of those writes is still a full rewrite of the data file, so a busy
+relay spends one whole-file write per five seconds on them rather than two per
 event.
 
 Installations, gateways, and clarify decisions are persistent. A new record is

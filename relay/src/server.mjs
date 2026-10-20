@@ -747,16 +747,20 @@ async function route(request, response) {
     let settle;
     eventsInFlight.set(inFlightKey, new Promise((resolve) => { settle = resolve; }));
     let released = true;
+    let thrownStatus = null;
     try {
       await deliverEvent(response, installation, event, gateway);
       released = RETRYABLE_STATUS(response.statusCode);
+    } catch (error) {
+      thrownStatus = Number(error?.status ?? 500);
+      throw error;
     } finally {
       // Waiting copies are settled first so nothing below can strand them;
       // they resume only after this block, by which time the id is free.
       eventsInFlight.delete(inFlightKey);
       settle(!released);
       if (released) store.releaseEvent(installation.id, event.eventId, credential.gatewayId);
-      if (released) console.warn(JSON.stringify({ level: 'warn', message: 'event push failed, id released for a retry', type: event.type, status: response.headersSent ? response.statusCode : null, refused: !response.headersSent }));
+      if (released) console.warn(JSON.stringify({ level: 'warn', message: 'event push failed, id released for a retry', type: event.type, event_id: event.eventId, status: response.headersSent ? response.statusCode : thrownStatus, thrown: thrownStatus !== null }));
     }
     return;
   }
