@@ -6,6 +6,7 @@ import argparse
 import http.client
 import socket
 import time
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -34,11 +35,12 @@ def register_cli(parser: argparse.ArgumentParser) -> None:
         help="Redact chat text from pushes; choice labels still transit so cards stay answerable",
     )
     redact.add_argument("mode", choices=["on", "off"])
-    pulse = commands.add_parser("pulse", help="Pulse, the proactivity experiment: on, off, status, probe, home, outcomes")
-    pulse.add_argument("pulse_action", choices=["on", "off", "status", "probe", "home", "outcomes"])
+    pulse = commands.add_parser("pulse", help="Pulse, the proactivity experiment: on, off, status, probe, report, home, outcomes")
+    pulse.add_argument("pulse_action", choices=["on", "off", "status", "probe", "report", "home", "outcomes"])
     pulse.add_argument("value", nargs="?", default="",
                        help="for home: the id of the chat to use, or 'auto' to find it by title; "
-                            "for outcomes: how many to show, or a chat id")
+                            "for outcomes: how many to show, or a chat id; "
+                            "for report: 'now', 'on', 'off', a time like 08:00, or a time zone like Europe/Paris")
     parser.set_defaults(func=dispatch)
 
 
@@ -188,6 +190,8 @@ def _pulse(args: argparse.Namespace) -> int:
         return 0
     if action == "outcomes":
         return _pulse_outcomes(pulse_store, (args.value or "").strip())
+    if action == "report":
+        return _pulse_report(pulse_store, (args.value or "").strip())
     print(f"Pulse: {'on' if pulse_store.get('enabled') else 'off'}")
     chat, problem = pulse.home_chat(pulse_store, home)
     if chat is not None:
@@ -211,12 +215,49 @@ def _pulse(args: argparse.Namespace) -> int:
         print("Latest:")
         for row in recent:
             print("  " + _printable(pulse_delivery.describe(row)))
+    if pulse_store.get("daily_report"):
+        zone = pulse.report_zone(pulse_store, home)
+        upcoming = pulse.report.next_time(time.time(), zone, pulse_store.get("report_time"))
+        print(f"Shadow reports at {pulse.report.clock_text(pulse_store.get('report_time'))} ({zone}); next "
+              + datetime.fromtimestamp(upcoming, zone).strftime("%a %d %b %H:%M"))
+    else:
+        print("Shadow reports: off")
+    ratings = pulse.rating_counts(pulse_store)
+    if ratings:
+        print("Ratings so far: " + ", ".join(f"{kind} {yes} yes / {no} no" for kind, (yes, no) in ratings.items()))
     outcomes = pulse_store.outcome_counts(time.time() - 86400)
     if outcomes or pulse_store.get("enabled"):
         print("Tool outcomes in the last 24 hours: "
               + (", ".join(f"{n} {status}" for status, n in sorted(outcomes.items())) or "none yet"))
     print(f"State: {pulse_store.path}")
     return 0
+
+
+def _pulse_report(pulse_store: Any, value: str) -> int:
+    import re
+    from . import pulse_report
+    if value in ("", "now"):
+        if not pulse_store.get("enabled"):
+            print("Pulse is off: `hermes conduit-push pulse on` first.")
+            return 1
+        pulse_store.set("report_requested", True)
+        print("Asked the dashboard for a shadow report; it goes into the home chat within a minute or two.")
+        return 0
+    if value in ("on", "off"):
+        pulse_store.set("daily_report", value == "on")
+        print("The shadow report is on." if value == "on" else "The shadow report is off.")
+        return 0
+    if re.fullmatch(r"\d{1,2}:\d{2}(,\s*\d{1,2}:\d{2})*", value):
+        if all(pulse_report._clock(part) for part in value.split(",")):
+            pulse_store.set("report_time", pulse_report.clock_text(value).replace(" ", ""))
+            print(f"The shadow report goes out at {pulse_report.clock_text(value)}.")
+            return 0
+    if pulse_report.known_zone(value):
+        pulse_store.set("time_zone", value)
+        print(f"Report times are in {value}.")
+        return 0
+    print("Usage: hermes conduit-push pulse report [now|on|off|HH:MM[,HH:MM...]|<time zone>]")
+    return 2
 
 
 def _pulse_outcomes(pulse_store: Any, value: str) -> int:
