@@ -674,6 +674,7 @@ class PhoneStore:
                     _forget_unshared(db, device_id, sharing)
                     db.execute("UPDATE devices SET sharing=? WHERE id=?", (json.dumps(sharing), device_id))
                 db.execute("UPDATE devices SET last_seen=? WHERE id=?", (now, device_id))
+                _expire(db, now)
             else:
                 skewed = None
                 _expire(db, now)
