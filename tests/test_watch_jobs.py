@@ -482,8 +482,12 @@ def test_a_renewal_naming_profiles_replaces_the_calls(tmp_path):
 def fake_profile_dirs(monkeypatch, root):
     """hermes_cli.profiles.get_profile_dir over ``root``, as Hermes resolves names."""
     module = types.ModuleType("hermes_cli.profiles")
-    module.get_profile_dir = lambda name: root if name.strip().lower() == "default" \
-        else root / "profiles" / name.strip().lower()
+    def get_profile_dir(name):
+        canon = name.strip().lower()
+        if canon == "nope":
+            raise ValueError("no such profile")
+        return root if canon == "default" else root / "profiles" / canon
+    module.get_profile_dir = get_profile_dir
     package = sys.modules.get("hermes_cli") or types.ModuleType("hermes_cli")
     monkeypatch.setitem(sys.modules, "hermes_cli", package)
     monkeypatch.setitem(sys.modules, "hermes_cli.profiles", module)
@@ -504,10 +508,13 @@ def test_a_ticket_names_only_profiles_on_its_own_home(tmp_path, monkeypatch):
     # An alias of the ticket's own home stays.
     assert api._clean_job_profiles(["CODER2"], own="writer", ticket_home=str(tmp_path / "hermes" / "profiles" / "coder2")) == ("CODER2",)
     assert api._clean_job_profiles(["Fam"], own="coder") == ("Fam",)
+    # A name this Hermes can't place is on no home.
+    assert api._clean_job_profiles(["nope"], own="coder", ticket_home=str(coder)) == ()
 
 
 @pytest.mark.parametrize("stamp, home", [(None, ""), ("coder", ""), ({}, ""), ({"profile_id": 3}, ""),
-                                          ({"profile_id": "/h/coder"}, "/h/coder"), ({"profile_id": "Fam"}, "fam")])
+                                          ({"profile_id": "/h/coder"}, "/h/coder"), ({"profile_id": "Fam"}, "fam"),
+                                          ({"profile_id": "nope"}, "")])
 def test_a_ticket_stamp_this_plugin_cant_read_names_nothing(tmp_path, monkeypatch, stamp, home):
     fake_profile_dirs(monkeypatch, tmp_path / "hermes")
     if home == "fam":
