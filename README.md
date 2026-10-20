@@ -2006,7 +2006,7 @@ seals the answers back. This host opens no inbound route of its own.
   answered `not_started` and never guessed at. A grant with jobs answers
   `job_profiles` (the listed names, possibly none); an older plugin's
   answer leaves it out, and the Watch then sends such jobs through the iPhone.
-- **Native tickets** (plugin 0.51.2): a request authorised by a Hermes
+- **Native tickets** (plugin 0.51.3): a request authorised by a Hermes
   native-http ticket is bound to the ticket's profile home. Its grant opens,
   and its revoke runs, only when the request's profile is that home (else
   403), keeps only
