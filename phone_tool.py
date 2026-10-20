@@ -72,7 +72,7 @@ CALENDAR_SCHEMA: dict[str, Any] = {
         "Reads: overview (what's shared, calendars, freshness), calendars, events, free_busy, next, reminders. "
         "Writes queue a change the phone applies: add_event, update_event, delete_event, add_reminder, "
         "update_reminder, complete_reminder, delete_reminder; the user approves each on the phone, by tap or by saying "
-        "yes or no in a voice chat, unless they let Hermes add without asking (updates and deletes always ask), so "
+        "yes or no in a voice chat, unless they let Hermes add without asking (updates, deletes and completions always ask), so "
         "never say a change is done until pending shows it applied. pending: recent changes and how they went. Read results are as of the phone's last sync. "
         f"Before setting up a scheduled job or standing rule around the calendar, load "
         f"skill_view(\"conduit_push:{SKILL_NAME}\"). {CALENDAR_FIRST}"
@@ -453,8 +453,10 @@ def _queued(store: PhoneStore, change: dict[str, Any], profile: str) -> tuple[st
                           "tells them and offers Undo. It isn't on the phone yet: don't say it's done until pending "
                           "shows applied."), earlier
     return "waiting_for_approval", ("Sent to the phone; waiting for the user to approve it there (they can also edit "
-                                    "or dismiss it). In a voice chat they can just say yes or no: Conduit answers the "
-                                    "card for them, so don't tell them to tap. When they answer, check pending before "
+                                    "or dismiss it). In a voice chat they can just say yes or no and Conduit answers the "
+                                    "card for them, so don't ask them to tap first; if pending still shows it waiting "
+                                    "after they said it, their app may be older, so then ask them to tap the card. "
+                                    "When they answer, check pending before "
                                     "saying how it went; don't say it's done until pending shows applied."), earlier
 
 

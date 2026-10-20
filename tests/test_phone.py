@@ -835,7 +835,11 @@ def test_a_write_queues_a_change_and_nudges_the_phone(home):
                   "reason": "You asked me to book the dentist"}, session_id="s-1")
     assert added["status"] == "waiting_for_approval" and "approve" in added["note"]
     # A voice chat answers it out loud: Hermes doesn't send the user to tap.
-    assert "say yes or no" in added["note"] and "don't tell them to tap" in added["note"]
+    assert "say yes or no" in added["note"] and "don't ask them to tap first" in added["note"]
+    assert "ask them to tap the card" in added["note"]
+    assert "by saying yes or no" in tool.CALENDAR_SCHEMA["description"]
+    assert "completions always ask" in tool.CALENDAR_SCHEMA["description"]
+    assert "by saying yes or no" in tool.PHONE_SCHEMA["description"]
     [event] = home.sent
     assert event["type"] == "phone.changes" and event["mode"] == "alert"
     assert event["event_id"] == f"phone:{added['change_id']}" and event["profile"] == "work"
