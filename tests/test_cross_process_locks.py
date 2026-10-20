@@ -62,11 +62,19 @@ class OtherProcess:
     def __init__(self, lock_path):
         self.process = subprocess.Popen([sys.executable, "-c", _HOLDER, str(lock_path)],
                                         stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True)
-        assert self.process.stdout.readline().strip() == "held"
+        try:
+            assert self.process.stdout.readline().strip() == "held"
+        except BaseException:
+            self.process.kill()
+            raise
 
     def release(self):
         self.process.stdin.close()
-        self.process.wait(timeout=10)
+        try:
+            self.process.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            self.process.kill()
+            raise
 
 
 def _waits_for(lock_path, action):
@@ -77,7 +85,10 @@ def _waits_for(lock_path, action):
     result = {}
 
     def run():
-        result["value"] = action()
+        try:
+            result["value"] = action()
+        except BaseException as exc:  # re-raised below
+            result["error"] = exc
         done.set()
 
     thread = threading.Thread(target=run, daemon=True)
@@ -88,6 +99,8 @@ def _waits_for(lock_path, action):
         other.release()
     thread.join(10)
     assert done.is_set()
+    if "error" in result:
+        raise result["error"]
     return result["value"]
 
 
@@ -108,7 +121,7 @@ def test_a_wipe_waits_for_another_process_before_it_counts_and_unlinks(tmp_path,
     _waits_for(_lock_of(store), store.wipe)
     assert not store.path.exists()
     # The lock file stays, so a writer waiting on it never races the unlink.
-    assert _lock_of(store).exists()
+    assert _lock_of(store).stat().st_mode & 0o777 == 0o600
 
 
 @pytest.mark.parametrize("make", [

@@ -483,7 +483,9 @@ class PhoneStore:
         agent). The lock file outlives a wipe, so a writer waiting on it
         never races the unlink."""
         lock_path = self.path.with_name(f".{self.path.name}.lock")
-        with _thread_lock, open(lock_path, "a+b") as handle, _exclusive(handle):
+        self.path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+        flags = os.O_RDWR | os.O_CREAT | os.O_APPEND | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_BINARY", 0)
+        with _thread_lock, os.fdopen(os.open(lock_path, flags, 0o600), "a+b") as handle, _exclusive(handle):
             yield
 
     @contextlib.contextmanager
@@ -871,7 +873,9 @@ class PhoneStore:
             remaining = self._device_count()
             if remaining == 0:
                 for suffix in ("", "-wal", "-shm", "-journal"):
-                    with contextlib.suppress(FileNotFoundError):
+                    # Windows refuses while a reader has it open; the data
+                    # is already deleted, and the next wipe tries again.
+                    with contextlib.suppress(OSError):
                         os.unlink(f"{self.path}{suffix}")
         return {"deleted": True, "remaining_devices": remaining}
 
