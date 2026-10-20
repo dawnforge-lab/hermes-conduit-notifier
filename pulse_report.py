@@ -20,6 +20,7 @@ from __future__ import annotations
 import json
 import re
 import secrets
+import sqlite3
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone, tzinfo
 from pathlib import Path
@@ -103,13 +104,31 @@ def profile_homes(home: Path) -> list[tuple[str, Path]]:
     return found
 
 
+def their_home_chat(home: Path) -> str:
+    """Another profile's own Pulse home chat, so its reports aren't read
+    as chats: the one its store names, else the one titled like Pulse's.
+    "" when it has none."""
+    try:
+        if (Path(home) / store.DB_NAME).exists():
+            theirs = store.open_store(home)
+            chosen, title = theirs.get("home_session_key"), theirs.get("home_title") or "Pulse"
+        else:
+            chosen, title = "", store.DEFAULTS["home_title"]
+        if chosen:
+            return chosen
+        chats = hermes.find_home_chat(home, title)
+    except (hermes.HermesUnreadable, sqlite3.Error):
+        return ""
+    return chats[0].chat_id if chats else ""
+
+
 def recent_chats(home: Path, *, home_chat_id: str, since: float, zone: tzinfo,
                  others: Sequence[tuple[str, Path]] = ()) -> str:
     """User and assistant text since ``since``, per chat, most recent chat
     first. Not the home chat, cron runs or hidden rows. Chats from ``others``
     (other profiles) are labelled with the profile's name."""
     chats: dict[tuple[str, str], dict[str, Any]] = {}
-    sources = [("", home, home_chat_id)] + [(name, path, "") for name, path in others]
+    sources = [("", home, home_chat_id)] + [(name, path, their_home_chat(path)) for name, path in others]
     for profile, path, exclude in sources:
         try:
             rows = hermes.recent_messages(path, exclude_chat=exclude, since=since)
@@ -296,7 +315,7 @@ def build(home: Path, pulse_store: store.PulseStore, *, home_chat_id: str, now: 
     try:
         chats = recent_chats(home, home_chat_id=home_chat_id, since=since, zone=zone, others=others)
     except hermes.HermesUnreadable as error:
-        chats = f"Couldn't read the chats ({error})."
+        chats = f"Couldn't read the chats ({type(error).__name__})."
     header = f"## Now\n{datetime.fromtimestamp(now, zone).strftime('%A %d %B %Y, %H:%M')} ({zone_name or 'host time'})"
     start = _local(since, zone)
     sections = [header, phone, cron_jobs(home, others), memory_files(home, others),

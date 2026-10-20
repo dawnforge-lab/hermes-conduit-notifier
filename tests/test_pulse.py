@@ -18,6 +18,7 @@ import sqlite3
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import types
 
@@ -69,6 +70,7 @@ cli = _load("conduit_push.cli", ROOT / "cli.py")
 host = _load("conduit_push.pulse_host", ROOT / "pulse_host.py")
 ledger = _load("conduit_push.pulse_ledger", ROOT / "pulse_ledger.py")
 report = _load("conduit_push.pulse_report", ROOT / "pulse_report.py")
+memory = _load("conduit_push.pulse_memory", ROOT / "pulse_memory.py")
 
 SID = "20261019_165824_560887"  # a Conduit chat's stored id, as Eric's host showed it
 
@@ -404,6 +406,7 @@ def live(tmp_path, monkeypatch):
     pulse_store = store.open_store(tmp_path)
     # The daily report runs on the clock; its own tests turn it on.
     pulse_store.set("daily_report", False)
+    pulse_store.set("memory", False)  # likewise memory, which needs a model
     return types.SimpleNamespace(ctx=ctx, fake=fake, sent=sent, store=pulse_store)
 
 
@@ -1086,3 +1089,336 @@ def test_recent_messages_are_bounded(db, tmp_path):
     rows = hermes.recent_messages(tmp_path, exclude_chat=SID, since=0, max_chars=50, limit=10)
     assert [row["content"][:2] for row in rows] == [f"{n:02d}" for n in range(20, 30)]
     assert all(len(row["content"]) == 50 for row in rows)
+
+
+# Memory (slice 1) -------------------------------------------------------------------
+
+UTC = report.zone_for("UTC")
+DAY = 1_792_454_400.0  # 2026-10-20 00:00 UTC, a Tuesday
+
+
+def _row(n, role, content, at):
+    return {"id": n, "role": role, "content": content, "timestamp": at}
+
+
+class FakeModel:
+    """The memory model: returns the queued replies in turn, and keeps what it was shown."""
+
+    def __init__(self, *replies):
+        self.replies = list(replies)
+        self.shown = []
+
+    def __call__(self, instructions, text):
+        self.shown.append(text)
+        reply = self.replies.pop(0) if self.replies else {"items": []}
+        if isinstance(reply, Exception):
+            raise reply
+        return reply, 100
+
+
+def test_memory_chunks_split_on_dates_gaps_and_size():
+    rows = [_row(1, "user", "a", DAY + 3600), _row(2, "assistant", "b", DAY + 3700),
+            _row(3, "user", "c", DAY + 3700 + memory.GAP_S + 1),  # a long gap
+            _row(4, "user", "d", DAY + 86400 + 60),  # the next day
+            _row(5, "assistant", "e", DAY + 86400 + 120)]
+    assert [[r["id"] for r in c] for c in memory.chunks(rows, UTC, DAY + 3 * 86400)] == [[1, 2], [3], [4, 5]]
+    big = [_row(n, "user", "x" * 5000, DAY + n) for n in range(1, 6)]
+    assert [len(c) for c in memory.chunks(big, UTC, DAY + 86400)] == [2, 2, 1]
+
+
+def test_an_unanswered_message_waits_for_its_reply():
+    rows = [_row(1, "user", "a", DAY), _row(2, "assistant", "b", DAY + 60), _row(3, "user", "are you there?", DAY + 120)]
+    assert [[r["id"] for r in c] for c in memory.chunks(rows, UTC, DAY + 3600)] == [[1, 2]]
+    assert [[r["id"] for r in c] for c in memory.chunks(rows, UTC, DAY + memory.HOLD_S + 200)] == [[1, 2, 3]]
+
+
+def test_long_code_is_cut_and_tool_outcomes_sit_where_they_happened():
+    chunk = [_row(1, "user", "set it up", DAY + 60), _row(2, "assistant", "```\n" + "x\n" * 300 + "```done", DAY + 180)]
+    outcome = {"at": DAY + 120, "tool": "conduit_phone", "action": "add_reminder", "label": "Dentist",
+               "status": "ok", "ids_json": "{}"}
+    text = memory.render(chunk, UTC, [outcome])
+    assert text.split("\n") == ["[1] Tue 2026-10-20 00:01 User: set it up",
+                                "    (tool) conduit_phone add_reminder 'Dentist' → ok",
+                                "[2] Tue 2026-10-20 00:03 Hermes: [code, 302 lines]done"]
+
+
+def test_only_items_said_in_the_chat_are_kept():
+    chunk = [_row(11, "user", "I’ll call the dentist on Friday, promise", DAY + 60),
+             _row(12, "assistant", "I'll check the build tomorrow morning and tell you.", DAY + 120)]
+    model = FakeModel({"items": [
+        {"kind": "commitment", "text": "The user will call the dentist.", "evidence": "I'll call the dentist on Friday",
+         "line": 1, "explicit": True, "due": "2026-10-23", "due_words": "on Friday"},
+        {"kind": "promise", "text": "Hermes will check the build.", "evidence": "\"I'll check the build ... tell you\"",
+         "line": 2.0, "explicit": True, "due": "2026-10-21T09:00", "due_words": "at nine"},  # never said
+        {"kind": "fact", "text": "The user's sister lives in Lyon.", "evidence": "my sister lives in Lyon", "line": 1},
+        {"kind": "mood", "text": "x", "evidence": "promise", "line": 1},
+        {"kind": "fact", "text": "x", "evidence": "I ... on", "line": 1},  # too little to place
+        "not an item"]})
+    items, tokens = memory.extract(model, chunk, UTC)
+    assert tokens == 100 and "[1] Tue 2026-10-20 00:01 User: I’ll call the dentist" in model.shown[0]
+    assert [(i["kind"], i["message_id"], i["explicit"], i["due"]) for i in items] == [
+        ("commitment", 11, 1, "2026-10-23"), ("promise", 12, 1, "")]
+    assert items[0]["due_at"] == DAY + 3 * 86400 and items[0]["mentioned_at"] == DAY + 60
+    with pytest.raises(memory.BadReply):
+        memory.extract(FakeModel(["items"]), chunk, UTC)
+
+
+def test_a_due_date_must_be_said_near_its_item():
+    chunk = [_row(1, "user", "Book the vet", DAY + 60), _row(2, "assistant", "When?", DAY + 70),
+             _row(3, "user", "Thursday works", DAY + 80), _row(4, "user", "Also my sister visits", DAY + 90)]
+    item = lambda evidence: {"kind": "commitment", "text": "x", "evidence": evidence, "due": "2026-10-22",
+                             "due_words": "Thursday"}
+    items, _ = memory.extract(FakeModel({"items": [item("Book the vet"), item("my sister visits")]}), chunk, UTC)
+    assert [i["due"] for i in items] == ["", "2026-10-22"]  # two lines away, then the line just after
+    wrong = lambda due: {"kind": "commitment", "text": "x", "evidence": "Thursday works", "due": due,
+                         "due_words": "Thursday"}
+    items, _ = memory.extract(FakeModel({"items": [wrong("2026-10-23"), wrong("2026-10-15"), wrong("26-10-22"),
+                                                   wrong("2026-10-29T09:30")]}), chunk, UTC)
+    # not a Thursday, before it was said, a short year; a later Thursday stays
+    assert [i["due"] for i in items] == ["", "", "", "2026-10-29T09:30"]
+    chunk = [_row(1, "user", "Renew the lease next month", DAY + 60)]
+    items, _ = memory.extract(FakeModel({"items": [{"kind": "commitment", "text": "x", "evidence": "Renew the lease",
+                                                    "due": "2026-11-20", "due_words": "next month"}]}), chunk, UTC)
+    assert items[0]["due"] == "2026-11-20"  # "month" names no Monday
+
+
+def test_chat_reads_match_hermes(db, tmp_path):
+    db.session()
+    db.session("work", title="Work", pinned=0)
+    db.session("work2", title="Work", pinned=0, parent="work")
+    db.session("cronrun", title="Nightly", pinned=0, source="cron")
+    db.message("user", "home chat text", at=DAY + 10)
+    first = db.message("user", "hello", sid="work", at=DAY + 20)
+    db.message("tool", "tool output", sid="work", at=DAY + 25)
+    db.message("assistant", "hi", sid="work", at=DAY + 30)
+    db.message("user", "later", sid="work2", at=DAY + 40)
+    db.message("user", "nightly", sid="cronrun", at=DAY + 50)
+    rows = hermes.chat_activity(tmp_path, exclude_chat=SID, since=DAY)
+    assert [(r["chat_id"], r["parent"], r["last_at"]) for r in rows] == [("work", None, DAY + 30),
+                                                                        ("work2", "work", DAY + 40)]
+    rows = hermes.chat_messages(tmp_path, chat_id="work", after_id=first, since=0, max_chars=1, limit=10)
+    assert [(r["role"], r["content"]) for r in rows] == [("assistant", "h")]
+
+
+@pytest.fixture
+def remembering(live, db, monkeypatch):
+    live.store.set("memory_since", DAY)
+    db.session()
+    db.session("work", title="Work", pinned=0)
+    return live
+
+
+def _remember(live, model, now, sources=None):
+    return memory.run(live.store, sources or [("", live.store.path.parent, SID)], model, zone=UTC, now=now)
+
+
+def test_a_quiet_chat_is_read_once_from_where_it_stopped(remembering, db):
+    db.message("user", "home chat text", at=DAY + 10)
+    db.message("user", "Remind me to renew my passport", sid="work", at=DAY + 60)
+    db.message("assistant", "Will do.", sid="work", at=DAY + 70)
+    model = FakeModel({"items": [{"kind": "commitment", "text": "The user will renew their passport.",
+                                  "evidence": "renew my passport", "line": 1, "explicit": True}]})
+    assert _remember(remembering, model, DAY + 600)["chunks"] == 0  # still going
+    done = _remember(remembering, model, DAY + 70 + memory.IDLE_S)
+    assert (done["chunks"], done["items"], done["tokens"]) == (1, 1, 100)
+    assert "home chat text" not in model.shown[0]
+    [item] = remembering.store.open_items()
+    assert (item["profile"], item["chat_id"], item["kind"], item["status"]) == ("", "work", "commitment", "open")
+    assert _remember(remembering, model, DAY + 7200)["chunks"] == 0 and len(model.shown) == 1
+    db.message("user", "Also book the vet", sid="work", at=DAY + 7300)
+    db.message("assistant", "Sure.", sid="work", at=DAY + 7310)
+    _remember(remembering, model, DAY + 7310 + memory.IDLE_S)
+    assert "renew my passport" not in model.shown[1] and "Also book the vet" in model.shown[1]
+    assert remembering.store.item_counts() == {"commitment": 1}
+
+
+def test_a_chunk_two_processes_read_is_kept_once(remembering, db):
+    db.message("user", "Remind me to renew my passport", sid="work", at=DAY + 60)
+    db.message("assistant", "Will do.", sid="work", at=DAY + 70)
+    reply = {"items": [{"kind": "commitment", "text": "x", "evidence": "renew my passport", "line": 1}]}
+
+    class Racing(FakeModel):
+        def __call__(self, instructions, text):
+            if not self.shown:  # the other process finishes the same chunk during this call
+                _remember(remembering, FakeModel(reply), DAY + 70 + memory.IDLE_S)
+            return super().__call__(instructions, text)
+
+    done = _remember(remembering, Racing(reply), DAY + 70 + memory.IDLE_S)
+    assert done["chunks"] == 0 and len(remembering.store.open_items()) == 1
+    # A failure on a chunk someone else already read isn't counted against the chat.
+    assert remembering.store.chunk_failed("", "work", retry_at=DAY, after_id=0) == 0
+    # Nor is a second reader's failure in the same round.
+    assert remembering.store.chunk_failed("", "fresh", retry_at=DAY + 100, now=DAY) == 1
+    assert remembering.store.chunk_failed("", "fresh", retry_at=DAY + 110, now=DAY + 10) == 0
+    assert remembering.store.chunk_failed("", "fresh", retry_at=DAY + 300, now=DAY + 200) == 2
+    assert remembering.store.watermark("", "work")["failures"] == 0
+
+
+def test_tool_outcomes_show_once_across_chunks(remembering, db):
+    remembering.store.set("memory_since", DAY)
+    db.message("user", "add it", sid="work", at=DAY + 60)
+    db.message("assistant", "done", sid="work", at=DAY + 120)
+    db.message("user", "next one", sid="work", at=DAY + 120 + memory.GAP_S + 60)
+    db.message("assistant", "ok", sid="work", at=DAY + 120 + memory.GAP_S + 70)
+    remembering.store.add_outcome(dict(at=DAY + 100, session_id="work", turn_id="t", task_id="", tool_call_id="",
+                                       tool="conduit_phone", action="add_reminder", label="Vet", args_digest="",
+                                       status="ok", error_type="", error="", ids_json="{}", duration_ms=1))
+    model = FakeModel()
+    _remember(remembering, model, DAY + memory.GAP_S + memory.IDLE_S + 200)
+    assert ["add_reminder" in text for text in model.shown] == [True, False]
+
+
+def test_memory_stops_at_its_token_budget(remembering, db):
+    for sid in ("work", "w2"):
+        if sid == "w2":
+            db.session("w2", title="Other", pinned=0)
+        db.message("user", f"hello {sid}", sid=sid, at=DAY + 60)
+        db.message("assistant", "hi", sid=sid, at=DAY + 70)
+    model = FakeModel()
+    done = memory.run(remembering.store, [("", remembering.store.path.parent, SID)], model, zone=UTC,
+                      now=DAY + 70 + memory.IDLE_S, budget=50)
+    assert done["chunks"] == 1 and len(model.shown) == 1  # the first call used 100 tokens
+
+
+def test_a_continued_chat_starts_where_its_parent_stopped(remembering, db):
+    db.message("user", "first part", sid="work", at=DAY + 60)
+    db.message("assistant", "ok", sid="work", at=DAY + 70)
+    model = FakeModel()
+    _remember(remembering, model, DAY + 70 + memory.IDLE_S)
+    db.message("user", "unread when compressed", sid="work", at=DAY + 3000)
+    db.message("assistant", "noted", sid="work", at=DAY + 3010)
+    db.session("work2", title="Work", pinned=0, parent="work")
+    db.message("user", "first part", sid="work2", at=DAY + 60)  # the tail compression carried over
+    db.message("user", "unread when compressed", sid="work2", at=DAY + 3000)
+    db.message("user", "second part", sid="work2", at=DAY + 4000)
+    db.message("assistant", "ok", sid="work2", at=DAY + 4010)
+    _remember(remembering, model, DAY + 4010 + memory.IDLE_S)
+    _remember(remembering, model, DAY + 4010 + memory.IDLE_S)  # the child waited for its parent
+    assert [text.count("unread when compressed") for text in model.shown] == [0, 1, 0]
+    assert "first part" not in model.shown[2] and "second part" in model.shown[2]
+
+
+def test_a_failing_chunk_is_retried_then_skipped(remembering, db):
+    db.message("user", "hello", sid="work", at=DAY + 60)
+    db.message("assistant", "hi", sid="work", at=DAY + 70)
+    model = FakeModel(TimeoutError(), TimeoutError(), ["not", "items"])
+    now = DAY + 70 + memory.IDLE_S
+    first = _remember(remembering, model, now)
+    assert first["failed"] == 1 and first["tokens"] > memory.MAX_TOKENS  # a failed call still counts, estimated
+    assert _remember(remembering, model, now + 60)["failed"] == 0  # waits for its retry
+    _remember(remembering, model, now + memory.RETRY_S)
+    last = _remember(remembering, model, now + 2 * memory.RETRY_S)
+    assert (last["skipped"], last["tokens"]) == (1, 100)  # a bad reply counts what the model reported
+    assert len(model.shown) == 3 and _remember(remembering, model, now + 3 * memory.RETRY_S)["failed"] == 0
+    assert len(model.shown) == 3  # skipped after the third failure, not tried forever
+    assert remembering.store.watermark("", "work")["failures"] == 0
+
+
+def test_failed_calls_count_toward_a_runs_limit(remembering, db):
+    for n in range(memory.MAX_CHUNKS + 2):
+        db.session(f"c{n}", title=f"Chat {n}", pinned=0)
+        db.message("user", "hello", sid=f"c{n}", at=DAY + 60)
+        db.message("assistant", "hi", sid=f"c{n}", at=DAY + 70)
+    model = FakeModel(*[TimeoutError()] * 10)
+    _remember(remembering, model, DAY + 70 + memory.IDLE_S)
+    assert len(model.shown) == memory.MAX_CHUNKS
+
+
+def test_other_profiles_are_remembered_with_their_name(remembering, db, tmp_path, request):
+    bot_home = tmp_path / "profiles" / "nahida"
+    bot_home.mkdir(parents=True)
+    bot = StateDB(bot_home, request.node.callspec.params["db"])
+    bot.session("b1", title="Bot Chat", pinned=0)
+    bot.session("bp", title="Pulse", pinned=1)  # that profile's own Pulse chat
+    bot.message("user", "Pulse shadow report text", sid="bp", at=DAY + 60)
+    bot.message("user", "My mum's birthday is on 3 March", sid="b1", at=DAY + 60)
+    bot.message("assistant", "Noted.", sid="b1", at=DAY + 70)
+    model = FakeModel({"items": [{"kind": "fact", "text": "The user's mum's birthday is 3 March.",
+                                  "evidence": "My mum's birthday is on 3 March", "line": 1, "explicit": True}]})
+    _remember(remembering, model, DAY + 70 + memory.IDLE_S,
+              [("", tmp_path, SID), ("nahida", bot_home, report.their_home_chat(bot_home)), ("gone", tmp_path / "nowhere", "")])
+    [item] = remembering.store.open_items("fact")
+    assert (item["profile"], item["chat_id"]) == ("nahida", "b1")
+    assert len(model.shown) == 1 and report.their_home_chat(bot_home) == "bp"
+    assert memory.describe(item, UTC).startswith("#1 [nahida] The user's mum's birthday is 3 March.\n")
+
+
+def test_the_loop_runs_memory_on_its_own_thread(remembering, db, monkeypatch):
+    remembering.store.set("enabled", True)
+    remembering.store.set("memory", True)
+    remembering.store.set("memory_since", None)
+    calls = []
+
+    class Llm:
+        def complete_structured(self, **kwargs):
+            calls.append(kwargs)
+            return types.SimpleNamespace(parsed={"items": []}, usage=types.SimpleNamespace(total_tokens=7))
+
+    remembering.ctx.llm = Llm()
+    monkeypatch.setattr(pulse, "_memory_thread", None)
+    monkeypatch.setattr(pulse, "_memory_task", True)
+    monkeypatch.setattr(pulse, "_stop", threading.Event())
+    start = time.time()
+    pulse.tick(start)
+    pulse._memory_thread.join(5)
+    assert remembering.store.get("memory_since") == start  # memory starts now, not from old chats
+    db.message("user", "hello", sid="work", at=start + 1)
+    db.message("assistant", "hi", sid="work", at=start + 2)
+    pulse.tick(start + 60)
+    assert pulse._memory_thread.ident and calls == []  # not due again yet
+    stopping = threading.Event()
+    assert memory.run(remembering.store, [("", remembering.store.path.parent, SID)],
+                      lambda *_: (stopping.set(), ({"items": []}, 1))[1], zone=UTC, now=start + 4000,
+                      still_leader=lambda: not stopping.is_set())["chunks"] == 0  # stopped during the call
+    assert remembering.store.watermark("", "work") is None
+    pulse._memory_thread.join(5)
+    monkeypatch.setattr(memory, "IDLE_S", 0.0)
+    remembering.store.set("memory_requested", True)
+    pulse.tick(start + 120)
+    pulse._memory_thread.join(5)
+    assert [(c["task"], c["json_mode"]) for c in calls] == [(memory.TASK, True)]
+    assert remembering.store.get("memory_usage") == {"chunks": 1, "tokens": 7, "failed": 0, "skipped": 0}
+    pulse._stop.set()  # an unloaded plugin's run makes no more calls
+    db.message("user", "more", sid="work", at=start + 130)
+    db.message("assistant", "ok", sid="work", at=start + 131)
+    remembering.store.set("memory_requested", True)
+    pulse.tick(start + 180)
+    pulse._memory_thread.join(5)
+    assert len(calls) == 1
+
+
+def test_memory_command(remembering, db, capsys, monkeypatch):
+    monkeypatch.setattr(sys.modules["hermes_constants"], "get_hermes_home", pulse.get_hermes_home)
+    run = lambda value="", extra="": cli.dispatch(types.SimpleNamespace(
+        conduit_push_action="pulse", pulse_action="memory", value=value, extra=extra))
+    remembering.store.path.unlink()
+    assert run() == 0 and run("fact") == 0 and run("now") == 1 and run("forget", "1") == 1
+    assert not remembering.store.path.exists()  # nothing but on/off leaves a file on a home that never ran Pulse
+    assert run("on") == 0 and remembering.store.get("memory") is True
+    capsys.readouterr()
+    assert run() == 0 and "hasn't kept anything" in capsys.readouterr().out
+    remembering.store.advance("", "work", message_id=5, at=DAY, items=[dict(
+        kind="promise", text="Hermes will check the build.", evidence="I'll check the build", explicit=1,
+        due="2026-10-21", due_at=DAY + 86400, message_id=5, mentioned_at=DAY + 60)])
+    assert run() == 0
+    out = capsys.readouterr().out
+    assert "Promise (1)\n  #1 Hermes will check the build. (due 2026-10-21)\n      \"I'll check the build\" (20 Oct)" in out
+    assert run("fact") == 0 and "hasn't kept" in capsys.readouterr().out
+    monkeypatch.setattr(cli, "MEMORY_LIST", 0)
+    assert run() == 0 and "The 0 most recent of 1:" in capsys.readouterr().out
+    monkeypatch.setattr(cli, "MEMORY_LIST", 50)
+    assert run("mood") == 2
+    assert run("forget", "x") == 2 and run("forget", "#²") == 2 and run("forget", "#9") == 1
+    assert run("forget", "#1") == 0 and remembering.store.open_items() == []
+    assert run("now") == 1  # Pulse is off
+    remembering.store.set("enabled", True)
+    remembering.store.set("memory", False)
+    assert run("now") == 1
+    remembering.store.set("memory", True)
+    assert run("now") == 0 and remembering.store.get("memory_requested") is True
+    capsys.readouterr()
+    cli.dispatch(types.SimpleNamespace(conduit_push_action="pulse", pulse_action="status", value=""))
+    assert "Memory: nothing kept yet (0 chat chunks read, 0 tokens)" in capsys.readouterr().out
+    remembering.store.set("memory", False)
+    cli.dispatch(types.SimpleNamespace(conduit_push_action="pulse", pulse_action="status", value=""))
+    assert "Memory: off; nothing kept yet (" in capsys.readouterr().out
