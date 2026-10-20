@@ -1311,13 +1311,17 @@ def _parse_sharing(value: Any) -> dict[str, Any]:
     return sharing
 
 
+def _not_ahead(at: datetime, field: str, now: int) -> datetime:
+    if at.timestamp() > now + MAX_CLOCK_SKEW_S:
+        raise PhoneError("clock_skew", f"{field} is more than {MAX_CLOCK_SKEW_S // 60} minutes ahead of this host;"
+                         " check the iPhone's clock and the host's")
+    return at
+
+
 def _apply(db: sqlite3.Connection, device_id: str, batch: dict[str, Any], now: int) -> dict[str, Any]:
     # A batch from the future would shut out every real one after it (they'd
     # all look older), revocations included: only clock skew is allowed.
-    sent_at = parse_time(batch.get("sent_at"), "sent_at")
-    if sent_at.timestamp() > now + MAX_CLOCK_SKEW_S:
-        raise PhoneError("clock_skew", f"sent_at is more than {MAX_CLOCK_SKEW_S // 60} minutes ahead of this host;"
-                         " check the iPhone's clock and the host's")
+    sent_at = _not_ahead(parse_time(batch.get("sent_at"), "sent_at"), "sent_at", now)
     sharing = _parse_sharing(batch.get("sharing"))
     tz = batch.get("time_zone")
     if tz is not None and (not isinstance(tz, str) or not _TZ.match(tz)):
@@ -1389,6 +1393,8 @@ def _apply(db: sqlite3.Connection, device_id: str, batch: dict[str, Any], now: i
         try:
             window = (datetime.fromisoformat(stored[3]), datetime.fromisoformat(stored[4]))
         except (TypeError, ValueError):
+            window = None
+        if window is not None and (window[0].tzinfo is None or window[1].tzinfo is None or window[1] <= window[0]):
             window = None
 
     counts = {"events": 0, "reminders": 0, "deleted": 0}
@@ -1643,7 +1649,7 @@ def _parse_location_alarm(value: Any, field: str) -> dict[str, str] | None:
 
 def _parse_status(value: Any, now: int) -> dict[str, Any]:
     status = _object(value, "status") or {}
-    at = parse_time(status.get("at"), "status.at", latest=datetime.fromtimestamp(now + MAX_CLOCK_SKEW_S, timezone.utc))
+    at = _not_ahead(parse_time(status.get("at"), "status.at"), "status.at", now)
     clean = {
         "battery": _number(status.get("battery"), "status.battery", 0, 1),
         "charging": _bool(status.get("charging"), "status.charging"),
@@ -1659,7 +1665,7 @@ def _parse_status(value: Any, now: int) -> dict[str, Any]:
 
 def _parse_focus(value: Any, now: int) -> dict[str, Any]:
     focus = _object(value, "focus") or {}
-    at = parse_time(focus.get("at"), "focus.at", latest=datetime.fromtimestamp(now + MAX_CLOCK_SKEW_S, timezone.utc))
+    at = _not_ahead(parse_time(focus.get("at"), "focus.at"), "focus.at", now)
     active = _bool(focus.get("active"), "focus.active")
     if active is None:
         raise PhoneError("malformed", "focus.active must be true or false")

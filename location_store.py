@@ -462,11 +462,15 @@ class LocationStore:
             )
             # A new key means a reinstall, sharing turned off and on, or a
             # new pairing: nothing the old key sent carries over to it. The
-            # phone sends its saved places again with the new key.
+            # phone sends its saved places again with the new key. Its
+            # sharing stays until then (its maps choice counts meanwhile), and
+            # maps rows keep counting against the budget, emptied and closed.
             if known and bytes(known[0]) != device_public:
-                for table in ("fixes", "visits", "places", "maps"):
+                for table in ("fixes", "visits", "places"):
                     db.execute(f"DELETE FROM {table} WHERE device=?", (device_id,))
-                db.execute("UPDATE devices SET last_seen=NULL, last_sent=NULL, sharing=NULL WHERE id=?", (device_id,))
+                db.execute("UPDATE maps SET cache='', request='{}', answer=NULL,"
+                           " answered_at=COALESCE(answered_at, ?) WHERE device=?", (now, device_id))
+                db.execute("UPDATE devices SET last_sent=NULL WHERE id=?", (device_id,))
             generation = _meta(db, "generation")
         return {"kid": kid, "host_public_key": b64u(host_public), "generation": generation}
 

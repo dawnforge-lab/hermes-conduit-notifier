@@ -459,6 +459,11 @@ def test_a_future_batch_is_refused_and_cant_hold_off_a_revocation(store, iphone)
     with pytest.raises(phone.PhoneError) as error:
         store.ingest(iphone.seal(_batch("batch-0002", sent_at="2026-10-14T08:06:00+01:00")))
     assert error.value.code == "clock_skew"
+    batch = _batch("batch-0002", sent_at="2026-10-14T08:01:00+01:00")
+    batch["status"]["at"] = "2026-10-14T08:06:00+01:00"
+    with pytest.raises(phone.PhoneError) as error:
+        store.ingest(iphone.seal(batch))
+    assert error.value.code == "clock_skew"
     # A watermark stored before the limit (a day ahead) doesn't make the
     # real batches after it look stale.
     with store._write() as db:
