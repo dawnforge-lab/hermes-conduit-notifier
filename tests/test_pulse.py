@@ -145,6 +145,12 @@ SCHEMAS = [pytest.param(FIXTURE_SCHEMA, id="fixture"),
                         marks=pytest.mark.skipif(HERMES_SCHEMA is None, reason="no Hermes to read the schema from"))]
 
 
+@pytest.fixture(autouse=True)
+def _no_lcm_settings(monkeypatch):
+    """The report's budget reads hermes-lcm's threshold from the environment."""
+    monkeypatch.delenv(report.LCM_THRESHOLD, raising=False)
+
+
 @pytest.fixture(params=SCHEMAS)
 def db(request, tmp_path):
     return StateDB(tmp_path, request.param)
@@ -853,7 +859,7 @@ def test_the_report_lists_active_cron_jobs(tmp_path):
         assert report.cron_jobs(tmp_path) == ""
 
 
-def test_the_report_context_stays_within_its_budget(db, tmp_path, pulse_store):
+def test_the_report_context_stays_within_its_budget(db, tmp_path):
     now = time.time()
     db.session()
     for n in range(40):
@@ -861,8 +867,64 @@ def test_the_report_context_stays_within_its_budget(db, tmp_path, pulse_store):
         for m in range(20):
             db.message("user", "x" * 1000, sid=f"c{n}", at=now - 3600 + n * 10 + m)
     chats = report.recent_chats(tmp_path, home_chat_id=SID, since=now - 86400, zone=report.zone_for("UTC"))
-    assert len(chats) <= report.CHATS_BUDGET + 200
+    assert len(chats) <= report.CHATS_BUDGET
     assert chats.startswith("### Chat 39")  # the most recent chat first
+    small = report.recent_chats(tmp_path, home_chat_id=SID, since=now - 86400, zone=report.zone_for("UTC"),
+                                budget=1500)
+    assert small.startswith("### Chat 39") and len(small) <= 1500  # a bigger chat is cut, not dropped
+    none = report.recent_chats(tmp_path, home_chat_id=SID, since=now - 86400, zone=report.zone_for("UTC"),
+                               budget=10)
+    assert none == "(Chats left out: no room in this report.)"
+
+
+def test_the_whole_report_message_stays_under_its_budget(db, tmp_path, live, monkeypatch):
+    # A host swapped a 22k-character report for a file pointer the turn couldn't open.
+    monkeypatch.setenv(report.LCM_THRESHOLD, "50000")  # LCM's cap above Pulse's own
+    now = time.time()
+    db.session()
+    for n in range(40):
+        db.session(f"c{n}", title=f"Chat {n}", pinned=0)
+        for m in range(20):
+            db.message("user", "x" * 1000, sid=f"c{n}", at=now - 3600 + n * 10 + m)
+    (tmp_path / "memories").mkdir(exist_ok=True)
+    (tmp_path / "memories" / "USER.md").write_text("u" * 9000)
+    (tmp_path / "memories" / "MEMORY.md").write_text("m" * 9000)
+    context, since = report.build(tmp_path, live.store, home_chat_id=SID, now=now)
+    assert len(report.report_text("p12345678-1", context, since)) <= report.REPORT_BUDGET
+    assert "### Chat 39" in context  # the chats still get their share
+
+
+def test_the_report_stays_under_lcms_externalization_threshold(db, tmp_path, live, monkeypatch):
+    now = time.time()
+    db.session()
+    for n in range(40):
+        db.session(f"c{n}", title=f"Chat {n}", pinned=0)
+        for m in range(20):
+            db.message("user", "x" * 1000, sid=f"c{n}", at=now - 3600 + n * 10 + m)
+    (tmp_path / "memories").mkdir(exist_ok=True)
+    # LCM's default threshold counts even when nothing here says it's on.
+    assert report.report_budget() == report.LCM_DEFAULT_THRESHOLD - report.LCM_MARGIN
+    context, since = report.build(tmp_path, live.store, home_chat_id=SID, now=now)
+    assert len(report.report_text("p12345678-1", context, since)) < report.LCM_DEFAULT_THRESHOLD
+    assert "### Chat 39" in context
+    monkeypatch.setenv(report.LCM_THRESHOLD, "50000")
+    assert report.report_budget() == report.REPORT_BUDGET
+    monkeypatch.setenv(report.LCM_THRESHOLD, "junk")
+    assert report.report_budget() == report.LCM_DEFAULT_THRESHOLD - report.LCM_MARGIN
+    monkeypatch.setenv(report.LCM_THRESHOLD, "1")
+    assert report.report_budget() == len(report.REPORT_TEXT) + 1_000
+    # The message itself never goes over, whatever the context.
+    monkeypatch.delenv(report.LCM_THRESHOLD)
+    for name in ("USER.md", "MEMORY.md"):
+        (tmp_path / "memories" / name).write_text("z" * 9000)
+    live.store.set("report_profiles", "this")
+    monkeypatch.setattr(report, "MEMORY_BUDGET", 12_000)  # the other sections alone fill the report
+    context, since = report.build(tmp_path, live.store, home_chat_id=SID, now=now)
+    assert "(cut here: no room in this report)" in context and "### Chat 39" in context
+    assert len(report.report_text("p12345678-1", context, since)) <= report.report_budget()
+    monkeypatch.setenv(report.LCM_THRESHOLD, "1")
+    text = report.report_text("p12345678-12", "y" * 50_000, "Tue 20 Oct 18:00")
+    assert len(text) <= report.report_budget() and text.endswith(">>>")
 
 
 def test_items_and_ratings_are_read_from_the_text():

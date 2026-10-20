@@ -18,6 +18,7 @@ its own reader, the memory files as text.
 from __future__ import annotations
 
 import json
+import os
 import re
 import secrets
 import sqlite3
@@ -36,7 +37,16 @@ DEFAULT_TIMES = "08:00,13:00,18:00"
 MIN_WINDOW_S = 4 * 3600.0
 WINDOW_S = 86400.0
 # Budgets, in characters, so the report turn stays small for a cheap model.
+# The whole message stays under report_budget(): hermes-lcm's large output
+# externalization (when on) swaps a longer user message for a pointer to a file (seen
+# 2026-10-20 at 22k characters), and a Pulse turn can't use tools to open it.
+# Chats get what the rest leaves.
+REPORT_BUDGET = 15_000
+LCM_THRESHOLD = "LCM_LARGE_OUTPUT_EXTERNALIZATION_THRESHOLD_CHARS"
+LCM_DEFAULT_THRESHOLD = 12_000  # hermes-lcm's own default
+LCM_MARGIN = 500
 CHATS_BUDGET = 12_000
+MIN_CHATS_BUDGET = 2_000
 PER_CHAT_BUDGET = 2_500
 PER_MESSAGE = 400
 MEMORY_BUDGET = 3_000
@@ -123,7 +133,7 @@ def their_home_chat(home: Path) -> str:
 
 
 def recent_chats(home: Path, *, home_chat_id: str, since: float, zone: tzinfo,
-                 others: Sequence[tuple[str, Path]] = ()) -> str:
+                 others: Sequence[tuple[str, Path]] = (), budget: int = CHATS_BUDGET) -> str:
     """User and assistant text since ``since``, per chat, most recent chat
     first. Not the home chat, cron runs or hidden rows. Chats from ``others``
     (other profiles) are labelled with the profile's name."""
@@ -148,17 +158,23 @@ def recent_chats(home: Path, *, home_chat_id: str, since: float, zone: tzinfo,
             chat["last"] = max(chat["last"], row["timestamp"])
     out, used = [], 0
     for chat in sorted(chats.values(), key=lambda c: c["last"], reverse=True):
+        title = f"### {_clip(chat['title'], 80)}\n"
+        # The chat's own budget, or what's left when that's less, so the
+        # last chat that gets in keeps its newest lines.
+        room = min(PER_CHAT_BUDGET, budget - used - len(title))
         lines, size = [], 0
-        for line in reversed(chat["lines"]):  # the newest that fit the chat's budget
-            if size + len(line) > PER_CHAT_BUDGET:
+        for line in reversed(chat["lines"]):  # the newest that fit
+            if size + len(line) > room:
                 break
             lines.append(line)
             size += len(line) + 1
-        block = f"### {_clip(chat['title'], 80)}\n" + "\n".join(reversed(lines))
-        if used + len(block) > CHATS_BUDGET:
-            break
+        if not lines:
+            continue  # this chat's newest line doesn't fit; an older chat's may
+        block = title + "\n".join(reversed(lines))
         out.append(block)
-        used += len(block)
+        used += len(block) + 2  # with the blank line that joins it to the next
+    if chats and not out:
+        return "(Chats left out: no room in this report.)"
     return "\n\n".join(out)
 
 
@@ -312,24 +328,58 @@ def build(home: Path, pulse_store: store.PulseStore, *, home_chat_id: str, now: 
     zone_name = pulse_store.get("time_zone") or zone_name
     zone = zone_for(zone_name)
     others = profile_homes(home) if pulse_store.get("report_profiles") == "all" else []
-    try:
-        chats = recent_chats(home, home_chat_id=home_chat_id, since=since, zone=zone, others=others)
-    except hermes.HermesUnreadable as error:
-        chats = f"Couldn't read the chats ({type(error).__name__})."
     header = f"## Now\n{datetime.fromtimestamp(now, zone).strftime('%A %d %B %Y, %H:%M')} ({zone_name or 'host time'})"
     start = _local(since, zone)
     sections = [header, phone, cron_jobs(home, others), memory_files(home, others),
-                failed_calls(pulse_store, since, zone),
-                f"## Chats since {start}\n" + (chats or "No chats since then.")]
-    return "\n\n".join(section for section in sections if section), start
+                failed_calls(pulse_store, since, zone)]
+    sections = [section for section in sections if section]
+    title = f"## Chats since {start}\n"
+    # Room the instructions and the other sections leave, so the whole
+    # message stays under report_budget(). The 100 estimates what report_text
+    # fills into REPORT_TEXT (the tag, the start time, the kinds and the
+    # fence); report_text itself cuts anything still over.
+    left = report_budget() - len(REPORT_TEXT) - sum(len(section) + 2 for section in sections) - len(title) - 100
+    budget = min(CHATS_BUDGET, max(MIN_CHATS_BUDGET, left))
+    try:
+        chats = recent_chats(home, home_chat_id=home_chat_id, since=since, zone=zone, others=others, budget=budget)
+    except hermes.HermesUnreadable as error:
+        chats = f"Couldn't read the chats ({type(error).__name__})."
+    chats = title + (chats or "No chats since then.")
+    # When the other sections leave the chats less than their minimum, the
+    # other sections give way: the chats are what the report is about.
+    room = report_budget() - len(REPORT_TEXT) - 100 - len(chats) - 2
+    rest = "\n\n".join(sections)
+    if len(rest) > room:
+        rest = rest[:max(0, room - 40)] + "\n(cut here: no room in this report)"
+    return rest + "\n\n" + chats, start
+
+
+def report_budget() -> int:
+    """REPORT_BUDGET, kept under hermes-lcm's externalization threshold.
+    The threshold counts whether or not LCM's externalization looks on from
+    here: a report a little shorter than it could be costs little, one LCM
+    swaps for a file pointer is lost."""
+    try:
+        threshold = int(os.environ.get(LCM_THRESHOLD) or LCM_DEFAULT_THRESHOLD)
+    except ValueError:
+        threshold = LCM_DEFAULT_THRESHOLD
+    # Below the instructions plus a little context, no report fits; LCM's
+    # default is 12,000, so only a deliberately tiny threshold gets here.
+    return max(len(REPORT_TEXT) + 1_000, min(REPORT_BUDGET, threshold - LCM_MARGIN))
 
 
 def report_text(tag: str, context: str, since: str) -> str:
+    """The report turn's message, its context cut at the end if it would
+    take the message over report_budget()."""
+    kinds = ", ".join(KINDS)
     # A fresh marker per report, so text in the context can't close the fence.
     fence = secrets.token_hex(6)
     while fence in context:
         fence = secrets.token_hex(6)
-    return REPORT_TEXT.format(tag=tag, kinds=", ".join(KINDS), context=context, since=since, fence=fence)
+    room = report_budget() - len(REPORT_TEXT.format(tag=tag, kinds=kinds, context="", since=since, fence=fence))
+    if len(context) > room:
+        context = context[:max(0, room - 1)] + "…"
+    return REPORT_TEXT.format(tag=tag, kinds=kinds, context=context, since=since, fence=fence)
 
 
 # Ratings ------------------------------------------------------------------------
