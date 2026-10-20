@@ -176,3 +176,10 @@ def test_an_unreadable_desktop_views_file_is_never_overwritten(tmp_path, monkeyp
     store.flush()  # logged, not raised
     monkeypatch.setattr(builtins, "open", real_open)
     assert path.read_text() == original
+
+
+def test_a_room_picture_read_never_fails_on_a_lock_file_it_cannot_open(tmp_path):
+    root = tmp_path / "room-images"
+    (root / api.ROOM_IMAGE_LOCK_FILE).mkdir(parents=True)  # can't be opened for writing
+    assert api.read_room_image(str(root), "room_1") is None
+    assert api.clear_room_image(str(root), "room_1") is False

@@ -6108,47 +6108,54 @@ def _pairing_state_lock(path: Any):
     # The same lock file client.state_file_lock takes in the agent process,
     # so a hook rewriting the state can't drop a key stored here (or the
     # other way round).
-    with _file_lock(_pairing_state_lock_path(path)):
+    with open(_pairing_state_lock_path(path), "a+b") as handle, _locked_handle(handle):
         yield
 
 
-@contextlib.contextmanager
-def _file_lock(lock_path: Any):
-    """An exclusive lock on ``lock_path`` across processes (and threads, each
-    opening its own handle): flock, or a first-byte lock on Windows. The
-    lock file is owner-only and never followed through a symlink."""
+def _open_private_lock_file(lock_path: str) -> Any:
+    """A lock file opened owner-only and never through a symlink."""
     flags = os.O_RDWR | os.O_CREAT | os.O_APPEND | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_BINARY", 0)
-    with os.fdopen(os.open(lock_path, flags, 0o600), "a+b") as handle:
-        try:
-            import fcntl
-        except ImportError:
-            fcntl = None
-        if fcntl is not None:
-            fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
-            try:
-                yield
-            finally:
-                fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
-            return
-        try:
-            import msvcrt
-        except ImportError:
-            yield
-            return
-        # Windows: the same first-byte lock client.state_file_lock takes.
-        handle.seek(0)
-        for attempt in range(6):  # about a minute
-            try:
-                msvcrt.locking(handle.fileno(), msvcrt.LK_LOCK, 1)
-                break
-            except OSError:
-                if attempt == 5:
-                    raise
+    fd = os.open(lock_path, flags, 0o600)
+    try:
+        return os.fdopen(fd, "a+b")
+    except BaseException:
+        os.close(fd)
+        raise
+
+
+@contextlib.contextmanager
+def _locked_handle(handle: Any):
+    """flock on ``handle``, or a first-byte lock on Windows."""
+    try:
+        import fcntl
+    except ImportError:
+        fcntl = None
+    if fcntl is not None:
+        fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
         try:
             yield
         finally:
-            handle.seek(0)
-            msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+            fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+        return
+    try:
+        import msvcrt
+    except ImportError:
+        yield
+        return
+    # Windows: the same first-byte lock client.state_file_lock takes.
+    handle.seek(0)
+    for attempt in range(6):  # about a minute
+        try:
+            msvcrt.locking(handle.fileno(), msvcrt.LK_LOCK, 1)
+            break
+        except OSError:
+            if attempt == 5:
+                raise
+    try:
+        yield
+    finally:
+        handle.seek(0)
+        msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
 
 
 def _save_pairing_state(path: Any, value: Dict[str, Any]) -> None:
@@ -13396,18 +13403,24 @@ def _read_room_record(path: str) -> Optional[Dict[str, Any]]:
 def _room_images_locked(root: str, *, create: bool = False):
     """A picture's bytes and its record change and are read as a pair: under
     a lock file in the folder, which every process and thread takes through
-    its own handle, then this process's lock. Without ``create`` and with no
-    folder yet there is nothing to pair, so only the thread lock is taken."""
+    its own handle, then this process's lock. Without ``create``, a folder
+    that isn't there (or a lock file that can't be opened) has nothing to
+    pair, so only the thread lock is taken."""
     if create:
         os.makedirs(root, mode=0o700, exist_ok=True)
         with contextlib.suppress(OSError):
             # makedirs leaves an existing folder's mode alone.
             os.chmod(root, 0o700)
-    elif not os.path.isdir(root):
+    lock_path = os.path.join(root, ROOM_IMAGE_LOCK_FILE)
+    try:
+        handle = _open_private_lock_file(lock_path)
+    except OSError:
+        if create:
+            raise
         with _room_image_lock:
             yield
         return
-    with _file_lock(os.path.join(root, ROOM_IMAGE_LOCK_FILE)), _room_image_lock:
+    with handle, _locked_handle(handle), _room_image_lock:
         yield
 
 
