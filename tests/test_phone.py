@@ -472,6 +472,16 @@ def test_a_future_batch_is_refused_and_cant_hold_off_a_revocation(store, iphone)
     assert error.value.code == "clock_skew"
     assert store.status(DEVICE)["device"]["counts"]["reminders"] == 0
     assert store.status(DEVICE)["device"]["counts"]["events"] == 5
+    # It can't widen anything: only the narrower of the two is kept.
+    with store._write() as db:
+        kept = json.loads(db.execute("SELECT sharing FROM devices").fetchone()[0])
+    assert kept["reminders"] is False and kept["calendar"] == "full"
+    with pytest.raises(phone.PhoneError):
+        store.ingest(iphone.seal(_batch("batch-0003", sent_at="2026-10-14T08:30:00+01:00",
+                                        sharing=_sharing(reminders=True, calendar="write_only"))))
+    with store._write() as db:
+        kept = json.loads(db.execute("SELECT sharing FROM devices").fetchone()[0])
+    assert kept["reminders"] is False and kept["calendar"] == "write_only"
     # A watermark stored before the limit (a day ahead) doesn't make the
     # real batches after it look stale.
     with store._write() as db:

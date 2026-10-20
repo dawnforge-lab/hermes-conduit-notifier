@@ -468,7 +468,7 @@ class LocationStore:
             if known and bytes(known[0]) != device_public:
                 for table in ("fixes", "visits", "places"):
                     db.execute(f"DELETE FROM {table} WHERE device=?", (device_id,))
-                db.execute("UPDATE maps SET cache='', request='{}', answer=NULL,"
+                db.execute("UPDATE maps SET cache='', request='', answer=NULL,"
                            " answered_at=COALESCE(answered_at, ?) WHERE device=?", (now, device_id))
                 db.execute("UPDATE devices SET last_sent=NULL WHERE id=?", (device_id,))
             generation = _meta(db, "generation")

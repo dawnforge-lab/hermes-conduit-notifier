@@ -148,7 +148,7 @@ def test_a_new_device_key_starts_with_no_history(store, phone):
         for table in ("fixes", "visits", "places"):
             assert db.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0] == 0, table
         # The lookup still counts against the budget, but nothing of it is left.
-        assert db.execute("SELECT cache, request, answer FROM maps").fetchall() == [("", "{}", None)]
+        assert db.execute("SELECT cache, request, answer FROM maps").fetchall() == [("", "", None)]
         last_seen, last_sent, sharing = db.execute("SELECT last_seen, last_sent, sharing FROM devices").fetchone()
     assert last_sent is None and last_seen is not None and sharing is not None
     assert store.maps_answer("m_1") is None

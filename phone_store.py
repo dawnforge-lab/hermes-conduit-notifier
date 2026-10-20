@@ -613,7 +613,15 @@ class PhoneStore:
                 # Refused, but what it turns off still goes (committed below):
                 # a phone whose clock runs fast can always take sharing back.
                 skewed = error
-                _forget_unshared(db, device_id, _parse_sharing(batch.get("sharing")))
+                try:
+                    sharing = _parse_sharing(batch.get("sharing"))
+                except PhoneError:
+                    sharing = None
+                if sharing is not None:
+                    stored = db.execute("SELECT sharing FROM devices WHERE id=?", (device_id,)).fetchone()
+                    sharing = _narrowed(_decode(stored[0], None) if stored else None, sharing)
+                    _forget_unshared(db, device_id, sharing)
+                    db.execute("UPDATE devices SET sharing=? WHERE id=?", (json.dumps(sharing), device_id))
                 db.execute("UPDATE devices SET last_seen=? WHERE id=?", (now, device_id))
             else:
                 skewed = None
@@ -1354,6 +1362,23 @@ def _forget_unshared(db: sqlite3.Connection, device_id: str, sharing: dict[str, 
         db.execute("UPDATE devices SET alarms=NULL, alarms_at=NULL WHERE id=?", (device_id,))
     if not sharing["contacts"]:
         db.execute("DELETE FROM contacts WHERE device=?", (device_id,))
+
+
+def _narrowed(stored: Any, sharing: dict[str, Any]) -> dict[str, Any]:
+    """What stays shared when a batch can only take sharing away: each
+    switch as the narrower of the two."""
+    if not isinstance(stored, dict):
+        return sharing
+    rank = {level: index for index, level in enumerate(reversed(CALENDAR_SHARING))}
+    narrowed = dict(sharing)
+    if rank.get(stored.get("calendar"), 0) < rank[sharing["calendar"]]:
+        narrowed["calendar"] = stored["calendar"]
+    for field, value in sharing.items():
+        if isinstance(value, bool):
+            narrowed[field] = value and stored.get(field) is True
+        elif field in ("past_days", "future_days") and isinstance(stored.get(field), int):
+            narrowed[field] = min(value, stored[field])
+    return narrowed
 
 
 def _not_ahead(at: datetime, field: str, now: int) -> datetime:
