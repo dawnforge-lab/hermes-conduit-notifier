@@ -94,7 +94,9 @@ def _waits_for(lock_path, action):
     thread = threading.Thread(target=run, daemon=True)
     try:
         thread.start()
-        assert not done.wait(0.5), "ran while another process held the lock"
+        if done.wait(0.5) and "error" in result:
+            raise result["error"]
+        assert not done.is_set(), "ran while another process held the lock"
     finally:
         other.release()
     thread.join(10)
