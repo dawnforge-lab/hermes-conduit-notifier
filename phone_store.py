@@ -1298,8 +1298,8 @@ def _apply(db: sqlite3.Connection, device_id: str, batch: dict[str, Any], now: i
     # all look older), revocations included: only clock skew is allowed.
     sent_at = parse_time(batch.get("sent_at"), "sent_at")
     if sent_at.timestamp() > now + MAX_CLOCK_SKEW_S:
-        raise PhoneError("clock_skew", "sent_at is more than 5 minutes ahead of this host; check the iPhone's"
-                         " clock and the host's")
+        raise PhoneError("clock_skew", f"sent_at is more than {MAX_CLOCK_SKEW_S // 60} minutes ahead of this host;"
+                         " check the iPhone's clock and the host's")
     sharing = _parse_sharing(batch.get("sharing"))
     tz = batch.get("time_zone")
     if tz is not None and (not isinstance(tz, str) or not _TZ.match(tz)):
@@ -1370,7 +1370,7 @@ def _apply(db: sqlite3.Connection, device_id: str, batch: dict[str, Any], now: i
         # A diff without a range stays inside the one the user last shared.
         try:
             window = (datetime.fromisoformat(stored[3]), datetime.fromisoformat(stored[4]))
-        except ValueError:
+        except (TypeError, ValueError):
             window = None
 
     counts = {"events": 0, "reminders": 0, "deleted": 0}

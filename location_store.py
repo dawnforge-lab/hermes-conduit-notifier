@@ -466,7 +466,7 @@ class LocationStore:
             if known and bytes(known[0]) != device_public:
                 for table in ("fixes", "visits", "places", "maps"):
                     db.execute(f"DELETE FROM {table} WHERE device=?", (device_id,))
-                db.execute("UPDATE devices SET last_seen=NULL, sharing=NULL WHERE id=?", (device_id,))
+                db.execute("UPDATE devices SET last_seen=NULL, last_sent=NULL, sharing=NULL WHERE id=?", (device_id,))
             generation = _meta(db, "generation")
         return {"kid": kid, "host_public_key": b64u(host_public), "generation": generation}
 
