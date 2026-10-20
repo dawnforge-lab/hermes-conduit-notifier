@@ -369,7 +369,10 @@ Event IDs only prevent a repeated delivery of the same event within 24 hours,
 so the relay keeps them in memory and never writes them to the data file. A
 restart forgets them, which costs at most one duplicate push; replaying an
 event after a restart needs that gateway's credential, which can send new
-events anyway. An installation
+events anyway. An event whose push fails in a way a retry can fix (APNs
+refused or unreachable, an hourly limit) gives its ID back, so the plugin's
+retry is sent; a push APNs took but whose answer was lost can therefore show
+twice. An installation
 at its event-ID bound forgets its own oldest ID, and at the relay-wide bound
 the installation holding the most IDs forgets its oldest, so neither bound
 rejects an event. A gateway's last-seen time and plugin version are written

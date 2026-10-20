@@ -655,7 +655,7 @@ test('a copy that arrives mid-send waits for it, and is told to retry when it fa
   const created = fixture.createInstallation({ bundleId: 'com.milim.relay', deviceToken: 'c'.repeat(64), environment: 'production' });
   const pairing = fixture.createPairing(created.installation.id);
   const claim = fixture.claimPairing(pairing.code, 'in-flight target');
-  const child = await startRelay(aPort, 'accept', isolatedPath, { APNS_CAPTURE_PATH: capturePath, APNS_FAIL_FIRST: '1', APNS_SEND_DELAY_MS: '400' });
+  const child = await startRelay(aPort, 'accept', isolatedPath, { APNS_CAPTURE_PATH: capturePath, APNS_FAIL_FIRST: '1', APNS_SEND_DELAY_MS: '1500' });
   children.push(child);
   const base = `http://127.0.0.1:${aPort}`;
   const send = (eventId) => api(base, '/v1/events', {
