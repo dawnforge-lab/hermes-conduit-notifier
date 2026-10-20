@@ -580,7 +580,9 @@ class HealthStore:
         with self._locked():
             remaining = self._device_count()
             if remaining == 0:
-                for suffix in ("", "-wal", "-shm", "-journal"):
+                # Companions first: a crash part-way never leaves a WAL that a
+                # fresh database could pick up.
+                for suffix in ("-wal", "-shm", "-journal", ""):
                     # Windows refuses while a reader has it open; the data
                     # is already deleted, and the next wipe tries again.
                     with contextlib.suppress(OSError):
