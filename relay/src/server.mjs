@@ -751,12 +751,12 @@ async function route(request, response) {
       await deliverEvent(response, installation, event, gateway);
       released = RETRYABLE_STATUS(response.statusCode);
     } finally {
-      if (released) {
-        store.releaseEvent(installation.id, event.eventId, credential.gatewayId);
-        console.warn(JSON.stringify({ level: 'warn', message: 'event push failed, id released for a retry', type: event.type, status: response.headersSent ? response.statusCode : 'refused' }));
-      }
+      // The id goes back before any waiting copy hears the outcome, so its
+      // retry finds it free; the log comes last so it can't strand a waiter.
+      if (released) store.releaseEvent(installation.id, event.eventId, credential.gatewayId);
       eventsInFlight.delete(inFlightKey);
       settle(!released);
+      if (released) console.warn(JSON.stringify({ level: 'warn', message: 'event push failed, id released for a retry', type: event.type, status: response.headersSent ? response.statusCode : null, refused: !response.headersSent }));
     }
     return;
   }
