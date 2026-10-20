@@ -126,6 +126,23 @@ def phone(store):
 # --- The store ---------------------------------------------------------------
 
 
+def test_a_new_device_key_starts_with_no_history(store, phone):
+    store.ingest(phone.seal(phone.batch(fix=fix())))
+    with store._write() as db:
+        db.execute("INSERT INTO visits VALUES(?,?,?,?,?,?,?,?,?)",
+                   (phone.device_id, "v_1", "arrive", "p_home", "Home", None, NOW - 60, "2026-10-13T06:57:00+01:00",
+                    NOW))
+    # The same key again (a lost answer) keeps everything.
+    phone.accept(store.register_key(phone.key_request()))
+    assert store.snapshot()["fix"] is not None
+
+    paired = Phone(phone.device_id)
+    paired.accept(store.register_key(paired.key_request()))
+    with store._write() as db:
+        for table in ("fixes", "visits", "places", "maps"):
+            assert db.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0] == 0, table
+
+
 def test_a_sealed_fix_lands_at_the_detail_the_user_chose(store, phone):
     result = store.ingest(phone.seal(phone.batch(fix=fix())))
     assert result["fix"] is True
