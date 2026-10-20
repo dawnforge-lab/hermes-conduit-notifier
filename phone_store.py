@@ -61,6 +61,15 @@ import time
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Callable, Iterator
+
+try:
+    import fcntl
+except ImportError:  # Windows
+    fcntl = None  # type: ignore[assignment]
+try:
+    import msvcrt
+except ImportError:  # everything but Windows
+    msvcrt = None  # type: ignore[assignment]
 from urllib.parse import urlsplit
 
 FILE_NAME = "conduit-phone.sqlite3"
@@ -168,6 +177,34 @@ _COLOR = re.compile(r"^#[0-9A-Fa-f]{6}([0-9A-Fa-f]{2})?\Z")
 _CONTROL = re.compile("[\x00-\x1f\x7f-\x9f\u200b-\u200f\u2028-\u202e\u2060-\u206f\ufeff]+")
 
 _thread_lock = threading.Lock()
+
+
+@contextlib.contextmanager
+def _exclusive(handle: Any) -> Iterator[None]:
+    # The same locking as calls_store: flock where there is one, a
+    # first-byte lock on Windows.
+    if fcntl is not None:
+        fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+    elif msvcrt is not None:
+        handle.seek(0)
+        for attempt in range(6):  # about a minute
+            try:
+                msvcrt.locking(handle.fileno(), msvcrt.LK_LOCK, 1)
+                break
+            except OSError:
+                if attempt == 5:
+                    raise
+        try:
+            yield
+        finally:
+            handle.seek(0)
+            msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+    else:
+        yield
 
 
 class PhoneError(ValueError):
@@ -440,9 +477,19 @@ class PhoneStore:
         return self.path.exists()
 
     @contextlib.contextmanager
+    def _locked(self) -> Iterator[None]:
+        """The writers' lock: this process's threads and, through a lock
+        file beside the database, every other process (two dashboards, the
+        agent). The lock file outlives a wipe, so a writer waiting on it
+        never races the unlink."""
+        lock_path = self.path.with_name(f".{self.path.name}.lock")
+        with _thread_lock, open(lock_path, "a+b") as handle, _exclusive(handle):
+            yield
+
+    @contextlib.contextmanager
     def _write(self) -> Iterator[sqlite3.Connection]:
         self.path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-        with _thread_lock:
+        with self._locked():
             if not self.path.exists():
                 # Owner-only from the first byte; SQLite gives the -wal and
                 # -shm files the same mode.
@@ -820,7 +867,7 @@ class PhoneStore:
                 db.execute("DELETE FROM devices WHERE id=?", (device_id,))
         # Counted again under the writers' lock, so a key registered since
         # the delete stays.
-        with _thread_lock:
+        with self._locked():
             remaining = self._device_count()
             if remaining == 0:
                 for suffix in ("", "-wal", "-shm", "-journal"):
@@ -829,7 +876,7 @@ class PhoneStore:
         return {"deleted": True, "remaining_devices": remaining}
 
     def _device_count(self) -> int:
-        """Devices in the store; the caller holds ``_thread_lock``."""
+        """Devices in the store; the caller holds ``_locked()``."""
         if not self.path.exists():
             return 0
         connection = sqlite3.connect(self.path, timeout=15)
