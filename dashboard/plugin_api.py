@@ -8578,8 +8578,8 @@ def open_watch_grant(body: Any, *, profile: Optional[str], ticket_home: Optional
     sits behind the dashboard's own auth, whose holder can already start
     chats on any profile; the list only narrows what the Watch may name. A
     native-http ticket is not that holder: Hermes binds it to one home
-    (``ticket_home``, the principal's ``profile_id``): its grant runs jobs
-    only when the request's own profile is that home, its list keeps only
+    (``ticket_home``, the principal's ``profile_id``): its grant opens only
+    when the request's own profile is that home (403 otherwise), its list keeps only
     profiles on that home (_clean_job_profiles), and its renewal carries the
     call's jobs only while they all stay on that home (_carry_watch_jobs).
     """
@@ -8607,13 +8607,14 @@ def open_watch_grant(body: Any, *, profile: Optional[str], ticket_home: Optional
     carry_from = body.get("carry_jobs_from")
     if carry_from is not None and (not isinstance(carry_from, str) or not _WATCH_ID.match(carry_from)):
         raise TokenError(400, "carry_jobs_from must be a grant id")
+    if ticket_home is not None:
+        # Every tool the grant carries (chats, memory, live tokens, jobs)
+        # runs on the request's profile: a ticket's only while that is its
+        # own home.
+        _check_ticket_home(ticket_home, profile, "grant")
     wants_jobs = any(tool in WATCH_JOB_TOOLS or tool == WATCH_JOB_FOLLOW_UP for tool in requested)
     server = session_api() if max_jobs > 0 and wants_jobs else None
     # Only a grant that runs jobs reads them, as job_options.
-    if server is not None and ticket_home is not None and not _grant_home_is(ticket_home):
-        # The grant's own jobs run on the request's profile: a ticket's
-        # only while that is its own home.
-        raise TokenError(403, "This ticket can't run jobs on another profile")
     job_profiles = _clean_job_profiles(body.get("job_profiles"), own=profile, ticket_home=ticket_home) if server is not None else ()
     tools = tuple(tool for tool in WATCH_TOOLS if tool in requested)
     if any(tool in WATCH_CHAT_TOOLS for tool in tools) and session_routes() is None:
@@ -8822,13 +8823,16 @@ def _close_watch_grant_on_relay_later(grant: _WatchGrant,
                        type(exc).__name__)
 
 
-def revoke_watch_grant(body: Any, *, profile: Optional[str],
+def revoke_watch_grant(body: Any, *, profile: Optional[str], ticket_home: Optional[str] = None,
                        relay: Optional[Callable[..., Tuple[int, Dict[str, Any]]]] = None,
                        tell_relay: Optional[Callable[..., None]] = None) -> Dict[str, Any]:
-    """Ends one of this profile's grants here at once; the relay hears after."""
+    """Ends one of this profile's grants here at once; the relay hears after.
+    A native ticket (``ticket_home``) may end only its own home's."""
     tell_relay = tell_relay or _close_watch_grant_on_relay_later
     if not isinstance(body, dict) or not isinstance(body.get("grant_id"), str):
         raise TokenError(400, "grant_id is required")
+    if ticket_home is not None:
+        _check_ticket_home(ticket_home, profile, "revoke")
     grant = _watch_grants.get(body["grant_id"])
     # Only this profile's own grants.
     if grant is None or grant.limiter_key != _limiter_key(profile):
@@ -8845,11 +8849,11 @@ async def post_watch_tool_grant(request: Request, response: Response, profile: O
     response.headers["Pragma"] = "no-cache"
     no_store = {"Cache-Control": "no-store"}
     body = await _read_json_body(request, WATCH_GRANT_MAX_BODY_BYTES)
-    # A native ticket is one profile's principal; its home bounds job_profiles (open_watch_grant).
-    ticket_home = _native_ticket_home(request)
     try:
+        # A native ticket is one profile's principal; its home bounds the
+        # grant (open_watch_grant). Read on the executor: it may ask Hermes.
         return {"ok": True, **(await _run_scoped(
-            profile, lambda: open_watch_grant(body, profile=profile, ticket_home=ticket_home)))}
+            profile, lambda: open_watch_grant(body, profile=profile, ticket_home=_native_ticket_home(request))))}
     except TokenError as exc:
         logger.warning("Watch tool grant failed: %s", exc)
         raise HTTPException(status_code=exc.status, detail=str(exc), headers=no_store)
@@ -8866,7 +8870,8 @@ async def post_watch_tool_revoke(request: Request, response: Response, profile: 
     body = await _read_json_body(request, WATCH_GRANT_MAX_BODY_BYTES)
     try:
         # Closing here is quick; the relay is told on a thread of its own.
-        return {"ok": True, **revoke_watch_grant(body, profile=profile)}
+        return {"ok": True, **(await _run_scoped(
+            profile, lambda: revoke_watch_grant(body, profile=profile, ticket_home=_native_ticket_home(request))))}
     except TokenError as exc:
         raise HTTPException(status_code=exc.status, detail=str(exc), headers={"Cache-Control": "no-store"})
     except Exception as exc:
@@ -9094,21 +9099,30 @@ def _native_ticket_home(request: Any) -> Optional[str]:
         return home
     # A profile name rather than its home: Hermes' own resolution.
     try:
-        from hermes_cli.profiles import get_profile_dir
-        return str(get_profile_dir(home))
+        return str(_profile_dir(home))
     except Exception:  # noqa: BLE001 — a name this Hermes can't place names nothing
+        logger.warning("A native ticket names a profile this Hermes can't place")
         return ""
 
 
-def _grant_home_is(ticket_home: str) -> bool:
-    """Whether the home this request is scoped to (_run_scoped) is ``ticket_home``."""
+def _check_ticket_home(ticket_home: str, profile: Optional[str], what: str) -> None:
+    """Refuses (403) a native ticket's request for a profile other than its home."""
     if not ticket_home:
-        return False
-    try:
-        from hermes_constants import get_hermes_home
-        return Path(get_hermes_home()).resolve() == Path(ticket_home).resolve()
-    except Exception:  # noqa: BLE001 — an unresolvable home is on no home
-        return False
+        logger.warning("Watch tool %s refused: the native ticket's home is unknown", what)
+        raise TokenError(403, "This ticket's profile isn't known here")
+    name = (profile or "").strip()
+    if name.lower() in ("", "current"):
+        # The launch profile, the home this request runs in.
+        try:
+            from hermes_constants import get_hermes_home
+            on_home = Path(get_hermes_home()).resolve() == Path(ticket_home).resolve()
+        except Exception:  # noqa: BLE001 — an unresolvable home is on no home
+            on_home = False
+    else:
+        on_home = _job_profile_on_home(name, ticket_home)
+    if not on_home:
+        logger.warning("Watch tool %s refused: the request's profile isn't the native ticket's", what)
+        raise TokenError(403, "This ticket can't reach another profile")
 
 
 def _job_profile_on_home(name: str, ticket_home: str) -> bool:
@@ -9116,16 +9130,18 @@ def _job_profile_on_home(name: str, ticket_home: str) -> bool:
     if not ticket_home:
         return False
     try:
-        try:
-            # The home session.create binds the job's profile to.
-            from hermes_cli.profiles import get_profile_dir
-        except (ImportError, AttributeError):
-            home = _job_profile_home_guess(name)
-        else:
-            home = Path(get_profile_dir(name))
-        return home.resolve() == Path(ticket_home).resolve()
+        return _profile_dir(name).resolve() == Path(ticket_home).resolve()
     except Exception:  # noqa: BLE001 — an unresolvable home is on no home
         return False
+
+
+def _profile_dir(name: str) -> Path:
+    """Profile ``name``'s home as session.create binds it."""
+    try:
+        from hermes_cli.profiles import get_profile_dir
+    except (ImportError, AttributeError):
+        return _job_profile_home_guess(name)
+    return Path(get_profile_dir(name))
 
 
 def _job_profile_home_guess(name: str) -> Path:

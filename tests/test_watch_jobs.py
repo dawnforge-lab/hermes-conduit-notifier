@@ -519,17 +519,42 @@ def test_a_ticket_stamp_this_plugin_cant_read_names_nothing(tmp_path, monkeypatc
 
 
 @pytest.mark.parametrize("ticket", ["fam", ""])
-def test_a_ticket_cant_run_jobs_on_a_profile_that_isnt_its_home(tmp_path, monkeypatch, ticket):
+@pytest.mark.parametrize("tools", [["web_search", "start_job"], ["web_search", "find_chat", "recall_memory"]])
+def test_a_ticket_cant_open_a_grant_for_a_profile_that_isnt_its_home(tmp_path, monkeypatch, ticket, tools):
     fake_profile_dirs(monkeypatch, tmp_path / "hermes")
     home = str(tmp_path / "hermes" / "profiles" / ticket) if ticket else ""
     with pytest.raises(api.TokenError) as err:
-        open_jobs_grant(tmp_path, FakeHermes(), RenewingRelay(), ticket_home=home)
+        api.open_watch_grant({"tools": tools, "max_jobs": 3}, profile="coder", ticket_home=home,
+                             path=write_pairing(tmp_path), relay=FakeRelay(), start=lambda g: None,
+                             session_api=FakeHermes)
     assert err.value.status == 403
-    # Lookups alone run nothing on the profile.
-    grant = api.open_watch_grant({"tools": ["web_search"]}, profile="coder", ticket_home=home,
+
+
+def test_a_tickets_own_home_is_its_request_profile_not_the_ambient_one(tmp_path, monkeypatch):
+    fake_profile_dirs(monkeypatch, tmp_path / "hermes")
+    fam = str(tmp_path / "hermes" / "profiles" / "fam")
+    # The ambient home is coder's; the request names Fam, the ticket's home.
+    grant = api.open_watch_grant({"tools": ["web_search"]}, profile="Fam", ticket_home=fam,
                                  path=write_pairing(tmp_path), relay=FakeRelay(), start=lambda g: None,
                                  session_api=FakeHermes)
     assert grant["tools"] == ["web_search"]
+    # No profile named: the ambient (launch) home, coder's, isn't Fam.
+    with pytest.raises(api.TokenError):
+        api.open_watch_grant({"tools": ["web_search"]}, profile=None, ticket_home=fam,
+                             path=write_pairing(tmp_path), relay=FakeRelay(), start=lambda g: None,
+                             session_api=FakeHermes)
+
+
+def test_a_ticket_revokes_only_its_own_homes_grants(tmp_path, monkeypatch):
+    coder = fake_profile_dirs(monkeypatch, tmp_path / "hermes")
+    _, grant = open_jobs_grant(tmp_path, FakeHermes(), RenewingRelay())
+    told = []
+    with pytest.raises(api.TokenError) as err:
+        api.revoke_watch_grant({"grant_id": grant.grant_id}, profile="coder",
+                               ticket_home=str(tmp_path / "hermes" / "profiles" / "fam"), tell_relay=lambda *a: told.append(a))
+    assert err.value.status == 403 and not grant.closed.is_set()
+    assert api.revoke_watch_grant({"grant_id": grant.grant_id}, profile="coder", ticket_home=str(coder),
+                                  tell_relay=lambda *a: told.append(a)) == {"revoked": True}
 
 
 def test_a_tickets_renewal_doesnt_carry_an_owner_grants_other_homes(tmp_path, monkeypatch):
