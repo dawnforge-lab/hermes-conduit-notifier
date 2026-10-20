@@ -456,9 +456,8 @@ def _queued(store: PhoneStore, change: dict[str, Any], profile: str) -> tuple[st
                           "shows applied."), earlier
     return "waiting_for_approval", ("Sent to the phone; waiting for the user to approve it there (they can also edit "
                                     "or dismiss it). In a voice chat they can just say yes or no and Conduit answers the "
-                                    "card for them, so ask in this reply and don't ask them to tap first. Conduit only "
-                                    "takes that yes or no as their very next words, so a yes meant for something else "
-                                    "can't change their phone. Only if "
+                                    "card for them, so ask in this reply and don't ask them to tap first. Conduit takes "
+                                    "that yes or no only as the user's very next words after this reply. Only if "
                                     "they say something else first, or pending still shows it waiting after they said "
                                     "it, ask them to tap the card instead. "
                                     "When they answer, check pending before "

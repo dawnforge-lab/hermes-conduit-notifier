@@ -839,8 +839,8 @@ def test_a_write_queues_a_change_and_nudges_the_phone(home):
     assert "ask them to tap the card" in added["note"]
     # Conduit takes a spoken answer only as the user's very next words.
     assert "very next words" in added["note"]
-    assert "very next words" in tool.CALENDAR_SCHEMA["description"]
-    assert "very next" in tool.PHONE_SCHEMA["description"]
+    assert "very next words after the reply" in tool.CALENDAR_SCHEMA["description"]
+    assert "very next words after the reply" in tool.PHONE_SCHEMA["description"]
     assert "by saying yes or no" in tool.CALENDAR_SCHEMA["description"]
     assert "completions always ask" in tool.CALENDAR_SCHEMA["description"]
     assert "by saying yes or no" in tool.PHONE_SCHEMA["description"]
