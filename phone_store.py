@@ -673,7 +673,7 @@ class PhoneStore:
         device_id, _, request, seal_answer = self.open_exchange(envelope, ops=("voice",))
         return device_id, request, seal_answer
 
-    def exchange_changes(self, device_id: str, results: Any, *, kid: str | None = None) -> list[dict[str, Any]]:
+    def exchange_changes(self, device_id: str, results: Any, *, kid: str) -> list[dict[str, Any]]:
         """Records the phone's outcomes for its changes, then answers every
         change still pending for that device, oldest first (at most
         MAX_CHANGES_PER_ANSWER). Changes older than a week expire first.
@@ -684,7 +684,7 @@ class PhoneStore:
         now = int(self.clock())
         with self._write() as db:
             row = db.execute("SELECT kid FROM devices WHERE id=?", (device_id,)).fetchone()
-            if row is None or (kid is not None and row[0] != kid):
+            if row is None or row[0] != kid:
                 raise PhoneError("unknown_key", "This device's calendar key isn't on this profile; set it up again",
                                  status=409)
             _expire(db, now)
