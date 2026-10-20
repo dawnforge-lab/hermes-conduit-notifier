@@ -1366,18 +1366,20 @@ def _forget_unshared(db: sqlite3.Connection, device_id: str, sharing: dict[str, 
 
 def _narrowed(stored: Any, sharing: dict[str, Any]) -> dict[str, Any]:
     """What stays shared when a batch can only take sharing away: each
-    switch as the narrower of the two."""
+    switch as the narrower of the two. Nothing stored reads as nothing
+    shared."""
     if not isinstance(stored, dict):
-        return sharing
+        stored = {}
     rank = {level: index for index, level in enumerate(reversed(CALENDAR_SHARING))}
     narrowed = dict(sharing)
     if rank.get(stored.get("calendar"), 0) < rank[sharing["calendar"]]:
-        narrowed["calendar"] = stored["calendar"]
+        narrowed["calendar"] = stored.get("calendar") if stored.get("calendar") in rank else "off"
     for field, value in sharing.items():
         if isinstance(value, bool):
             narrowed[field] = value and stored.get(field) is True
-        elif field in ("past_days", "future_days") and isinstance(stored.get(field), int):
-            narrowed[field] = min(value, stored[field])
+        elif field in ("past_days", "future_days"):
+            kept = stored.get(field)
+            narrowed[field] = min(value, kept) if isinstance(kept, int) and not isinstance(kept, bool) else 0
     return narrowed
 
 

@@ -454,6 +454,13 @@ def test_unselecting_a_calendar_or_list_forgets_its_items(store, iphone):
     assert store.status(DEVICE)["device"]["counts"]["reminders"] == 0
 
 
+def test_a_refused_batch_narrows_from_nothing_stored_to_nothing():
+    narrowed = phone._narrowed(None, phone._parse_sharing(_sharing()))
+    assert narrowed["calendar"] == "off" and narrowed["future_days"] == 0
+    assert not any(value for value in narrowed.values() if isinstance(value, bool))
+    assert phone._narrowed({"reminders": True}, phone._parse_sharing(_sharing()))["calendar"] == "off"
+
+
 def test_a_future_batch_is_refused_and_cant_hold_off_a_revocation(store, iphone):
     store.ingest(iphone.seal(_batch()))
     with pytest.raises(phone.PhoneError) as error:
