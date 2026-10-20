@@ -395,11 +395,11 @@ class RenewingRelay(FakeRelay):
         return super().__call__(url, method, credential, payload, timeout)
 
 
-def open_jobs_grant(tmp_path, server, relay, profile="coder", started=None, **extra):
+def open_jobs_grant(tmp_path, server, relay, profile="coder", started=None, ticket_home=None, **extra):
     started = [] if started is None else started
     answer = api.open_watch_grant({"tools": ["web_search", "start_job"], "max_jobs": 3, **extra}, profile=profile,
-                                  path=write_pairing(tmp_path), relay=relay, start=started.append,
-                                  session_api=lambda: server)
+                                  ticket_home=ticket_home, path=write_pairing(tmp_path), relay=relay,
+                                  start=started.append, session_api=lambda: server)
     return answer, api._watch_grants.get(answer["grant_id"])
 
 
@@ -475,6 +475,75 @@ def test_a_renewal_naming_profiles_replaces_the_calls(tmp_path):
     renewed, new = open_jobs_grant(tmp_path, server, relay, carry_jobs_from=old.grant_id, job_profiles=["work"])
     assert renewed["job_profiles"] == ["work"]
     assert new.jobs.profiles == ("work",)
+
+
+# --- A native ticket's grant stays on the ticket's home ------------------------
+
+def fake_profile_dirs(monkeypatch, root):
+    """hermes_cli.profiles.get_profile_dir over ``root``, as Hermes resolves names."""
+    module = types.ModuleType("hermes_cli.profiles")
+    module.get_profile_dir = lambda name: root if name.strip().lower() == "default" \
+        else root / "profiles" / name.strip().lower()
+    package = sys.modules.get("hermes_cli") or types.ModuleType("hermes_cli")
+    monkeypatch.setitem(sys.modules, "hermes_cli", package)
+    monkeypatch.setitem(sys.modules, "hermes_cli.profiles", module)
+    monkeypatch.setattr(package, "profiles", module, raising=False)
+    for name in ("coder", "fam"):
+        (root / "profiles" / name).mkdir(parents=True, exist_ok=True)
+    return root / "profiles" / "coder"
+
+
+def test_a_ticket_names_only_profiles_on_its_own_home(tmp_path, monkeypatch):
+    coder = fake_profile_dirs(monkeypatch, tmp_path / "hermes")
+    assert api._clean_job_profiles(["Fam", "default"], own="coder", ticket_home=str(coder)) == ()
+    assert api._clean_job_profiles(["Fam"], own="coder", ticket_home="") == ()
+    # An alias of the ticket's own home stays.
+    assert api._clean_job_profiles(["CODER2"], own="writer", ticket_home=str(tmp_path / "hermes" / "profiles" / "coder2")) == ("CODER2",)
+    assert api._clean_job_profiles(["Fam"], own="coder") == ("Fam",)
+
+
+@pytest.mark.parametrize("stamp, home", [(None, ""), ("coder", ""), ({}, ""), ({"profile_id": 3}, ""),
+                                          ({"profile_id": "/h/coder"}, "/h/coder")])
+def test_a_ticket_stamp_this_plugin_cant_read_names_nothing(stamp, home):
+    request = types.SimpleNamespace(state=types.SimpleNamespace(native_http_principal=stamp))
+    assert api._native_ticket_home(request) == home
+    assert api._native_ticket_home(types.SimpleNamespace(state=types.SimpleNamespace())) is None
+
+
+def test_a_tickets_renewal_doesnt_carry_an_owner_grants_other_homes(tmp_path, monkeypatch):
+    coder = fake_profile_dirs(monkeypatch, tmp_path / "hermes")
+    server, relay = FakeHermes(), RenewingRelay()
+    # The owner's grant may run jobs on Fam.
+    _, old = open_jobs_grant(tmp_path, server, relay, job_profiles=["fam"])
+    start(old)
+    renewed = api.open_watch_grant({"tools": ["start_job"], "carry_jobs_from": old.grant_id}, profile="coder",
+                                   ticket_home=str(coder), path=write_pairing(tmp_path), relay=relay,
+                                   start=lambda g: None, session_api=lambda: server)
+    new = api._watch_grants.get(renewed["grant_id"])
+    assert "jobs_carried_from" not in renewed and renewed["job_profiles"] == []
+    assert new.jobs is not old.jobs and new.jobs.jobs == {} and new.jobs.profiles == ()
+    assert old.jobs.grant is old and old.jobs.profiles == ("fam",)
+
+
+def test_a_tickets_renewal_doesnt_carry_a_job_already_running_on_another_home(tmp_path, monkeypatch):
+    coder = fake_profile_dirs(monkeypatch, tmp_path / "hermes")
+    server, relay = FakeHermes(), RenewingRelay()
+    _, old = open_jobs_grant(tmp_path, server, relay)
+    start(old)
+    # A job an earlier renewal's profiles let it run on Fam.
+    next(iter(old.jobs.jobs.values())).profile = "fam"
+    renewed, _ = open_jobs_grant(tmp_path, server, relay, carry_jobs_from=old.grant_id, job_profiles=[],
+                                 ticket_home=str(coder))
+    assert "jobs_carried_from" not in renewed
+
+
+def test_a_tickets_renewal_carries_jobs_on_its_own_home(tmp_path, monkeypatch):
+    coder = fake_profile_dirs(monkeypatch, tmp_path / "hermes")
+    server, relay = FakeHermes(), RenewingRelay()
+    _, old = open_jobs_grant(tmp_path, server, relay, ticket_home=str(coder))
+    start(old)
+    renewed, new = open_jobs_grant(tmp_path, server, relay, carry_jobs_from=old.grant_id, ticket_home=str(coder))
+    assert renewed["jobs_carried_from"] == old.grant_id and new.jobs is old.jobs
 
 
 @pytest.mark.parametrize("value", [7, "", "not a grant id", ["A" * 22]])

@@ -8579,7 +8579,8 @@ def open_watch_grant(body: Any, *, profile: Optional[str], ticket_home: Optional
     chats on any profile; the list only narrows what the Watch may name. A
     native-http ticket is not that holder: Hermes binds it to one home
     (``ticket_home``, the principal's ``profile_id``), so its list keeps only
-    profiles on that home (_clean_job_profiles).
+    profiles on that home (_clean_job_profiles), and its renewal carries the
+    call's jobs only while they all stay on that home (_carry_watch_jobs).
     """
     relay = relay or _relay_request
     start_audio = start_audio or (lambda grant: grant.audio.start())
@@ -8683,7 +8684,8 @@ def open_watch_grant(body: Any, *, profile: Optional[str], ticket_home: Optional
                 carry_from, grant,
                 max_jobs=max_jobs if body.get("max_jobs") is not None else None,
                 options=options if body.get("job_options") is not None else None,
-                profiles=job_profiles if body.get("job_profiles") is not None else None)
+                profiles=job_profiles if body.get("job_profiles") is not None else None,
+                ticket_home=ticket_home)
         if carried_from is None:
             grant.jobs = _WatchJobs(grant, max_jobs=max_jobs, options=options, server=server, profiles=job_profiles)
     for old in _watch_grants.add(grant):
@@ -8730,7 +8732,8 @@ def open_watch_grant(body: Any, *, profile: Optional[str], ticket_home: Optional
 
 def _carry_watch_jobs(old_id: str, grant: _WatchGrant, *, max_jobs: Optional[int],
                       options: Optional[Dict[str, str]],
-                      profiles: Optional[Tuple[str, ...]] = None) -> Optional[_WatchGrant]:
+                      profiles: Optional[Tuple[str, ...]] = None,
+                      ticket_home: Optional[str] = None) -> Optional[_WatchGrant]:
     """Moves the jobs of a call's previous grant ``old_id`` to its renewal
     ``grant``: the Watch keeps hearing their news and can list, cancel and
     approve them through the new grant, and the job cap counts across the
@@ -8740,7 +8743,12 @@ def _carry_watch_jobs(old_id: str, grant: _WatchGrant, *, max_jobs: Optional[int
 
     The old grant keeps answering for the jobs until it closes: the Watch
     may have sent a call through it before it heard of the renewal, and it
-    closes the old grant once it has."""
+    closes the old grant once it has.
+
+    A native ticket's renewal (``ticket_home``) carries only jobs bound to
+    its home: the old grant may be the owner's, whose profiles and running
+    jobs reach other homes, and carrying would hand their news, cancels and
+    approvals to the ticket. Such a renewal starts with jobs of its own."""
     old = _watch_grants.get(old_id)
     if old is None or old is grant or old.profile != grant.profile:
         return None
@@ -8753,6 +8761,8 @@ def _carry_watch_jobs(old_id: str, grant: _WatchGrant, *, max_jobs: Optional[int
         with jobs.changed:
             if jobs.ended:
                 return None
+            if ticket_home is not None and not _watch_jobs_on_home(jobs, ticket_home):
+                return None
             jobs.grant = grant
             if max_jobs is not None:
                 jobs.max_jobs = max_jobs
@@ -8763,6 +8773,13 @@ def _carry_watch_jobs(old_id: str, grant: _WatchGrant, *, max_jobs: Optional[int
             jobs.changed.notify_all()
     grant.jobs = jobs
     return old
+
+
+def _watch_jobs_on_home(jobs: "_WatchJobs", ticket_home: str) -> bool:
+    """Whether every profile ``jobs`` may name, and every job it runs on
+    another profile, is on ``ticket_home``. Called with ``jobs.lock`` held."""
+    names = set(jobs.profiles) | {job.profile for job in jobs.jobs.values() if job.profile is not None}
+    return all(_job_profile_on_home(name, ticket_home) for name in names)
 
 
 def _hand_back_watch_jobs(grant: _WatchGrant, old: _WatchGrant) -> None:
@@ -9040,6 +9057,9 @@ def _clean_job_options(value: Any) -> Dict[str, str]:
     return options
 
 
+_NO_PRINCIPAL = object()
+
+
 def _native_ticket_home(request: Any) -> Optional[str]:
     """The home a native-http ticket binds this request to, or None without one.
 
@@ -9054,31 +9074,46 @@ def _native_ticket_home(request: Any) -> Optional[str]:
     """
     if request is None:
         return None
-    grant = getattr(request.state, "native_http_principal", None)
-    if not isinstance(grant, dict):
+    grant = getattr(request.state, "native_http_principal", _NO_PRINCIPAL)
+    if grant is _NO_PRINCIPAL:
         return None
+    if not isinstance(grant, dict):
+        # A stamp this plugin can't read is still a ticket: name nothing.
+        return ""
     home = grant.get("profile_id")
     return str(home) if isinstance(home, str) and home else ""
 
 
 def _job_profile_on_home(name: str, ticket_home: str) -> bool:
     """Whether profile ``name``'s home is the native ticket's ``ticket_home``."""
+    if not ticket_home:
+        return False
+    try:
+        try:
+            # The home session.create binds the job's profile to.
+            from hermes_cli.profiles import get_profile_dir
+        except (ImportError, AttributeError):
+            home = _job_profile_home_guess(name)
+        else:
+            home = Path(get_profile_dir(name))
+        return home.resolve() == Path(ticket_home).resolve()
+    except Exception:  # noqa: BLE001 — an unresolvable home is on no home
+        return False
+
+
+def _job_profile_home_guess(name: str) -> Path:
+    """Profile ``name``'s home on a Hermes without hermes_cli.profiles: the
+    homes _hermes_homes() lists, "default" naming the root; names fold case
+    as Hermes' normalize_profile_name does."""
     try:
         from hermes_constants import get_default_hermes_root
     except (ImportError, AttributeError):  # an older Hermes: one home
         from hermes_constants import get_hermes_home
         root = Path(get_hermes_home())
     else:
-        # A root that fails to resolve raises: guessing could miss a turn.
         root = Path(get_default_hermes_root())
-    # The homes _hermes_homes() lists: the root, and each profiles/<name>
-    # under it; "default" names the root, as Hermes' own resolution does.
     canon = name.strip().lower()
-    home = root if canon == "default" else root / "profiles" / canon
-    try:
-        return home.resolve() == Path(ticket_home).resolve()
-    except Exception:  # noqa: BLE001 — an unresolvable home is on no home
-        return False
+    return root if canon == "default" else root / "profiles" / canon
 
 
 def _clean_job_profiles(value: Any, *, own: Optional[str],
