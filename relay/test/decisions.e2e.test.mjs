@@ -665,14 +665,14 @@ test('a copy that arrives mid-send waits for it, and is told to retry when it fa
   });
   try {
     const first = send('input:inflight00001');
-    await new Promise((resolve) => setTimeout(resolve, 100));
+    await new Promise((resolve) => setTimeout(resolve, 500));
     const copy = await send('input:inflight00001');
     assert.deepEqual(await first, { status: 502, json: { error: 'apns_unreachable' } });
     assert.deepEqual(copy, { status: 503, json: { error: 'delivery_failed' } }, 'the copy is not told the failed send was a duplicate');
     assert.deepEqual(await send('input:inflight00001'), { status: 202, json: { accepted: true, delivered: true } });
 
     const second = send('input:inflight00002');
-    await new Promise((resolve) => setTimeout(resolve, 100));
+    await new Promise((resolve) => setTimeout(resolve, 500));
     assert.deepEqual(await send('input:inflight00002'), { status: 200, json: { accepted: true, duplicate: true } },
       'a copy of a send that worked is a duplicate');
     assert.equal((await second).status, 202);
