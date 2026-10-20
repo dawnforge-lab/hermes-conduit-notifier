@@ -156,7 +156,7 @@ class PulseStore:
             conn.execute("COMMIT")
         return asked
 
-    def claim_leader(self, owner: str, ttl_s: float, now: float) -> bool:
+    def claim_leader(self, owner: str, ttl_s: float, now: float, build: str = "") -> bool:
         """Whether ``owner`` runs the loop until ``now + ttl_s``: the lease is
         its own, free, or expired. Two processes hosting sessions for the
         same Hermes home never both send."""
@@ -173,7 +173,7 @@ class PulseStore:
                 conn.execute(
                     "INSERT INTO settings(key, value_json) VALUES(?, ?) "
                     "ON CONFLICT(key) DO UPDATE SET value_json=excluded.value_json",
-                    (LEADER, json.dumps({"owner": owner, "until": now + ttl_s})),
+                    (LEADER, json.dumps({"owner": owner, "until": now + ttl_s, "build": build})),
                 )
             conn.execute("COMMIT")
         return not held
@@ -244,7 +244,6 @@ class PulseStore:
             rows = conn.execute("SELECT state, COUNT(*) AS n FROM attempts WHERE kind=? GROUP BY state",
                                 (kind,)).fetchall()
         return {row["state"]: row["n"] for row in rows}
-
 
     # Report ratings -------------------------------------------------------
 
