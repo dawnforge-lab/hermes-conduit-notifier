@@ -1578,7 +1578,10 @@ def _clean_voice(voice: Any) -> Optional[str]:
     return voice
 
 
-GPT_LIVE_MAX_BRIEFING_CHARS = 32 * 1024
+# Conduit's rules plus the user's persona and memory. 32 KB turned away
+# calls for users with a long memory ("briefing is too long",
+# kaishi00/hermes-conduit#1077); Conduit 2.2.0 build 219 doesn't trim it.
+GPT_LIVE_MAX_BRIEFING_CHARS = 64 * 1024
 # Last, so a chatty persona doesn't talk the model into an opening greeting.
 GPT_LIVE_WAIT_FOR_USER = (
     "Opening policy: do not speak first. When the call starts, stay silent until the user "
