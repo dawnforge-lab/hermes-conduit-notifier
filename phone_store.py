@@ -1429,10 +1429,10 @@ def _read_only(sharing: dict[str, Any], need: str) -> PhoneError | None:
     """The refusal for a change to something the user shares read-only."""
     if need in ("events_write", "events_change") and sharing.get("calendar_read_only") is True \
             and sharing.get("calendar") in ("full", "write_only"):
-        return PhoneError("read_only", "The user shares their calendar read-only: Hermes can't add, change or delete "
+        return PhoneError("shared_read_only", "The user shares their calendar read-only: Hermes can't add, change or delete "
                           "events")
     if need == "reminders_write" and sharing.get("reminders_read_only") is True and sharing.get("reminders") is True:
-        return PhoneError("read_only", "The user shares their reminders read-only: Hermes can't add, change, complete "
+        return PhoneError("shared_read_only", "The user shares their reminders read-only: Hermes can't add, change, complete "
                           "or delete reminders")
     return None
 
@@ -1522,6 +1522,11 @@ def _parse_sharing(value: Any) -> dict[str, Any]:
     for field in ("reminders", "details", "attendee_emails", "status", "focus", "auto_add", "alarms", "contacts",
                   *READ_ONLY_SHARING):
         sharing[field] = bool(_bool(value.get(field), f"sharing.{field}", False))
+    # Add-only and read-only leaves nothing; read-only reminders need reminders.
+    if sharing["calendar"] == "write_only" and sharing["calendar_read_only"]:
+        sharing["calendar"] = "off"
+    sharing["calendar_read_only"] = sharing["calendar_read_only"] and sharing["calendar"] == "full"
+    sharing["reminders_read_only"] = sharing["reminders_read_only"] and sharing["reminders"]
     # Emails are part of the details.
     sharing["attendee_emails"] = sharing["attendee_emails"] and sharing["details"]
     sharing["past_days"] = _whole(value.get("past_days"), "sharing.past_days", 0, MAX_WINDOW_DAYS)
@@ -1573,8 +1578,10 @@ def _narrowed(stored: Any, sharing: dict[str, Any]) -> dict[str, Any]:
         narrowed["calendar"] = stored.get("calendar") if stored.get("calendar") in rank else "off"
     for field, value in sharing.items():
         if field in READ_ONLY_SHARING:
-            # Read-only is the narrower side: on in either keeps it on.
-            narrowed[field] = value or stored.get(field) is not False
+            # Read-only is the narrower side: on in either keeps it on. A
+            # stored sharing from before these switches had them off (and
+            # nothing stored shares nothing anyway: the calendar goes off).
+            narrowed[field] = value or stored.get(field) is True
         elif isinstance(value, bool):
             narrowed[field] = value and stored.get(field) is True
         elif field in ("past_days", "future_days"):

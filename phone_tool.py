@@ -320,7 +320,7 @@ def _error_note(error: PhoneError) -> str:
     if error.code in ("nothing_shared", "not_shared"):
         return (f"{error} The user can turn it on in Conduit's {SETTINGS_LINK} (leave the link out of anything "
                 "spoken).")
-    if error.code == "read_only":
+    if error.code == "shared_read_only":
         return (f"{error}. Don't ask the phone for this change: tell the user, so they can make it themselves. "
                 f"They can let Hermes make changes in Conduit's {SETTINGS_LINK} (leave the link out of anything "
                 "spoken).")
@@ -414,7 +414,8 @@ def _overview(store: PhoneStore, only: str | None = None) -> dict[str, Any]:
                           "read only (no changes)" if sharing.get("reminders_read_only") else "read and add"),
             "details": "notes, attendees and links shared" if sharing.get("details") else
                        "titles, times and places only (no notes, attendees or links)",
-            "adds_without_asking": bool(sharing.get("auto_add")),
+            "adds_without_asking": bool(sharing.get("auto_add")) and (
+                shares(sharing, "events_write") or shares(sharing, "reminders_write")),
             "calendars": [{key: value for key, value in calendar.items() if key != "color"}
                           for calendar in calendars],
         }
