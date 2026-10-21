@@ -294,6 +294,7 @@ class LiveActivityReporter:
             answer = self._post(payload)
         except Exception as error:  # noqa: BLE001 — never into the turn
             status = error.status if isinstance(error, client.RelayRejected) else None
+            paused_for = 0.0
             with self._lock:
                 now = self._clock()
                 if status == 400:
@@ -308,11 +309,11 @@ class LiveActivityReporter:
                     return
                 if status == 404:
                     # The relay has no route at all: every turn waits.
-                    self._paused_until = now + UNSUPPORTED_S
+                    paused_for = UNSUPPORTED_S
                 elif status in (401, 403):
-                    self._paused_until = now + REFUSED_S
-                    logger.warning("Conduit Live Activity paused for %d minutes: the relay answered %s",
-                                   REFUSED_S // 60, status)
+                    paused_for = REFUSED_S
+                if paused_for:
+                    self._paused_until = now + paused_for
                 else:
                     turn.retry_at = now + (END_RETRY_S if payload.get("end") is not None else BACKOFF_S)
                 # The state (an end included) goes out on the next try,
@@ -320,7 +321,11 @@ class LiveActivityReporter:
                 if self._turns.get(session_id) is turn:
                     turn.dirty = True
                     self._changed()
-            logger.info("Conduit Live Activity update not delivered: %s", error)
+            if paused_for:
+                logger.warning("Conduit Live Activity paused for %d minutes: the relay answered %s",
+                               paused_for // 60, status)
+            else:
+                logger.info("Conduit Live Activity update not delivered: %s", error)
             return
         tracked = bool(isinstance(answer, dict) and answer.get("tracked"))
         with self._lock:
@@ -374,6 +379,8 @@ class LiveActivityReporter:
             self._generation += 1
             self._turns.clear()
             self._ended.clear()
+            # A reload (after pairing again, say) starts unpaused.
+            self._paused_until = 0.0
             thread, self._thread = self._thread, None
             self._wake.notify_all()
         if thread is not None:
@@ -438,11 +445,20 @@ def _post_to_relay(payload: dict[str, Any]) -> dict[str, Any]:
         # The same "pair again" signal notifications raise (and clear), for a
         # host whose only relay traffic is Live Activities.
         if error.status == 401:
-            client._mark_relay_rejected(state, True)
+            _mark_refused(state, True)
         raise
     if state.get("relay_rejected_at"):
-        client._mark_relay_rejected(state, False)
+        _mark_refused(state, False)
     return answer
+
+
+def _mark_refused(state: dict[str, Any], rejected: bool) -> None:
+    # A failure here must not replace the relay's answer: that would turn a
+    # refusal into a per-turn retry, or a delivered update into a resend.
+    try:
+        client._mark_relay_rejected(state, rejected)
+    except Exception:  # noqa: BLE001
+        logger.debug("Conduit could not record the relay's refusal", exc_info=True)
 
 
 reporter = LiveActivityReporter()
