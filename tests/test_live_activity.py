@@ -243,6 +243,28 @@ def test_a_reload_starts_unpaused(reporter, relay, clock):
     assert relay.posts[-1]["session_id"] == "s-2"
 
 
+def test_a_refusal_in_flight_across_a_reload_does_not_pause_the_new_reporter(reporter, relay, clock):
+    reporter.turn_started("s-1")
+    clock[0] += live.FIRST_DELAY_S
+    stale = []
+
+    def post(payload):
+        # The plugin reloads while this send is on its way, then it's refused.
+        reporter.stop()
+        reporter.start()
+        stale.append(payload)
+        raise client.RelayRejected(401, "unauthorized")
+
+    reporter._post = post
+    reporter.flush()
+    reporter._post = relay
+    reporter.turn_started("s-2")
+    clock[0] += live.FIRST_DELAY_S
+    reporter.flush()
+    assert len(stale) == 1
+    assert relay.posts[-1]["session_id"] == "s-2"
+
+
 def test_a_refused_credential_tells_status_to_pair_again(monkeypatch):
     state = {"relay_url": "https://relay.example", "credential": "c"}
     marked = []
