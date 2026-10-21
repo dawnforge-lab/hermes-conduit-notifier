@@ -61,6 +61,11 @@ DEFAULTS: dict[str, Any] = {
     "memory_requested": False,
     # Memory stops for the day once its model calls used this many tokens.
     "memory_daily_tokens": 300_000,
+    # A backfill of older history: {"from", "to", "days", "active", "done"},
+    # read after the chats as they happen (pulse_memory.run).
+    "memory_backfill": None,
+    "memory_backfill_days": 30,  # what `pulse memory backfill start` reads
+    "memory_backfill_unreadable": [],  # profiles the backfill couldn't read on its last run
 }
 # Which process runs the loop: {"owner": ..., "until": time.time()}.
 LEADER = "leader"
@@ -142,7 +147,28 @@ CREATE TABLE IF NOT EXISTS watermarks (
     retry_at REAL NOT NULL DEFAULT 0,
     PRIMARY KEY (profile, chat_id)
 );
+CREATE TABLE IF NOT EXISTS backfill_marks (
+    profile TEXT NOT NULL,
+    chat_id TEXT NOT NULL,
+    message_id INTEGER NOT NULL,
+    at REAL NOT NULL,
+    failures INTEGER NOT NULL DEFAULT 0,
+    retry_at REAL NOT NULL DEFAULT 0,
+    window_from REAL NOT NULL DEFAULT 0,
+    PRIMARY KEY (profile, chat_id)
+);
 """
+# Where memory has read each chat to: ``watermarks`` for chats as they
+# happen, ``backfill_marks`` for a backfill of older history (same shape, plus
+# the start of the window each mark belongs to: a mark from another window,
+# say one written as a backfill was cancelled, counts as no mark).
+MARKS = ("watermarks", "backfill_marks")
+
+
+def _check_marks(marks: str) -> None:
+    if marks not in MARKS:  # named into SQL
+        raise ValueError(f"unknown marks table {marks!r}")
+
 # How far a replacement follows earlier replacements to the item still current.
 MAX_CHAIN = 20
 # ``items.profile`` and ``watermarks.profile`` are "" for the profile the
@@ -185,6 +211,24 @@ class PulseStore:
                 "ON CONFLICT(key) DO UPDATE SET value_json=excluded.value_json",
                 (key, json.dumps(value)),
             )
+
+    def swap(self, key: str, old: Any, new: Any) -> bool:
+        """Sets ``key`` to ``new`` only if it still holds ``old`` (another
+        process may have changed it since it was read)."""
+        with _lock, self._connect() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            row = conn.execute("SELECT value_json FROM settings WHERE key=?", (key,)).fetchone()
+            try:
+                current = json.loads(row["value_json"]) if row else DEFAULTS.get(key)
+            except ValueError:
+                current = DEFAULTS.get(key)
+            if current != old:
+                conn.execute("ROLLBACK")
+                return False
+            conn.execute("INSERT INTO settings(key, value_json) VALUES(?, ?) "
+                         "ON CONFLICT(key) DO UPDATE SET value_json=excluded.value_json", (key, json.dumps(new)))
+            conn.execute("COMMIT")
+        return True
 
     def take_probe_request(self) -> bool:
         """Whether a probe was asked for (``pulse probe``), clearing the ask."""
@@ -362,14 +406,35 @@ class PulseStore:
                                (profile, chat_id)).fetchone()
         return dict(row) if row else None
 
-    def watermarks(self) -> list[dict]:
+    def watermarks(self, marks: str = "watermarks", window: Optional[float] = None) -> list[dict]:
+        """Where each chat was read to; with ``window``, only that backfill window's marks."""
+        _check_marks(marks)
         with self._connect() as conn:
-            rows = conn.execute("SELECT * FROM watermarks").fetchall()
+            if marks == "backfill_marks" and window is not None:
+                rows = conn.execute("SELECT * FROM backfill_marks WHERE window_from=?", (window,)).fetchall()
+            else:
+                rows = conn.execute(f"SELECT * FROM {marks}").fetchall()
         return [dict(row) for row in rows]
+
+    @staticmethod
+    def _mark(conn: Any, marks: str, profile: str, chat_id: str, window: float) -> Optional[Any]:
+        row = conn.execute(f"SELECT * FROM {marks} WHERE profile=? AND chat_id=?", (profile, chat_id)).fetchone()
+        if row is not None and marks == "backfill_marks" and row["window_from"] != window:
+            conn.execute("DELETE FROM backfill_marks WHERE profile=? AND chat_id=?", (profile, chat_id))
+            return None  # another window's mark
+        return row
+
+    def clear_backfill_marks(self, keep_window: Optional[float] = None) -> None:
+        """Drops backfill marks; with ``keep_window``, all but that window's."""
+        with _lock, self._connect() as conn:
+            if keep_window is None:
+                conn.execute("DELETE FROM backfill_marks")
+            else:
+                conn.execute("DELETE FROM backfill_marks WHERE window_from!=?", (keep_window,))
 
     def advance(self, profile: str, chat_id: str, *, message_id: int, at: float,
                 items: Sequence[dict[str, Any]] = (), closed: Sequence[dict[str, Any]] = (),
-                after_id: int = 0) -> Optional[list[int]]:
+                after_id: int = 0, marks: str = "watermarks", window: float = 0.0) -> Optional[list[int]]:
         """Records a read chunk: its items, the remembered items it repeats,
         replaces or closes, and the chat read up to row ``message_id``
         (written at ``at``), in one transaction, so a chunk is never half
@@ -380,15 +445,16 @@ class PulseStore:
         An item with ``same_as`` only brings that item's last mention (and a
         due date it lacked) up to date; one with ``replaces`` supersedes the
         old item, which is kept with when and by what it stopped being true.
-        Nothing is deleted."""
+        Nothing is deleted. ``marks`` names the table that says where the
+        chat was read to (MARKS), and ``window`` the backfill window's start."""
+        _check_marks(marks)
         columns = ("profile", "chat_id", "message_id", "kind", "text", "evidence", "explicit", "due", "due_at",
                    "mentioned_at", "recorded_at", "valid_from")
         live = "status='open' AND superseded_at IS NULL AND profile=?"
         now, ids = time.time(), []
         with _lock, self._connect() as conn:
             conn.execute("BEGIN IMMEDIATE")
-            row = conn.execute("SELECT message_id FROM watermarks WHERE profile=? AND chat_id=?",
-                               (profile, chat_id)).fetchone()
+            row = self._mark(conn, marks, profile, chat_id, window)
             if (row["message_id"] if row else 0) != after_id:
                 conn.execute("ROLLBACK")
                 return None
@@ -424,22 +490,25 @@ class PulseStore:
                                  (entry["status"], f"chat {chat_id} message {entry['message_id']}: {entry['evidence']}",
                                   now, target, profile))
             conn.execute(
-                "INSERT INTO watermarks(profile, chat_id, message_id, at) VALUES(?,?,?,?) "
+                f"INSERT INTO {marks}(profile, chat_id, message_id, at) VALUES(?,?,?,?) "
                 "ON CONFLICT(profile, chat_id) DO UPDATE SET message_id=excluded.message_id, at=excluded.at, "
                 "failures=0, retry_at=0", (profile, chat_id, message_id, at))
+            if marks == "backfill_marks":
+                conn.execute("UPDATE backfill_marks SET window_from=? WHERE profile=? AND chat_id=?",
+                             (window, profile, chat_id))
             conn.execute("COMMIT")
         return ids
 
     def chunk_failed(self, profile: str, chat_id: str, *, retry_at: float, after_id: int = 0,
-                     now: float = 0.0) -> int:
+                     now: float = 0.0, marks: str = "watermarks", window: float = 0.0) -> int:
         """Counts a failed read of the chat's next chunk, unless another
         reader moved the chat past ``after_id`` or already counted a failure
         that is still waiting for its retry; returns the count, or 0 when
         it didn't count this one."""
+        _check_marks(marks)
         with _lock, self._connect() as conn:
             conn.execute("BEGIN IMMEDIATE")
-            row = conn.execute("SELECT message_id, failures, retry_at FROM watermarks WHERE profile=? AND chat_id=?",
-                               (profile, chat_id)).fetchone()
+            row = self._mark(conn, marks, profile, chat_id, window)
             if (row["message_id"] if row else 0) != after_id:
                 conn.execute("ROLLBACK")
                 return 0
@@ -447,10 +516,13 @@ class PulseStore:
                 conn.execute("ROLLBACK")
                 return 0  # another reader already counted this round's failure
             conn.execute(
-                "INSERT INTO watermarks(profile, chat_id, message_id, at, failures, retry_at) VALUES(?,?,0,0,1,?) "
+                f"INSERT INTO {marks}(profile, chat_id, message_id, at, failures, retry_at) VALUES(?,?,0,0,1,?) "
                 "ON CONFLICT(profile, chat_id) DO UPDATE SET failures=failures+1, retry_at=excluded.retry_at",
                 (profile, chat_id, retry_at))
-            failures = conn.execute("SELECT failures FROM watermarks WHERE profile=? AND chat_id=?",
+            if marks == "backfill_marks":
+                conn.execute("UPDATE backfill_marks SET window_from=? WHERE profile=? AND chat_id=?",
+                             (window, profile, chat_id))
+            failures = conn.execute(f"SELECT failures FROM {marks} WHERE profile=? AND chat_id=?",
                                     (profile, chat_id)).fetchone()["failures"]
             conn.execute("COMMIT")
         return failures

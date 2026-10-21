@@ -1698,6 +1698,151 @@ def test_the_loop_runs_memory_on_its_own_thread(remembering, db, monkeypatch):
     assert len(calls) == 1
 
 
+def test_a_backfill_reads_older_chats_after_new_ones_then_finishes(remembering, db):
+    store_ = remembering.store
+    db.message("user", "I'll renew my passport next month", sid="work", at=DAY - 5 * 86400)
+    db.message("assistant", "Noted.", sid="work", at=DAY - 5 * 86400 + 10)
+    db.message("user", "Way too old", sid="work", at=DAY - 40 * 86400)
+    db.message("user", "Book the vet", sid="work", at=DAY + 60)
+    db.message("assistant", "Sure.", sid="work", at=DAY + 70)
+    now = DAY + 70 + memory.IDLE_S
+    assert memory.backfill_window(store_, 30, now) == (now - 30 * 86400, DAY)  # back to where memory started
+    cost = memory.estimate([("", store_.path.parent, SID)], (now - 30 * 86400, DAY))
+    assert (cost["chats"], cost["chunks"]) == (1, 1) and cost["chars"] == len("I'll renew my passport next month") + 6
+    store_.set("memory_backfill", {"from": now - 30 * 86400, "to": DAY, "active": True, "done": False})
+    model = FakeModel({"items": []}, {"items": [{"kind": "commitment", "text": "The user will renew their passport.",
+                                                 "evidence": "renew my passport", "line": 1, "explicit": True}]})
+    done = _remember(remembering, model, now)
+    assert done["chunks"] == 2 and "Book the vet" in model.shown[0]  # new chats first
+    old = model.shown[1].split("<<<chat")[1]
+    assert "renew my passport" in old and "Book the vet" not in old and "Way too old" not in old
+    [item] = store_.open_items()
+    assert item["mentioned_at"] == DAY - 5 * 86400
+    assert store_.watermark("", "work")["message_id"] == 5  # the backfill keeps its own marks
+    assert [m["message_id"] for m in store_.watermarks("backfill_marks")] == [2]
+    assert store_.get("memory_backfill")["active"]  # it finishes on the run that finds nothing left
+    assert _remember(remembering, model, now + 300)["chunks"] == 0
+    assert store_.get("memory_backfill")["done"] and not memory.active_backfill(store_)
+    assert memory.backfill_window(store_, 30, now) is None  # already read that far
+    assert memory.backfill_window(store_, 60, now) == (now - 60 * 86400, now - 30 * 86400)  # carries on from there
+    assert store_.get("memory_backfill")["scope"] == "all"
+    # Started for every profile but finished while memory read only this one: it counts for this one only.
+    store_.set("memory_backfill", {"from": now - 30 * 86400, "to": DAY, "active": True, "done": False, "scope": "all"})
+    assert memory.run(store_, [("", store_.path.parent, SID)], model, zone=UTC, now=now + 600,
+                      reads="this")["chunks"] == 0
+    assert store_.get("memory_backfill")["done"] and store_.get("memory_backfill")["scope"] == "this"
+    assert memory.backfill_window(store_, 30, now)[1] == DAY  # the other profiles' older chats are still due
+
+
+def test_a_backfill_reads_the_chat_going_on_when_it_started(remembering, db):
+    store_ = remembering.store
+    db.message("user", "I'll call the bank", sid="work", at=DAY - 120)  # minutes before memory started
+    db.message("assistant", "Ok.", sid="work", at=DAY - 110)
+    store_.set("memory_backfill", {"from": DAY - 86400, "to": DAY, "active": True, "done": False})
+    model = FakeModel()
+    assert _remember(remembering, model, DAY + 60)["chunks"] == 1 and "call the bank" in model.shown[0]
+    assert store_.get("memory_backfill")["active"]  # not done before its last chat was read
+    assert store_.swap("memory_backfill", {"x": 1}, None) is False and store_.get("memory_backfill")["active"]
+    gone = [("", store_.path.parent, SID), ("gone", store_.path.parent / "nowhere", "")]
+    assert memory.run(store_, gone, model, zone=UTC, now=DAY + 120)["chunks"] == 0
+    assert store_.get("memory_backfill")["active"]  # a profile it couldn't read isn't done
+    assert store_.get("memory_backfill_unreadable") == ["gone"]  # `pulse status` says why
+    assert memory.estimate(gone, (DAY - 86400, DAY))["unreadable"] == ["gone"]
+    _remember(remembering, model, DAY + 180)
+    assert store_.get("memory_backfill")["done"] and store_.get("memory_backfill_unreadable") == []
+
+
+def test_a_backfill_stopped_mid_run_is_left_alone(remembering, db):
+    store_ = remembering.store
+    db.session("w2", title="Other", pinned=0)
+    for n, sid in enumerate(("work", "w2")):
+        db.message("user", f"Old thing {n}", sid=sid, at=DAY - (5 - n) * 86400)
+        db.message("assistant", "Ok.", sid=sid, at=DAY - (5 - n) * 86400 + 10)
+    cost = memory.estimate([("", store_.path.parent, SID)], (DAY - 30 * 86400, DAY))
+    assert (cost["chats"], cost["chunks"]) == (2, 2)  # at least one model call per chat, however short
+    store_.set("memory_backfill", {"from": DAY - 30 * 86400, "to": DAY, "active": True, "done": False})
+    shown = []
+
+    def model(instructions, text):
+        shown.append(text)
+        store_.set("memory_backfill", {**store_.get("memory_backfill"), "active": False})  # `backfill stop`
+        return {"items": []}, 100
+
+    assert _remember(remembering, model, DAY + 3600)["chunks"] == 0 and len(shown) == 1
+    assert store_.watermarks("backfill_marks") == []  # the chunk in flight when it stopped isn't kept
+    assert store_.get("memory_backfill")["active"] is False and not store_.get("memory_backfill")["done"]
+    # A chunk that lands after `cancel` keeps its old window's stamp, so the next window reads that chat afresh.
+    assert store_.advance("", "work", message_id=7, at=0, marks="backfill_marks", window=1.0) == []
+    assert store_.watermarks("backfill_marks", 2.0) == [] and len(store_.watermarks("backfill_marks", 1.0)) == 1
+    assert store_.advance("", "work", message_id=3, at=0, marks="backfill_marks", window=2.0) == []
+    assert [mark["message_id"] for mark in store_.watermarks("backfill_marks", 2.0)] == [3]
+    assert store_.watermarks("backfill_marks", 1.0) == []
+    assert not memory.has_window({"from": 1e30, "to": 2e30}) and not memory.has_window({"from": -1.0, "to": 2.0})
+
+
+def test_backfill_command(remembering, db, capsys, monkeypatch):
+    monkeypatch.setattr(sys.modules["hermes_constants"], "get_hermes_home", pulse.get_hermes_home)
+    run = lambda extra="": cli.dispatch(types.SimpleNamespace(
+        conduit_push_action="pulse", pulse_action="memory", value="backfill", extra=extra))
+    status = lambda: (cli.dispatch(types.SimpleNamespace(conduit_push_action="pulse", pulse_action="status",
+                                                          value="")), capsys.readouterr().out)[1]
+    store_ = remembering.store
+    store_.set("memory_since", time.time() - 60)
+    store_.set("home_session_key", SID)
+    store_.set("memory", True)
+    db.message("user", "I'll renew my passport next month", sid="work", at=time.time() - 3 * 86400)
+    assert run("0") == 2 and run("400") == 2 and run("0" * 5000) == 2 and run("soon") == 2 and run("stop") == 1
+    capsys.readouterr()
+    assert run("7") == 0
+    out = capsys.readouterr().out
+    assert "Reading back 7 days" in out and "covers 1 chats" in out and "backfill start" in out
+    assert store_.get("memory_backfill_days") == 7 and store_.get("memory_backfill") is None
+    assert run("start") == 0 and "Memory is reading chats from" in capsys.readouterr().out
+    backfill = store_.get("memory_backfill")
+    assert backfill["active"] and backfill["days"] == 7 and store_.get("memory_requested") is True
+    assert "Backfill: reading chats back to" in status()
+    assert run("start") == 1 and "already reading" in capsys.readouterr().out
+    store_.advance("", "work", message_id=1, at=0, marks="backfill_marks")
+    assert run("stop") == 0 and "Backfill: paused" in status()
+    assert run("30") == 0 and "A paused backfill back to" in capsys.readouterr().out  # no wider window yet
+    assert memory.backfill_window(store_, 30, time.time()) == (backfill["from"], backfill["to"])
+    assert run("start") == 0 and store_.watermarks("backfill_marks")  # carries on: its marks are kept
+    store_.set("memory_backfill_unreadable", ["gone"])
+    assert run("stop") == 0 and run("cancel") == 0 and store_.watermarks("backfill_marks") == []
+    assert store_.get("memory_backfill_unreadable") == []
+    cancelled = store_.get("memory_backfill")
+    assert cancelled["done"] and cancelled["from"] == backfill["to"] and run("cancel") == 1
+    assert "Backfill: cancelled; memory has read back to" in status()
+    assert not memory.has_window({"from": 2.0, "to": 1.0}) and not memory.has_window({"from": True, "to": 2.0})
+    assert run("start") == 0 and store_.get("memory_backfill")["to"] == backfill["to"]  # starts over from there
+    store_.set("memory_backfill", {**store_.get("memory_backfill"), "active": False, "done": True})
+    assert "Backfill: read back to" in status()
+    assert run("7") == 0 and "already read back 7 days" in capsys.readouterr().out
+    # Read under `report this-profile`: once the report reads every profile, the others' older chats are still due.
+    finished = store_.get("memory_backfill")
+    assert finished["scope"] == "all"
+    store_.set("memory_backfill", {**finished, "scope": "this"})
+    store_.set("report_profiles", "this")
+    assert memory.backfill_window(store_, 7, time.time()) is None and memory.scope(store_) == "this"
+    store_.set("report_profiles", "all")
+    assert memory.backfill_window(store_, 7, time.time())[1] == store_.get("memory_since")
+    assert "read only this profile's older chats" in status()
+    assert memory.scope(store_, store_.get("memory_backfill")) == "this"  # carrying one on stays narrow
+    store_.set("memory_backfill", finished)
+    assert run("30") == 0 and "Reading back 30 days" in capsys.readouterr().out
+    store_.advance("", "w9", message_id=1, at=0, marks="backfill_marks", window=-5.0)
+    assert run("start") == 0 and store_.watermarks("backfill_marks") == []  # a new, older window starts fresh
+    store_.set("memory_backfill", None)
+    store_.set("memory", False)
+    store_.set("memory_since", None)
+    assert run("start") == 1 and "memory is off" in capsys.readouterr().out
+    assert store_.get("memory_since") is None  # a refused start doesn't move where live reading starts
+    store_.set("memory", True)
+    store_.set("memory_since", None)  # memory hasn't run yet
+    assert run("start") == 0
+    assert store_.get("memory_since") == store_.get("memory_backfill")["to"]  # live reading starts where it ends
+
+
 def test_memory_command(remembering, db, capsys, monkeypatch):
     monkeypatch.setattr(sys.modules["hermes_constants"], "get_hermes_home", pulse.get_hermes_home)
     run = lambda value="", extra="": cli.dispatch(types.SimpleNamespace(
