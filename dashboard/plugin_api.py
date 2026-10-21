@@ -1111,7 +1111,9 @@ GPT_LIVE_LIMIT = 10
 GPT_LIVE_WINDOW_S = 60.0
 GPT_LIVE_WORKERS = 2
 # An SDP offer is a few KB; the rest is room for the recent-history items.
-GPT_LIVE_MAX_BODY_BYTES = 256 * 1024
+# Room for a briefing at its character limit in 4-byte UTF-8, JSON-escaped, plus
+# the SDP offer and history.
+GPT_LIVE_MAX_BODY_BYTES = 640 * 1024
 GPT_LIVE_MAX_HISTORY_ITEMS = 40
 GPT_LIVE_MAX_ANSWER_BYTES = 64 * 1024
 # Bounds how long Conduit waits (a 504), above the socket timeout. It can't
