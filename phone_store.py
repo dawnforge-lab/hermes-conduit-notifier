@@ -1380,7 +1380,8 @@ def _refuse_unshared_changes(db: sqlite3.Connection, device_id: str, now: int) -
         need = change_need(kind)
         if not shares(sharing, need):
             refusal = _read_only(sharing, need)
-            note = str(refusal) if refusal else f"The user no longer shares {_NEED_WORDS.get(need, need)} with Hermes"
+            note = (f"{refusal}. Don't ask again: tell the user, so they can make it themselves" if refusal
+                    else f"The user no longer shares {_NEED_WORDS.get(need, need)} with Hermes")
             db.execute("UPDATE changes SET state='failed', finished_at=?, note=?, reported_at=NULL WHERE id=?",
                        (now, note, change_id))
 

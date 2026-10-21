@@ -896,6 +896,17 @@ def test_a_change_waiting_when_the_calendar_turns_read_only_never_reaches_the_ph
     assert refused["state"] == "failed" and "read-only" in refused["note"]
 
 
+def test_a_change_waiting_when_sharing_turns_off_never_reaches_the_phone(store, iphone):
+    store.ingest(iphone.seal(_batch()))
+    change = store.add_change("add_reminder", {"title": "Milk"})
+    store.ingest(iphone.seal(_batch("batch-0002", sent_at="2026-10-14T08:01:00+01:00",
+                                    sharing=_sharing(reminders=False))))
+    assert iphone.changes(store) == []
+    [refused] = store.changes()
+    assert refused["id"] == change["id"] and refused["state"] == "failed"
+    assert "no longer shares" in refused["note"]
+
+
 def test_a_change_reaches_the_phone_and_its_outcome_comes_back(store, iphone):
     store.ingest(iphone.seal(_batch()))
     change = store.add_change("add_event", {"title": "Dentist", "start": "2026-10-16T15:00:00+01:00",
