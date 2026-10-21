@@ -464,7 +464,7 @@ def _mark_refused(state: dict[str, Any], rejected: bool) -> None:
     try:
         client._mark_relay_rejected(state, rejected)
     except Exception:  # noqa: BLE001
-        logger.debug("Conduit could not record the relay's refusal", exc_info=True)
+        logger.warning("Conduit could not record the relay's refusal", exc_info=True)
 
 
 reporter = LiveActivityReporter()
