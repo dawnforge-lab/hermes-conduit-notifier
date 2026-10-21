@@ -6930,7 +6930,9 @@ def _prefs_store() -> Any:
 
 def conduit_prefs(action: str, body: Any = None, *, replace: bool = False) -> Dict[str, Any]:
     """The installation id names a device; it doesn't authenticate one. The
-    dashboard's auth is the boundary, as on every route here."""
+    dashboard's auth is the boundary, as on every route here. Unlike
+    /conduit-settings this needs no pairing: preferences can be imported on a
+    new host, and synced by a device that never turned on notifications."""
     module = _prefs_store()
     store = module.PrefsStore(_calls_home())
     try:

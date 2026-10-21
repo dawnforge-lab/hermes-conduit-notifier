@@ -232,3 +232,15 @@ def test_an_impossible_time_on_disk_drops_the_entry(tmp_path):
     store = _store(tmp_path)
     store.path.write_text('{"values": {"app.a": {"value": 1, "at": 1e300}, "app.b": {"value": 2, "at": 5}}}')
     assert set(store.view()["values"]) == {"app.b"}
+
+
+def test_a_non_finite_value_on_disk_drops_the_entry(tmp_path):
+    store = _store(tmp_path)
+    store.path.write_text('{"values": {"app.a": {"value": NaN, "at": 5}, "app.b": {"value": 2, "at": 5}}}')
+    assert set(store.view()["values"]) == {"app.b"}
+
+
+def test_an_empty_sync_on_a_new_profile_leaves_no_file(tmp_path):
+    store = _store(tmp_path)
+    store.sync({"installation_id": PHONE, "changes": {}})
+    assert not store.path.exists()

@@ -326,6 +326,8 @@ def _prefs(args: argparse.Namespace) -> int:
         try:
             # Private like the store itself.
             descriptor = os.open(Path(path).expanduser(), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+            if hasattr(os, "fchmod"):  # an export over an older, wider file
+                os.fchmod(descriptor, 0o600)
             with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
                 handle.write(encoded)
         except OSError as error:
@@ -340,7 +342,7 @@ def _prefs(args: argparse.Namespace) -> int:
     try:
         document = json.loads(Path(path).expanduser().read_text(encoding="utf-8"))
         imported = store.import_(document, replace=bool(getattr(args, "replace", False)))
-    except (OSError, ValueError) as error:
+    except (OSError, ValueError, RecursionError) as error:
         print(f"Couldn't import {path}: {error}")
         return 1
     print(f"Imported. This profile now syncs {len(imported['values'])} Conduit preferences; "

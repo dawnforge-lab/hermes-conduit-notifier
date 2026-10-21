@@ -121,8 +121,6 @@ class PrefsStore:
             if replace and set(state["values"]) - set(changes):
                 state["values"] = {}
                 state["revision"] += 1
-            elif replace:
-                state["values"] = {}
             _apply(state, changes, self.clock(), {"id": "import", "name": "Import"})
             return _public(state)
 
@@ -151,7 +149,7 @@ class PrefsStore:
             before = _encoded(state)
             yield state
             after = _encoded(state)
-            if after != before or not self.path.exists():
+            if after != before:
                 self._save(after)
 
     def _save(self, encoded: str) -> None:
@@ -203,6 +201,15 @@ def _changes(value: Any) -> dict[str, Any]:
     return kept
 
 
+def _is_json(value: Any) -> bool:
+    """A value the routes can send back (a hand-edited NaN can't be)."""
+    try:
+        json.dumps(value, allow_nan=False)
+    except (TypeError, ValueError, RecursionError):
+        return False
+    return True
+
+
 def _public(state: dict[str, Any]) -> dict[str, Any]:
     return {"revision": state["revision"], "values": dict(state["values"])}
 
@@ -234,7 +241,7 @@ def _normalized(raw: Any) -> dict[str, Any]:
             at = entry.get("at")
             # A time a hand-edited file could make unreadable is dropped.
             if (entry["value"] is None or not isinstance(at, (int, float)) or isinstance(at, bool)
-                    or not 0 <= at < MAX_AT):
+                    or not 0 <= at < MAX_AT or not _is_json(entry["value"])):
                 continue
             state["values"][key] = {
                 "value": entry["value"],
