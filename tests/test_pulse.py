@@ -222,7 +222,7 @@ def test_turn_rows_follow_the_tagged_user_row(db, tmp_path):
     db.message("assistant", "")
     db.message("assistant", "Check arrived.", active=0)
     turn = hermes.find_turn(tmp_path, chat_id=SID, tag="pAAAA-1", since=0)
-    assert turn == hermes.TurnRows(SID, "Check arrived.", False, False)
+    assert turn == hermes.TurnRows(SID, "Check arrived.", False, False, "Pulse delivery check pAAAA-1.")
     db.message("user", "next")
     assert hermes.find_turn(tmp_path, chat_id=SID, tag="pAAAA-1", since=0).closed
 
@@ -938,6 +938,84 @@ def test_items_and_ratings_are_read_from_the_text():
     assert report.parse_ratings("I said no 1 time", items) == []
 
 
+def test_report_lines_name_the_remembered_item_they_came_from():
+    reply = ("Here's what I would have brought up:\n1. [commitment] Send the deck (said in Work) #12\n"
+             "2. [promise] Check the build (tool calls)\n3. [follow-up] Ask about #4 tickets\n"
+             "4. [date] Mum's birthday (#7).\n1. [fact] A second line one #9\nRate them: reply like 1 yes, 2 no.")
+    sources = report.report_sources(reply)
+    assert sources == {1: 12, 4: 7}  # a "#4" inside the sentence isn't a source
+    ratings = report.parse_ratings("1 yes, 2 no, 4 no", report.report_items(reply), sources)
+    assert ratings == [report.Rating(1, "commitment", True, 12), report.Rating(2, "promise", False),
+                       report.Rating(4, "date", False, 7)]
+    assert report.ratings_from_json(report.ratings_json(ratings)) == ratings
+    assert report.ratings_from_json('[[1, "promise", true]]') == [report.Rating(1, "promise", True)]  # older rows
+    assert report.ratings_from_json('[[1], "x"]') == [] and report.ratings_from_json("{") == []
+    assert report.ratings_from_json('[["a", "x", true], [2, "fact", false, 7]]') == [report.Rating(2, "fact", False, 7)]
+    shown = report.shown_items("## What Pulse remembers\n#12 [commitment] Send the deck\n#3 [fact] x")
+    assert shown == {12, 3} and report.report_sources(reply, shown) == {1: 12}  # #7 wasn't in the report
+    assert report.report_items("1. [fact] The vet") == {1: "fact"}  # a remembered kind keeps its name
+
+
+def test_the_report_reads_what_memory_remembers(live, db, tmp_path):
+    now = time.time()
+    _report_day(db, now)
+    db.message("user", "Book the vet next week", sid="work", at=now - 1800)
+    store_ = live.store
+    store_.set("memory", True)
+    mark = max(row["id"] for row in hermes.recent_messages(tmp_path, exclude_chat=SID, since=now - 7200)
+               if row["content"].startswith("Noted"))
+    item = lambda text, kind="commitment", **more: {
+        "kind": kind, "text": text, "evidence": text, "explicit": 1, "due": "", "due_at": None, "message_id": mark,
+        "mentioned_at": now - 3600, **more}
+    ids = store_.advance("", "work", message_id=mark, at=now - 3500, items=[
+        item("The user will send the deck to Mara.", due="2026-10-23", due_at=now + 86400),
+        item("The user's sister is Ana.", kind="fact"), item("Hermes will check the build.", kind="promise")])
+    store_.set_ratings("a1", json.dumps({1: "fact"}), report.ratings_json([report.Rating(1, "fact", False, ids[1])]))
+    context, _ = report.build(tmp_path, store_, home_chat_id=SID, now=now)
+    remembered = context.split("## What Pulse remembers")[1].split("\n## ")[0]
+    assert remembered.index(f"#{ids[0]} [commitment]") < remembered.index(f"#{ids[2]} [promise]")  # dated first
+    assert "(due 2026-10-23)" in remembered and "sister" not in remembered  # rated "no"
+    assert "## How the user rated earlier reports\n- fact: 0 useful, 1 not" in context
+    chats = context.split("that memory hasn't read yet")[1]
+    assert "Book the vet next week" in chats and "send the deck to Mara before Friday" not in chats
+    store_.set("memory_since", now - 2000)  # memory never read what came before it was turned on
+    context, _ = report.build(tmp_path, store_, home_chat_id=SID, now=now)
+    assert "send the deck to Mara before Friday" in context.split("that memory hasn't read yet")[1]
+    store_.set("memory", False)
+    context, _ = report.build(tmp_path, store_, home_chat_id=SID, now=now)
+    assert "What Pulse remembers" not in context and "send the deck to Mara before Friday" in context
+
+
+def test_a_dated_item_said_long_ago_still_leads_the_report(live, db, tmp_path):
+    now = time.time()
+    db.session()
+    store_ = live.store
+    store_.set("memory", True)
+    item = lambda n, **more: {"kind": "interest", "text": f"The user likes topic {n}.", "evidence": "x",
+                              "explicit": 1, "due": "", "due_at": None, "message_id": 1,
+                              "mentioned_at": now - 3600 + n, **more}
+    [old] = store_.advance("", "a", message_id=1, at=now - 90 * 86400, items=[item(
+        0, kind="fact", text="The user's mum's birthday is 3 March.", due="2027-03-03", due_at=now + 130 * 86400,
+        mentioned_at=now - 90 * 86400)])
+    store_.advance("", "b", message_id=1, at=now, items=[item(n) for n in range(1, report.MAX_REPORT_ITEMS * 3 + 10)])
+    remembered = report.remembered(store_, UTC, now)
+    assert remembered.split("\n")[1].startswith(f"#{old} [fact] The user's mum's birthday")
+    [late] = store_.advance("", "c", message_id=1, at=now, items=[item(
+        0, due="2026-01-01", due_at=now - 30 * 86400, mentioned_at=now - 30 * 86400)])
+    assert f"#{late} " not in report.remembered(store_, UTC, now)  # long past due, waiting for expiry
+    [again] = store_.advance("", "d", message_id=1, at=now, items=[item(0, due="2026-01-01", due_at=now - 30 * 86400,
+                                                                   mentioned_at=now)])
+    assert f"#{again} " in report.remembered(store_, UTC, now)  # said again since: expiry keeps it, so does the report
+
+
+def test_memory_shows_when_an_item_was_said_again():
+    item = {"id": 3, "profile": "", "text": "The user will renew the passport.", "due": "", "explicit": 1,
+            "evidence": "I need to renew my passport", "valid_from": DAY, "mentioned_at": DAY + 86400}
+    assert memory.describe(item, UTC).endswith('"I need to renew my passport" (20 Oct, said again 21 Oct)')
+    assert memory.describe({**item, "mentioned_at": DAY + 365 * 86400}, UTC).endswith("(20 Oct 2026, said again 20 Oct 2027)")
+    assert memory.describe({**item, "mentioned_at": DAY + 600}, UTC).endswith("(20 Oct)")
+
+
 def _due_report(live):
     live.store.set("enabled", True)
     live.store.set("daily_report", True)
@@ -1035,6 +1113,34 @@ def test_ratings_are_read_back_and_counted(live, db):
     pulse._last_ratings = 0.0
     pulse.tick(now=time.time() + 2)
     assert pulse.rating_counts(live.store) == {"commitment": (1, 0), "promise": (0, 1)}
+
+
+
+def test_a_no_on_a_remembered_item_keeps_it_out_of_later_reports(live, db):
+    db.session()
+    _due_report(live)
+    live.store.set("memory", True)
+    now = time.time()
+    [kept] = live.store.advance("", "work", message_id=1, at=now - 3600, items=[{
+        "kind": "commitment", "text": "The user will send the deck.", "evidence": "I'll send the deck",
+        "explicit": 1, "due": "", "due_at": None, "message_id": 1, "mentioned_at": now - 3600}])
+    live.store.set("report_requested", True)
+    pulse.tick()
+    row = live.store.in_flight()[0]
+    assert f"#{kept} [commitment]" in row["text"]
+    db.message("user", row["text"], display_kind="hidden")  # Hermes keeps the whole message; Pulse trims its copy
+    db.message("assistant", f"1. [commitment] Send the deck #{kept}\n2. [follow-up] Chase PR #99")
+    db.message("user", "1 no, 2 no")
+    pulse.tick(now=time.time() + 1)
+    assert f"#{kept}" not in live.store.attempt_by_tag(row["tag"])["text"]  # trimmed once delivered
+    pulse._last_ratings = 0.0
+    pulse.tick(now=time.time() + 2)
+    assert set(report.rated_not_useful(live.store)) == {kept}  # #99 wasn't shown, so it names nothing
+    assert report.remembered(live.store, UTC, time.time()) == ""
+    live.store.advance("", "work", message_id=2, at=time.time() + 3, after_id=1, items=[{
+        "kind": "commitment", "text": "The user will send the deck.", "evidence": "the deck", "explicit": 1, "due": "",
+        "due_at": None, "message_id": 2, "mentioned_at": time.time() + 3, "same_as": kept}])
+    assert f"#{kept} " in report.remembered(live.store, UTC, time.time())  # brought up again: back in the report
 
 
 def test_report_command(live, db, capsys, monkeypatch):

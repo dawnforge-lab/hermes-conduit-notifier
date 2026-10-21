@@ -15,7 +15,8 @@ the item it repeats, a change supersedes the old item (kept, with when it
 stopped being true), and words showing an item done or called off close it.
 Dated items left untouched a week past their date expire.
 
-Shadow only: nothing reads the items yet but ``pulse memory``.
+Shadow only: the items are read by ``pulse memory`` and the shadow report
+(pulse_report), nothing else.
 
 One structured call per chunk, through the plugin's own Hermes auxiliary
 task (``pulse_memory``), so its model is picked in Hermes's settings like
@@ -472,6 +473,10 @@ def describe(item: dict, zone: tzinfo) -> str:
     """One item for `pulse memory`."""
     where = f"[{item['profile']}] " if item["profile"] else ""
     due = f" (due {item['due']})" if item["due"] else ""
-    said = _local(item["mentioned_at"], zone).strftime("%d %b")
+    # The quote is from when the item was first said; a repeat moves only the last mention.
+    first, latest = _local(item["valid_from"], zone), _local(item["mentioned_at"], zone)
+    form = "%d %b" if latest.year == first.year else "%d %b %Y"
+    said = first.strftime(form)
+    again = f", said again {latest.strftime(form)}" if latest.date() != first.date() else ""
     inferred = "" if item["explicit"] else ", inferred"
-    return f"#{item['id']} {where}{item['text']}{due}\n    \"{item['evidence']}\" ({said}{inferred})"
+    return f"#{item['id']} {where}{item['text']}{due}\n    \"{item['evidence']}\" ({said}{again}{inferred})"

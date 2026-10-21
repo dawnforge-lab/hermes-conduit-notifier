@@ -1,15 +1,17 @@
 """Pulse's shadow report (designs/proactivity.md 13, slice 0 (d)).
 
-A few times a day Pulse gathers what Hermes can already see (chats since
-the last report, the phone's calendar and reminders, Hermes's memory files,
-and tool calls that failed) and sends it into the home chat as one hidden
-turn. The home chat's own model answers with "here's what I would have
+A few times a day Pulse gathers what Hermes can already see (what Pulse
+memory kept, chats since the last report that memory hasn't read, the
+phone's calendar and reminders, Hermes's memory files, and tool calls that
+failed) and sends it into the home chat as one hidden turn. The home chat's own model answers with "here's what I would have
 brought up": a few numbered items, or nothing. It sends nothing anywhere
 else.
 
 The user rates the items by replying ("1 yes, 2 no"). The ratings are read
 back from the home chat and counted per kind of item, the first, plain form
-of learning what's worth bringing up.
+of learning what's worth bringing up. A line drawn from a remembered item
+ends with its number, so its rating lands on that item too: one rated "no"
+stays out of later reports until the user brings it up again.
 
 Everything here only reads: state.db read-only, the phone store through
 its own reader, the memory files as text.
@@ -29,9 +31,12 @@ from typing import Any, Optional, Sequence
 
 from . import pulse_hermes as hermes
 from . import pulse_ledger as ledger
+from . import pulse_memory
 from . import pulse_store as store
 
-KINDS = ("commitment", "promise", "date", "follow-up", "reminder", "other")
+# The report's own kinds, then the ones Pulse memory remembers, so a line
+# drawn from a remembered item keeps its kind and its rating counts there.
+KINDS = ("commitment", "promise", "date", "follow-up", "reminder", "watch", "intention", "interest", "fact", "other")
 DEFAULT_TIMES = "08:00,13:00,18:00"
 # A report covers what happened since the last delivered one, within these bounds.
 MIN_WINDOW_S = 4 * 3600.0
@@ -50,6 +55,9 @@ MIN_CHATS_BUDGET = 2_000
 PER_CHAT_BUDGET = 2_500
 PER_MESSAGE = 400
 MEMORY_BUDGET = 3_000
+# What Pulse remembers (pulse_memory), shown near the top of the report.
+ITEMS_BUDGET = 3_500
+MAX_REPORT_ITEMS = 40
 EVENTS_DAYS = 2
 MAX_EVENTS = 25
 MAX_REMINDERS = 25
@@ -60,9 +68,9 @@ REPORT_TEXT = """Pulse shadow report {tag}.
 
 This is a dry run: nothing is sent to the user except this report. Below is what Hermes can see now, covering {since} onward. Write "Here's what I would have brought up:" and then at most 5 numbered items, one line each, in this form:
 
-1. [kind] what you would have said, then (why now, and where it came from)
+1. [kind] what you would have said, then (why now, and where it came from) #12
 
-kind is one of: {kinds}. Only include something worth interrupting the user for now: a commitment or promise coming due, something Hermes said it would do and hasn't, a date that needs preparing for, a follow-up they'd want. Leave out anything already done, anything their calendar, reminders or Hermes's scheduled jobs already cover, anything an earlier report in this chat already brought up (unless something about it changed), and anything rated "no" in earlier reports. If nothing is worth it, say "Nothing worth bringing up right now." and stop.
+kind is one of: {kinds}. When an item comes from something under "What Pulse remembers", end its line with that thing's number after "#", like #12; otherwise leave the number out. Only include something worth interrupting the user for now: a commitment or promise coming due, something Hermes said it would do and hasn't, a date that needs preparing for, a follow-up they'd want. Leave out anything already done, anything their calendar, reminders or Hermes's scheduled jobs already cover, anything an earlier report in this chat already brought up (unless something about it changed), and anything rated "no" in earlier reports. Weigh each kind by how the user rated it before. If nothing is worth it, say "Nothing worth bringing up right now." and stop.
 
 End with: "Rate them: reply like 1 yes, 2 no."
 
@@ -75,6 +83,9 @@ REPORT_NOTE = ("This turn was started by Pulse's shadow report. Follow the instr
                "what it contains and this chat's earlier reports and ratings, and don't use any tools.")
 
 _ITEM = re.compile(r"^\s*(\d{1,2})[.)]\s*\[([A-Za-z-]+)\]", re.MULTILINE)
+_SOURCE = re.compile(r"^\s*(\d{1,2})[.)]\s*\[[A-Za-z-]+\].*?#(\d{1,9})\W*$", re.MULTILINE)
+_SHOWN = re.compile(r"^#(\d{1,9}) \[", re.MULTILINE)
+REMEMBERED_TITLE = "## What Pulse remembers"
 _RATING = re.compile(r"(?<![\d.])(\d{1,2})\s*[:=.)-]?\s*(yes|no|y|n|👍|👎)(?![a-z])", re.IGNORECASE)
 
 
@@ -83,6 +94,7 @@ class Rating:
     item: int
     kind: str
     useful: bool
+    memory: Optional[int] = None  # the remembered item the report line came from
 
 
 # Gathering ----------------------------------------------------------------------
@@ -133,10 +145,12 @@ def their_home_chat(home: Path) -> str:
 
 
 def recent_chats(home: Path, *, home_chat_id: str, since: float, zone: tzinfo,
-                 others: Sequence[tuple[str, Path]] = (), budget: int = CHATS_BUDGET) -> str:
+                 others: Sequence[tuple[str, Path]] = (), budget: int = CHATS_BUDGET,
+                 read: Optional[dict[tuple[str, str], int]] = None, read_since: float = 0.0) -> str:
     """User and assistant text since ``since``, per chat, most recent chat
     first. Not the home chat, cron runs or hidden rows. Chats from ``others``
-    (other profiles) are labelled with the profile's name."""
+    (other profiles) are labelled with the profile's name. Rows after
+    ``read_since`` up to a chat's ``read`` mark are left out: memory read them."""
     chats: dict[tuple[str, str], dict[str, Any]] = {}
     sources = [("", home, home_chat_id)] + [(name, path, their_home_chat(path)) for name, path in others]
     for profile, path, exclude in sources:
@@ -147,6 +161,8 @@ def recent_chats(home: Path, *, home_chat_id: str, since: float, zone: tzinfo,
                 raise
             continue  # another profile's chats are a bonus, not a reason to fail
         for row in rows:
+            if read and row["timestamp"] > read_since and row["id"] <= read.get((profile, row["chat_id"]), 0):
+                continue  # memory read it (or gave up on it after failed reads): out of the report
             text = _clip(row["content"], PER_MESSAGE)
             if not text:
                 continue
@@ -312,6 +328,68 @@ def zone_for(name: Optional[str]) -> tzinfo:
     return datetime.now().astimezone().tzinfo or timezone.utc
 
 
+KIND_ORDER = ("promise", "commitment", "watch", "intention", "interest", "fact")
+
+
+def rating_counts(pulse_store: store.PulseStore) -> dict[str, tuple[int, int]]:
+    """Report kind -> (rated useful, rated not), over every rated report."""
+    counts: dict[str, list[int]] = {}
+    for row in pulse_store.all_ratings():
+        for rating in ratings_from_json(row["ratings_json"]):
+            pair = counts.setdefault(rating.kind, [0, 0])
+            pair[0 if rating.useful else 1] += 1
+    return {kind: (yes, no) for kind, (yes, no) in sorted(counts.items())}
+
+
+def rated_not_useful(pulse_store: store.PulseStore) -> dict[int, float]:
+    """Remembered items whose latest rating in a report was "no", and when
+    that rating was read."""
+    latest: dict[int, tuple[float, bool]] = {}
+    for row in pulse_store.all_ratings():
+        for rating in ratings_from_json(row["ratings_json"]):
+            if rating.memory is not None and row["updated_at"] >= latest.get(rating.memory, (-1.0, True))[0]:
+                latest[rating.memory] = (row["updated_at"], rating.useful)
+    return {memory: at for memory, (at, useful) in latest.items() if not useful}
+
+
+def remembered(pulse_store: store.PulseStore, zone: tzinfo, now: float) -> str:
+    """Pulse memory's open items, dated ones soonest first, then by kind
+    and how recently they came up; not the ones rated "no" (until the user
+    brings one up again)."""
+    skip = rated_not_useful(pulse_store)
+    # Not what memory's next run expires either.
+    items = [item for item in pulse_store.open_items(limit=MAX_REPORT_ITEMS * 3 + len(skip), soonest=True,
+                                                     stale_before=now - pulse_memory.EXPIRE_S)
+             if item["mentioned_at"] > skip.get(item["id"], -1.0)]
+    order = {kind: n for n, kind in enumerate(KIND_ORDER)}
+    items.sort(key=lambda item: (item["due_at"] is None, item["due_at"] or 0.0,
+                                 order.get(item["kind"], len(order)), -item["mentioned_at"]))
+    lines, used = [], 0
+    for item in items[:MAX_REPORT_ITEMS]:
+        said = _local(item["valid_from"], zone)
+        last = (f", last {_local(item['mentioned_at'], zone)}"
+                if item["mentioned_at"] - item["valid_from"] > 3600 else "")
+        where = f", profile {item['profile']}" if item["profile"] else ""
+        due = f" (due {item['due']})" if item["due"] else ""
+        line = (f"#{item['id']} [{item['kind']}] {_clip(item['text'], 200)}{due} "
+                f"(said {said}{last}{where}): \"{_clip(item['evidence'], 120)}\"")
+        if used + len(line) > ITEMS_BUDGET:
+            break
+        lines.append(line)
+        used += len(line) + 1
+    if not lines:
+        return ""
+    return REMEMBERED_TITLE + " (open items it kept from the chats it has read)\n" + "\n".join(lines)
+
+
+def ratings_section(pulse_store: store.PulseStore) -> str:
+    counts = rating_counts(pulse_store)
+    if not counts:
+        return ""
+    return ("## How the user rated earlier reports\n"
+            + "\n".join(f"- {kind}: {yes} useful, {no} not" for kind, (yes, no) in counts.items()))
+
+
 def window_start(pulse_store: store.PulseStore, now: float) -> float:
     """Where the next report's look back starts: the last delivered report,
     at least MIN_WINDOW_S and at most WINDOW_S ago."""
@@ -330,10 +408,17 @@ def build(home: Path, pulse_store: store.PulseStore, *, home_chat_id: str, now: 
     others = profile_homes(home) if pulse_store.get("report_profiles") == "all" else []
     header = f"## Now\n{datetime.fromtimestamp(now, zone).strftime('%A %d %B %Y, %H:%M')} ({zone_name or 'host time'})"
     start = _local(since, zone)
-    sections = [header, phone, cron_jobs(home, others), memory_files(home, others),
-                failed_calls(pulse_store, since, zone)]
+    memory_on = bool(pulse_store.get("memory"))
+    sections = [header, ratings_section(pulse_store), remembered(pulse_store, zone, now) if memory_on else "",
+                phone, cron_jobs(home, others), failed_calls(pulse_store, since, zone), memory_files(home, others)]
     sections = [section for section in sections if section]
-    title = f"## Chats since {start}\n"
+    # With memory on, chats it has already read show only as what it kept from them
+    # (often nothing): the report spends its room on what memory hasn't seen.
+    read = {(mark["profile"], mark["chat_id"]): mark["message_id"] for mark in pulse_store.watermarks()} \
+        if memory_on else None
+    read_since = pulse_store.get("memory_since")
+    read_since = float(read_since) if isinstance(read_since, (int, float)) and not isinstance(read_since, bool) else 0.0
+    title = f"## Chats since {start}" + (" that memory hasn't read yet" if memory_on else "") + "\n"
     # Room the instructions and the other sections leave, so the whole
     # message stays under report_budget(). The 100 estimates what report_text
     # fills into REPORT_TEXT (the tag, the start time, the kinds and the
@@ -341,7 +426,8 @@ def build(home: Path, pulse_store: store.PulseStore, *, home_chat_id: str, now: 
     left = report_budget() - len(REPORT_TEXT) - sum(len(section) + 2 for section in sections) - len(title) - 100
     budget = min(CHATS_BUDGET, max(MIN_CHATS_BUDGET, left))
     try:
-        chats = recent_chats(home, home_chat_id=home_chat_id, since=since, zone=zone, others=others, budget=budget)
+        chats = recent_chats(home, home_chat_id=home_chat_id, since=since, zone=zone, others=others, budget=budget,
+                             read=read, read_since=read_since)
     except hermes.HermesUnreadable as error:
         chats = f"Couldn't read the chats ({type(error).__name__})."
     chats = title + (chats or "No chats since then.")
@@ -392,7 +478,24 @@ def report_items(reply: str) -> dict[int, str]:
     return items
 
 
-def parse_ratings(text: str, items: dict[int, str]) -> list[Rating]:
+def report_sources(reply: str, shown: Optional[set[int]] = None) -> dict[int, int]:
+    """Item number -> the remembered item it names with "#n" at its end;
+    with ``shown``, only items the report showed (so "PR #12" isn't one)."""
+    first: dict[int, int] = {}  # a number used twice is the first such line, as in report_items
+    for match in _ITEM.finditer(reply or ""):
+        first.setdefault(int(match.group(1)), match.start())
+    return {int(match.group(1)): int(match.group(2)) for match in _SOURCE.finditer(reply or "")
+            if first.get(int(match.group(1))) == match.start() and (shown is None or int(match.group(2)) in shown)}
+
+
+def shown_items(text: str) -> set[int]:
+    """The remembered items a report message showed: only lines under its
+    "What Pulse remembers" heading, so a chat quoting "#9 [fact]" adds none."""
+    _, found, rest = (text or "").partition(REMEMBERED_TITLE)
+    return {int(n) for n in _SHOWN.findall(rest.split("\n## ")[0])} if found else set()
+
+
+def parse_ratings(text: str, items: dict[int, str], sources: Optional[dict[int, int]] = None) -> list[Rating]:
     """``1 yes, 2 no`` style ratings for items the report has. A number
     rated twice keeps its last rating."""
     found: dict[int, bool] = {}
@@ -400,12 +503,14 @@ def parse_ratings(text: str, items: dict[int, str]) -> list[Rating]:
         number = int(number)
         if number in items:
             found[number] = verdict.lower() in ("yes", "y", "👍")
-    return [Rating(n, items[n], useful) for n, useful in sorted(found.items())]
+    return [Rating(n, items[n], useful, (sources or {}).get(n)) for n, useful in sorted(found.items())]
 
 
 def ratings_after(home: Path, *, chat_id: str, tag: str, since: float) -> tuple[dict[int, str], list[Rating]]:
     """The delivered report's items, and the user's ratings in what they
-    wrote after it in the home chat (up to the next Pulse turn)."""
+    wrote after it in the home chat (up to the next Pulse turn). A rating
+    names a remembered item only if the report message, as Hermes keeps it,
+    showed that item (Pulse trims its own copy once delivered)."""
     turn = hermes.find_turn(home, chat_id=chat_id, tag=tag, since=since)
     if turn is None or not turn.reply:
         return {}, []
@@ -413,18 +518,26 @@ def ratings_after(home: Path, *, chat_id: str, tag: str, since: float) -> tuple[
     if not items:
         return {}, []
     replies = hermes.user_text_after(home, session_id=turn.session_id, tag=tag)
-    return items, parse_ratings("\n".join(replies), items)
+    return items, parse_ratings("\n".join(replies), items, report_sources(turn.reply, shown_items(turn.prompt)))
 
 
 def ratings_json(ratings: list[Rating]) -> str:
-    return json.dumps([[r.item, r.kind, r.useful] for r in ratings])
+    return json.dumps([[r.item, r.kind, r.useful] + ([r.memory] if r.memory is not None else []) for r in ratings])
 
 
 def ratings_from_json(value: Any) -> list[Rating]:
     try:
-        return [Rating(int(n), str(k), bool(u)) for n, k, u in json.loads(value or "[]")]
+        rows = json.loads(value or "[]")
     except (TypeError, ValueError):
         return []
+    ratings = []
+    for row in rows if isinstance(rows, list) else []:
+        try:  # a rating stored before reports named remembered items has three parts
+            if 3 <= len(row) <= 4:
+                ratings.append(Rating(int(row[0]), str(row[1]), bool(row[2]), int(row[3]) if len(row) > 3 else None))
+        except (TypeError, ValueError):
+            continue  # one bad row drops only itself
+    return ratings
 
 
 # Scheduling -----------------------------------------------------------------------

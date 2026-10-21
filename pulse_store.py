@@ -455,15 +455,23 @@ class PulseStore:
             conn.execute("COMMIT")
         return failures
 
-    def open_items(self, kind: str = "", limit: int = -1, *, profile: Optional[str] = None) -> list[dict]:
+    def open_items(self, kind: str = "", limit: int = -1, *, profile: Optional[str] = None,
+                   soonest: bool = False, stale_before: Optional[float] = None) -> list[dict]:
+        """Open items, most recently mentioned first, or with ``soonest``
+        dated ones soonest due first and then the rest. With ``stale_before``,
+        not the ones ``expire_items(due_before=stale_before)`` would close."""
         where, params = "", []
+        if stale_before is not None:
+            where, params = where + "AND NOT (due_at IS NOT NULL AND due_at < ? AND mentioned_at < ?) ", \
+                params + [stale_before, stale_before]
         if kind:
             where, params = where + "AND kind=? ", params + [kind]
         if profile is not None:
             where, params = where + "AND profile=? ", params + [profile]
         with self._connect() as conn:
             rows = conn.execute(f"SELECT * FROM items WHERE status='open' AND superseded_at IS NULL {where}"
-                                f"ORDER BY mentioned_at DESC, id DESC LIMIT ?", (*params, limit)).fetchall()
+                                f"ORDER BY {'due_at IS NULL, due_at, ' if soonest else ''}mentioned_at DESC, id DESC LIMIT ?",
+                                (*params, limit)).fetchall()
         return [dict(row) for row in rows]
 
     def expire_items(self, *, due_before: float, now: float) -> int:
