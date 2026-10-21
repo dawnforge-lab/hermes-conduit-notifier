@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import http.client
 import json
+import os
 import socket
 import time
 from datetime import datetime
@@ -317,16 +318,20 @@ def _prefs(args: argparse.Namespace) -> int:
                   f"({when}, {_printable(entry.get('by_name') or 'Conduit')})")
         return 0
     if action == "export":
-        encoded = json.dumps(store.export(), indent=2, ensure_ascii=False) + "\n"
+        exported = store.export()
+        encoded = json.dumps(exported, indent=2, ensure_ascii=False) + "\n"
         if not path:
             print(encoded, end="")
             return 0
         try:
-            Path(path).expanduser().write_text(encoded, encoding="utf-8")
+            # Private like the store itself.
+            descriptor = os.open(Path(path).expanduser(), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+            with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+                handle.write(encoded)
         except OSError as error:
             print(f"Couldn't write {path}: {error}")
             return 1
-        print(f"Exported {len(store.view()['values'])} preferences to {path}. "
+        print(f"Exported {len(exported['values'])} preferences to {path}. "
               "Import it on the other host with `hermes conduit-push prefs import <file>`.")
         return 0
     if not path:

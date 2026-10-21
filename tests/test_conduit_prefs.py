@@ -219,3 +219,16 @@ def test_cli_exports_and_imports(tmp_path, monkeypatch, capsys):
     assert cli.dispatch(argparse.Namespace(conduit_push_action="prefs", prefs_action="show",
                                            file="", replace=False)) == 0
     assert "app.accent" in capsys.readouterr().out
+
+
+def test_a_replacing_import_that_drops_keys_moves_the_revision(tmp_path):
+    store = _store(tmp_path)
+    store.sync({"installation_id": PHONE, "changes": {"app.accent": "violet"}})
+    after = store.import_({"kind": "conduit-prefs", "version": 1, "values": {}}, replace=True)
+    assert after == {"revision": 2, "values": {}}
+
+
+def test_an_impossible_time_on_disk_drops_the_entry(tmp_path):
+    store = _store(tmp_path)
+    store.path.write_text('{"values": {"app.a": {"value": 1, "at": 1e300}, "app.b": {"value": 2, "at": 5}}}')
+    assert set(store.view()["values"]) == {"app.b"}

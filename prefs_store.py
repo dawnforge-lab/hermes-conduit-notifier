@@ -54,6 +54,8 @@ MAX_VALUE_BYTES = 16 * 1024
 # The whole map, encoded.
 MAX_TOTAL_BYTES = 512 * 1024
 MAX_DEVICE_NAME_CHARS = 60
+# 2100-01-01: later (or inf) is a corrupt time.
+MAX_AT = 4_102_444_800
 
 _KEY = re.compile(r"^[a-z][a-z0-9_.-]{0,63}$")
 _INSTALLATION = re.compile(r"^[A-Za-z0-9_-]{8,64}$")
@@ -116,7 +118,10 @@ class PrefsStore:
         # An import never clears a key by null: an export lists only set values.
         changes = _changes({key: value for key, value in values.items() if value is not None})
         with self._locked() as state:
-            if replace:
+            if replace and set(state["values"]) - set(changes):
+                state["values"] = {}
+                state["revision"] += 1
+            elif replace:
                 state["values"] = {}
             _apply(state, changes, self.clock(), {"id": "import", "name": "Import"})
             return _public(state)
@@ -227,7 +232,9 @@ def _normalized(raw: Any) -> dict[str, Any]:
             if not isinstance(key, str) or not _KEY.match(key) or not isinstance(entry, dict) or "value" not in entry:
                 continue
             at = entry.get("at")
-            if entry["value"] is None or not isinstance(at, (int, float)) or isinstance(at, bool):
+            # A time a hand-edited file could make unreadable is dropped.
+            if (entry["value"] is None or not isinstance(at, (int, float)) or isinstance(at, bool)
+                    or not 0 <= at < MAX_AT):
                 continue
             state["values"][key] = {
                 "value": entry["value"],
