@@ -347,7 +347,7 @@ def test_missing_files_can_be_left_out_and_links_stay(tmp_path, monkeypatch):
     kept.parent.mkdir()
     kept.write_bytes(b"pdf")
     conn = _db(tmp_path / "home", [("s1", "assistant", f"MEDIA:{kept}"),
-                                   ("s1", "assistant", "MEDIA:/root/gone.pdf"),
+                                   ("s1", "assistant", f"MEDIA:{tmp_path / 'gone.pdf'}"),
                                    ("s1", "assistant", "See https://example.com/a")])
     every = index.list_artifacts(conn)["items"]
     assert [i["name"] for i in every] == ["example.com/a", "gone.pdf", "kept.pdf"]
@@ -365,7 +365,7 @@ def test_a_missing_file_is_statted_once_while_left_out(tmp_path, monkeypatch):
 
 def test_the_route_hides_missing_files_on_request(tmp_path, monkeypatch):
     _no_gateway(monkeypatch)
-    _db(tmp_path, [("s1", "assistant", "MEDIA:/root/gone.png")]).close()
+    _db(tmp_path, [("s1", "assistant", f"MEDIA:{tmp_path / 'gone.png'}")]).close()
     monkeypatch.setattr(sys.modules["hermes_constants"], "get_hermes_home", lambda: tmp_path)
     monkeypatch.setattr(api, "_artifacts_index", lambda: index)
     app = FastAPI()

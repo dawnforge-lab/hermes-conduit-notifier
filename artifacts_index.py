@@ -469,12 +469,13 @@ def list_artifacts(conn: sqlite3.Connection, *, before: Optional[int] = None,
                 continue
             item = _describe(source, kind, target, label, row,
                              title_for(str(row["session_id"]), row["title"]), stat)
-            # Seen once listed: a newer mention the filter leaves out
-            # doesn't hide an older one it keeps.
             if item is not None and not include_missing and item.get("exists") is False:
-                # Gone at its newest mention, gone at every older one.
+                # Gone at its newest mention, gone at every older one, so
+                # each gone path is checked once.
                 seen.add(key)
                 continue
+            # Seen once listed: a newer mention the filter leaves out
+            # doesn't hide an older one it keeps.
             if item is not None and _matches(item, kinds, query):
                 seen.add(key)
                 items.append(item)
