@@ -143,6 +143,8 @@ CREATE TABLE IF NOT EXISTS watermarks (
     PRIMARY KEY (profile, chat_id)
 );
 """
+# How far a replacement follows earlier replacements to the item still current.
+MAX_CHAIN = 20
 # ``items.profile`` and ``watermarks.profile`` are "" for the profile the
 # store belongs to, else the other profile's name (pulse_report.profile_homes).
 # ``attempts.session_key`` holds the home chat's stored session id (the
@@ -366,14 +368,22 @@ class PulseStore:
         return [dict(row) for row in rows]
 
     def advance(self, profile: str, chat_id: str, *, message_id: int, at: float,
-                items: Sequence[dict[str, Any]] = (), after_id: int = 0) -> Optional[list[int]]:
-        """Records a read chunk: its items, and the chat read up to row
-        ``message_id`` (written at ``at``), in one transaction, so a chunk is
-        never half kept. Only if the chat was still read up to ``after_id``,
-        so a chunk two processes read is kept once. Returns the new items'
-        ids, or None when another reader got there first."""
+                items: Sequence[dict[str, Any]] = (), closed: Sequence[dict[str, Any]] = (),
+                after_id: int = 0) -> Optional[list[int]]:
+        """Records a read chunk: its items, the remembered items it repeats,
+        replaces or closes, and the chat read up to row ``message_id``
+        (written at ``at``), in one transaction, so a chunk is never half
+        kept. Only if the chat was still read up to ``after_id``, so a chunk
+        two processes read is kept once. Returns the new items' ids, or None
+        when another reader got there first.
+
+        An item with ``same_as`` only brings that item's last mention (and a
+        due date it lacked) up to date; one with ``replaces`` supersedes the
+        old item, which is kept with when and by what it stopped being true.
+        Nothing is deleted."""
         columns = ("profile", "chat_id", "message_id", "kind", "text", "evidence", "explicit", "due", "due_at",
                    "mentioned_at", "recorded_at", "valid_from")
+        live = "status='open' AND superseded_at IS NULL AND profile=?"
         now, ids = time.time(), []
         with _lock, self._connect() as conn:
             conn.execute("BEGIN IMMEDIATE")
@@ -383,11 +393,36 @@ class PulseStore:
                 conn.execute("ROLLBACK")
                 return None
             for item in items:
+                if item.get("same_as"):
+                    # A repeat of an item replaced since it was shown repeats its successor;
+                    # one of an item closed since is already on record.
+                    target = _current(conn, item["same_as"], profile)
+                    if target is None or conn.execute(
+                            # A date said again, or a later one, moves the item's date.
+                            f"UPDATE items SET mentioned_at=MAX(mentioned_at, ?), "
+                            f"due=CASE WHEN ? IS NOT NULL AND (due_at IS NULL OR ? > due_at) THEN ? ELSE due END, "
+                            f"due_at=CASE WHEN ? IS NOT NULL AND (due_at IS NULL OR ? > due_at) THEN ? ELSE due_at END "
+                            f"WHERE id=? AND {live}",
+                            (item["mentioned_at"], item["due_at"], item["due_at"], item["due"], item["due_at"],
+                             item["due_at"], item["due_at"], target, profile)).rowcount:
+                        continue
                 row = {**item, "profile": profile, "chat_id": chat_id, "recorded_at": now,
                        "valid_from": item["mentioned_at"]}
-                ids.append(conn.execute(
+                new_id = conn.execute(
                     f"INSERT INTO items({', '.join(columns)}) VALUES({','.join('?' * len(columns))})",
-                    tuple(row[column] for column in columns)).lastrowid)
+                    tuple(row[column] for column in columns)).lastrowid
+                ids.append(new_id)
+                # Already replaced (by an earlier chunk): replace its successor.
+                target = _current(conn, item["replaces"], profile) if item.get("replaces") else None
+                if target is not None and target != new_id:
+                    conn.execute(f"UPDATE items SET superseded_at=?, superseded_by=?, valid_to=? WHERE id=? AND {live}",
+                                 (now, new_id, item["mentioned_at"], target, profile))
+            for entry in closed:  # an item replaced since closes through its successor
+                target = _current(conn, entry["id"], profile)
+                if target is not None:
+                    conn.execute(f"UPDATE items SET status=?, closed_by=?, closed_at=? WHERE id=? AND {live}",
+                                 (entry["status"], f"chat {chat_id} message {entry['message_id']}: {entry['evidence']}",
+                                  now, target, profile))
             conn.execute(
                 "INSERT INTO watermarks(profile, chat_id, message_id, at) VALUES(?,?,?,?) "
                 "ON CONFLICT(profile, chat_id) DO UPDATE SET message_id=excluded.message_id, at=excluded.at, "
@@ -420,17 +455,30 @@ class PulseStore:
             conn.execute("COMMIT")
         return failures
 
-    def open_items(self, kind: str = "", limit: int = -1) -> list[dict]:
-        where, params = ("AND kind=? ", (kind,)) if kind else ("", ())
+    def open_items(self, kind: str = "", limit: int = -1, *, profile: Optional[str] = None) -> list[dict]:
+        where, params = "", []
+        if kind:
+            where, params = where + "AND kind=? ", params + [kind]
+        if profile is not None:
+            where, params = where + "AND profile=? ", params + [profile]
         with self._connect() as conn:
             rows = conn.execute(f"SELECT * FROM items WHERE status='open' AND superseded_at IS NULL {where}"
                                 f"ORDER BY mentioned_at DESC, id DESC LIMIT ?", (*params, limit)).fetchall()
         return [dict(row) for row in rows]
 
+    def expire_items(self, *, due_before: float, now: float) -> int:
+        """Open items due before ``due_before`` and not mentioned since."""
+        with _lock, self._connect() as conn:
+            return conn.execute(
+                "UPDATE items SET status='expired', closed_by='expiry', closed_at=? WHERE status='open' "
+                "AND superseded_at IS NULL AND due_at IS NOT NULL AND due_at < ? AND mentioned_at < ?",
+                (now, due_before, due_before)).rowcount
+
     def close_item(self, item_id: int, *, status: str, closed_by: str) -> bool:
         with _lock, self._connect() as conn:
             changed = conn.execute(
-                "UPDATE items SET status=?, closed_by=?, closed_at=? WHERE id=? AND status='open'",
+                "UPDATE items SET status=?, closed_by=?, closed_at=? WHERE id=? AND status='open' "
+                "AND superseded_at IS NULL",
                 (status, closed_by, time.time(), item_id)).rowcount
         return bool(changed)
 
@@ -439,6 +487,20 @@ class PulseStore:
             rows = conn.execute("SELECT kind, COUNT(*) AS n FROM items WHERE status='open' AND superseded_at IS NULL "
                                 "GROUP BY kind").fetchall()
         return {row["kind"]: row["n"] for row in rows}
+
+
+def _current(conn: sqlite3.Connection, item_id: int, profile: str) -> Optional[int]:
+    """The item still standing for ``item_id``: itself, or what replaced
+    it; None once it's closed (or isn't this profile's)."""
+    for _ in range(MAX_CHAIN):
+        row = conn.execute("SELECT status, superseded_by FROM items WHERE id=? AND profile=?",
+                           (item_id, profile)).fetchone()
+        if row is None or row["status"] != "open":
+            return None
+        if row["superseded_by"] is None:
+            return item_id
+        item_id = row["superseded_by"]
+    return None
 
 
 class _Closing:

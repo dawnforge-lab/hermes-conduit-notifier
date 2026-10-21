@@ -1216,13 +1216,16 @@ def test_only_items_said_in_the_chat_are_kept():
         {"kind": "mood", "text": "x", "evidence": "promise", "line": 1},
         {"kind": "fact", "text": "x", "evidence": "I ... on", "line": 1},  # too little to place
         "not an item"]})
-    items, tokens = memory.extract(model, chunk, UTC)
+    items, _, tokens = memory.extract(model, chunk, UTC)
     assert tokens == 100 and "[1] Tue 2026-10-20 00:01 User: I’ll call the dentist" in model.shown[0]
     assert [(i["kind"], i["message_id"], i["explicit"], i["due"]) for i in items] == [
         ("commitment", 11, 1, "2026-10-23"), ("promise", 12, 1, "")]
     assert items[0]["due_at"] == DAY + 3 * 86400 and items[0]["mentioned_at"] == DAY + 60
     with pytest.raises(memory.BadReply):
         memory.extract(FakeModel(["items"]), chunk, UTC)
+    items, _, _ = memory.extract(FakeModel({"items": [{"kind": "fact", "text": "x", "evidence": "call the dentist",
+                                                        "line": 10 ** 400}]}), chunk, UTC)
+    assert items[0]["message_id"] == 11  # a wild line number is only a wrong hint
 
 
 def test_a_due_date_must_be_said_near_its_item():
@@ -1230,18 +1233,109 @@ def test_a_due_date_must_be_said_near_its_item():
              _row(3, "user", "Thursday works", DAY + 80), _row(4, "user", "Also my sister visits", DAY + 90)]
     item = lambda evidence: {"kind": "commitment", "text": "x", "evidence": evidence, "due": "2026-10-22",
                              "due_words": "Thursday"}
-    items, _ = memory.extract(FakeModel({"items": [item("Book the vet"), item("my sister visits")]}), chunk, UTC)
+    items, _, _ = memory.extract(FakeModel({"items": [item("Book the vet"), item("my sister visits")]}), chunk, UTC)
     assert [i["due"] for i in items] == ["", "2026-10-22"]  # two lines away, then the line just after
     wrong = lambda due: {"kind": "commitment", "text": "x", "evidence": "Thursday works", "due": due,
                          "due_words": "Thursday"}
-    items, _ = memory.extract(FakeModel({"items": [wrong("2026-10-23"), wrong("2026-10-15"), wrong("26-10-22"),
-                                                   wrong("2026-10-29T09:30")]}), chunk, UTC)
+    dues = [memory.extract(FakeModel({"items": [wrong(due)]}), chunk, UTC)[0][0]["due"]
+            for due in ("2026-10-23", "2026-10-15", "26-10-22", "2026-10-29T09:30")]
     # not a Thursday, before it was said, a short year; a later Thursday stays
-    assert [i["due"] for i in items] == ["", "", "", "2026-10-29T09:30"]
+    assert dues == ["", "", "", "2026-10-29T09:30"]
+    chunk = [_row(1, "user", "Remind me at 9:00 today", DAY + 14 * 3600)]
+    early = {"kind": "commitment", "text": "x", "evidence": "Remind me at 9:00 today", "due_words": "9:00 today"}
+    items, _, _ = memory.extract(FakeModel({"items": [{**early, "due": "2026-10-20T09:00"}]}), chunk, UTC)
+    assert items[0]["due"] == ""  # earlier the same day it was said
+    items, _, _ = memory.extract(FakeModel({"items": [{**early, "due": "2026-10-20T19:00"}]}), chunk, UTC)
+    assert items[0]["due"] == "2026-10-20T19:00"
     chunk = [_row(1, "user", "Renew the lease next month", DAY + 60)]
-    items, _ = memory.extract(FakeModel({"items": [{"kind": "commitment", "text": "x", "evidence": "Renew the lease",
+    items, _, _ = memory.extract(FakeModel({"items": [{"kind": "commitment", "text": "x", "evidence": "Renew the lease",
                                                     "due": "2026-11-20", "due_words": "next month"}]}), chunk, UTC)
     assert items[0]["due"] == "2026-11-20"  # "month" names no Monday
+
+
+def test_each_kind_comes_from_its_own_speaker():
+    chunk = [_row(1, "user", "I'll renew the lease and my sister is called Ana", DAY + 60),
+             _row(2, "assistant", "Kept for you to purge when settled: the rollback tag", DAY + 70)]
+    raw = lambda kind, evidence: {"kind": kind, "text": "x", "evidence": evidence, "line": 1}
+    items, _, _ = memory.extract(FakeModel({"items": [
+        raw("commitment", "I'll renew the lease"), raw("commitment", "Kept for you to purge"),
+        raw("promise", "I'll renew the lease"), raw("fact", "my sister is called Ana"),
+        raw("fact", "the rollback tag")]}), chunk, UTC)
+    # Hermes's words aren't the user's commitment, nor the user's Hermes's promise
+    assert [(i["kind"], i["message_id"]) for i in items] == [("commitment", 1), ("fact", 1), ("fact", 2)]
+
+
+def _open(n, kind, text, evidence, chat="work", at=DAY, due=""):
+    return {"id": n, "kind": kind, "text": text, "evidence": evidence, "chat_id": chat, "mentioned_at": at,
+            "due": due, "due_at": None}
+
+
+def test_the_model_sees_what_is_remembered_and_can_repeat_replace_or_close_it():
+    remembered = [_open(3, "commitment", "The user will renew the lease.", "I'll renew the lease"),
+                  _open(4, "promise", "Hermes will check the build.", "I'll check the build"),
+                  _open(5, "fact", "The user's sister is Ana.", "my sister is Ana")]
+    chunk = [_row(1, "user", "Lease renewed! Also I'll renew the lease for the garage, and Ana moved to Lyon", DAY + 60),
+             _row(2, "assistant", "Nice. I'll check the build tomorrow too.", DAY + 70)]
+    model = FakeModel({"items": [
+        {"kind": "promise", "text": "Hermes will check the build tomorrow.", "evidence": "I'll check the build tomorrow",
+         "line": 2, "same_as": 4},
+        {"kind": "fact", "text": "Ana lives in Lyon.", "evidence": "Ana moved to Lyon", "line": 1, "replaces": "#5"},
+        {"kind": "commitment", "text": "x", "evidence": "renew the lease for the garage", "line": 1, "same_as": 5},
+        {"kind": "commitment", "text": "x", "evidence": "I'll renew the lease", "line": 1},  # the same words again
+    ], "closed": [{"number": 3, "status": "done", "evidence": "Lease renewed!", "line": 1},
+                  {"number": 5, "status": "done", "evidence": "Ana moved", "line": 1},  # a fact doesn't close
+                  {"number": 9, "status": "done", "evidence": "Lease renewed!", "line": 1},  # never shown
+                  {"number": 4, "status": "done", "evidence": "never said", "line": 2}]})
+    items, closed, _ = memory.extract(model, chunk, UTC, remembered=remembered)
+    assert "#4 promise: Hermes will check the build. (said 2026-10-20: \"I'll check the build\")" in model.shown[0]
+    assert model.shown[0].index("<<<remembered") < model.shown[0].index("<<<chat")
+    assert [(i["kind"], i["same_as"], i["replaces"]) for i in items] == [
+        ("promise", 4, None), ("fact", None, 5), ("commitment", None, None), ("commitment", 3, None)]
+    assert [(c["id"], c["status"]) for c in closed] == [(3, "done")]
+    items, _, _ = memory.extract(FakeModel({"items": [
+        {"kind": "promise", "text": "x", "evidence": "I'll check the build tomorrow", "line": 2, "same_as": 4.0}]}),
+        chunk, UTC, remembered=remembered)
+    assert items[0]["same_as"] == 4  # a whole-number float, as JSON may give it
+
+
+def test_a_replacement_of_a_replaced_item_replaces_the_current_one(remembering):
+    item = lambda evidence, **more: {"kind": "fact", "text": evidence, "evidence": evidence, "explicit": 1, "due": "",
+                                     "due_at": None, "message_id": 1, "mentioned_at": DAY, **more}
+    [old] = remembering.store.advance("", "work", message_id=1, at=DAY, items=[item("lives in Paris")])
+    [mid] = remembering.store.advance("", "work", message_id=2, at=DAY, after_id=1,
+                                      items=[item("lives in Lyon", replaces=old)])
+    [new] = remembering.store.advance("", "work", message_id=3, at=DAY, after_id=2,
+                                      items=[item("lives in Rome", replaces=old)])  # the model named the first one
+    assert [i["id"] for i in remembering.store.open_items()] == [new]
+    with remembering.store._connect() as conn:
+        assert conn.execute("SELECT superseded_by FROM items WHERE id=?", (mid,)).fetchone()[0] == new
+    assert remembering.store.advance("", "work", message_id=4, at=DAY + 9, after_id=3,
+                                     items=[item("still Rome", same_as=old, mentioned_at=DAY + 9)]) == []
+    assert remembering.store.open_items()[0]["mentioned_at"] == DAY + 9  # the repeat landed on the current item
+    remembering.store.advance("", "work", message_id=6, at=DAY, after_id=4, items=[
+        item("Rome by Friday", same_as=new, due="2026-10-23", due_at=DAY + 3 * 86400)])
+    assert remembering.store.open_items()[0]["due"] == "2026-10-23"  # a date said with the repeat
+    remembering.store.advance("", "work", message_id=7, at=DAY, after_id=6, items=[
+        item("Rome", same_as=new, due="2026-10-21", due_at=DAY + 86400)])
+    assert remembering.store.open_items()[0]["due"] == "2026-10-23"  # an earlier one doesn't move it back
+    assert remembering.store.advance("", "work", message_id=7, at=DAY, after_id=7, closed=[
+        {"id": old, "status": "done", "evidence": "x", "message_id": 7}]) == []  # through the chain to the current one
+    assert remembering.store.open_items() == []
+    with remembering.store._connect() as conn:
+        conn.execute("UPDATE items SET status='open', closed_by='', closed_at=NULL WHERE id=?", (new,))
+        conn.commit()
+    remembering.store.close_item(new, status="done", closed_by="user")
+    assert remembering.store.advance("", "work", message_id=8, at=DAY, after_id=7,
+                                     items=[item("Rome again", same_as=new)]) == []  # closed: already on record
+    assert remembering.store.open_items() == []
+
+
+def test_candidates_are_this_chats_items_then_the_closest_ones():
+    items = [_open(1, "fact", "The user likes jazz.", "I love jazz", chat="other", at=DAY + 3),
+             _open(2, "commitment", "The user will renew the passport.", "renew my passport", chat="other", at=DAY + 2),
+             _open(3, "commitment", "The user will call mum.", "call mum", at=DAY + 1)]
+    chunk = [_row(1, "user", "Did I renew my passport yet?", DAY + 60)]
+    assert [i["id"] for i in memory.candidates(items, chunk, "work")] == [3, 2]
 
 
 def test_chat_reads_match_hermes(db, tmp_path):
@@ -1290,8 +1384,57 @@ def test_a_quiet_chat_is_read_once_from_where_it_stopped(remembering, db):
     db.message("user", "Also book the vet", sid="work", at=DAY + 7300)
     db.message("assistant", "Sure.", sid="work", at=DAY + 7310)
     _remember(remembering, model, DAY + 7310 + memory.IDLE_S)
-    assert "renew my passport" not in model.shown[1] and "Also book the vet" in model.shown[1]
+    chat = model.shown[1].split("<<<chat")[1]
+    assert "renew my passport" not in chat and "Also book the vet" in chat  # read once (it's remembered, above)
     assert remembering.store.item_counts() == {"commitment": 1}
+
+
+def test_repeats_update_one_item_and_changes_supersede_it(remembering, db):
+    db.message("user", "Remind me to renew my passport", sid="work", at=DAY + 60)
+    db.message("assistant", "Will do.", sid="work", at=DAY + 70)
+    item = {"kind": "commitment", "text": "The user will renew their passport.", "evidence": "renew my passport",
+            "line": 1, "explicit": True}
+    _remember(remembering, FakeModel({"items": [item]}), DAY + 70 + memory.IDLE_S)
+    [first] = remembering.store.open_items()
+    db.message("user", "Remind me to renew my passport, it's urgent", sid="work", at=DAY + 9000)
+    db.message("assistant", "Noted.", sid="work", at=DAY + 9010)
+    model = FakeModel({"items": [{**item, "same_as": first["id"]}]})
+    done = _remember(remembering, model, DAY + 9010 + memory.IDLE_S)
+    assert done["items"] == 0 and f"#{first['id']} commitment" in model.shown[0]
+    [again] = remembering.store.open_items()
+    assert again["id"] == first["id"] and again["mentioned_at"] == DAY + 9000
+    db.message("user", "Actually I'll renew it on Friday instead", sid="work", at=DAY + 20000)
+    db.message("assistant", "Got it.", sid="work", at=DAY + 20010)
+    _remember(remembering, FakeModel({"items": [{**item, "evidence": "I'll renew it on Friday instead",
+                                                 "replaces": first["id"]}], "closed": []}),
+              DAY + 20010 + memory.IDLE_S)
+    [now_open] = remembering.store.open_items()
+    assert now_open["id"] != first["id"]
+    with remembering.store._connect() as conn:
+        old = dict(conn.execute("SELECT * FROM items WHERE id=?", (first["id"],)).fetchone())
+    assert old["superseded_by"] == now_open["id"] and old["valid_to"] == DAY + 20000  # kept, not deleted
+    db.message("user", "Passport renewed, done", sid="work", at=DAY + 30000)
+    db.message("assistant", "Great.", sid="work", at=DAY + 30010)
+    _remember(remembering, FakeModel({"items": [], "closed": [
+        {"number": now_open["id"], "status": "done", "evidence": "Passport renewed", "line": 1}]}),
+        DAY + 30010 + memory.IDLE_S)
+    assert remembering.store.open_items() == []
+    assert not remembering.store.close_item(first["id"], status="cancelled", closed_by="user")  # superseded already
+    with remembering.store._connect() as conn:
+        closed = dict(conn.execute("SELECT * FROM items WHERE id=?", (now_open["id"],)).fetchone())
+    assert closed["status"] == "done" and "Passport renewed" in closed["closed_by"]
+
+
+def test_items_long_past_their_due_date_expire(remembering, db):
+    remembering.store.advance("", "work", message_id=1, at=DAY, items=[
+        {"kind": "commitment", "text": "x", "evidence": "y", "explicit": 1, "due": "2026-10-20", "due_at": DAY,
+         "message_id": 1, "mentioned_at": DAY - 60},
+        {"kind": "fact", "text": "z", "evidence": "w", "explicit": 1, "due": "", "due_at": None,
+         "message_id": 1, "mentioned_at": DAY - 60}])
+    _remember(remembering, FakeModel(), DAY + memory.EXPIRE_S - 60)
+    assert len(remembering.store.open_items()) == 2
+    _remember(remembering, FakeModel(), DAY + memory.EXPIRE_S + 60)
+    assert [i["kind"] for i in remembering.store.open_items()] == ["fact"]
 
 
 def test_a_chunk_two_processes_read_is_kept_once(remembering, db):
@@ -1366,7 +1509,7 @@ def test_a_failing_chunk_is_retried_then_skipped(remembering, db):
     model = FakeModel(TimeoutError(), TimeoutError(), ["not", "items"])
     now = DAY + 70 + memory.IDLE_S
     first = _remember(remembering, model, now)
-    assert first["failed"] == 1 and first["tokens"] > memory.MAX_TOKENS  # a failed call still counts, estimated
+    assert first["failed"] == 1 and 0 < first["tokens"] < memory.MAX_TOKENS  # a failed call counts its input, estimated
     assert _remember(remembering, model, now + 60)["failed"] == 0  # waits for its retry
     _remember(remembering, model, now + memory.RETRY_S)
     last = _remember(remembering, model, now + 2 * memory.RETRY_S)
@@ -1457,7 +1600,7 @@ def test_memory_command(remembering, db, capsys, monkeypatch):
     assert run() == 0 and run("fact") == 0 and run("now") == 1 and run("forget", "1") == 1
     assert not remembering.store.path.exists()  # nothing but on/off leaves a file on a home that never ran Pulse
     assert run("on") == 0 and remembering.store.get("memory") is True
-    capsys.readouterr()
+    assert "once Pulse is on" in capsys.readouterr().out  # Pulse itself is still off
     assert run() == 0 and "hasn't kept anything" in capsys.readouterr().out
     remembering.store.advance("", "work", message_id=5, at=DAY, items=[dict(
         kind="promise", text="Hermes will check the build.", evidence="I'll check the build", explicit=1,
