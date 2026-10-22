@@ -5231,7 +5231,7 @@ def save_voice_turns(body: Dict[str, Any],
     return result
 
 
-def _archive_ended_voice_row(db, session_id: str) -> None:
+def _archive_ended_voice_row(db, session_id: str) -> bool:
     """Keeps a standalone call out of Desktop's chat list (hermes-conduit#1124).
 
     Archived with Hermes' idle-sweep stamp (``auto_archived``), not as a user
@@ -5239,14 +5239,17 @@ def _archive_ended_voice_row(db, session_id: str) -> None:
     then un-archives it by itself, so a call continued as a chat comes back.
     Conduit still lists these rows with its calls. Only a call's first save
     archives its row; a resumed call leaves the flag as the user left it.
-    Hosts without the stamp keep the row visible. Never fails the save."""
+    Hosts without the stamp keep the row visible. Never fails the save.
+    True when the row was archived."""
     archive = getattr(db, "_auto_archive_lineage", None)
     if archive is None:
-        return
+        return False
     try:
         archive(session_id)
     except Exception:  # noqa: BLE001 — the turns are stored; the row just stays listed
         logger.warning("Couldn't archive Conduit voice call %s", session_id, exc_info=True)
+        return False
+    return True
 
 
 def _chat_call(db, call_id: str) -> Optional[Dict[str, Any]]:
@@ -5400,6 +5403,28 @@ def set_voice_tag(body: Dict[str, Any]) -> Dict[str, Any]:
     return {"session_id": session_id, **tag}
 
 
+def archive_classic_voice_chat(body: Dict[str, Any]) -> Dict[str, Any]:
+    """A Classic voice chat a call started, archived when that call ends,
+    like a live call's own row (hermes-conduit#1124). The chat may still be
+    open in Conduit; the next turn anyone runs in it un-archives it (the
+    pre_llm_call hook), as Hermes does for a reopened row."""
+    session_id = _voice_id(body.get("session_id"), "session_id")
+    with _voice_lock():
+        db = _open_voice_db(_VOICE_WRITE)
+        try:
+            row = db.get_session(session_id)
+            if not row:
+                raise TokenError(422, "That chat no longer exists")
+            if _voice_tags(db).get(session_id, {}).get("kind") != "classic":
+                raise TokenError(422, "That chat isn't one a Classic voice call started")
+            # A pin is an explicit keep; an archived row stays as it is.
+            archived = not row.get("pinned") and not row.get("archived") \
+                and _archive_ended_voice_row(db, session_id)
+        finally:
+            db.close()
+    return {"session_id": session_id, "archived": bool(archived)}
+
+
 def voice_tags() -> Dict[str, Any]:
     db = _open_voice_db()
     try:
@@ -5521,6 +5546,14 @@ async def post_voice_tag(request: Request, response: Response, profile: Optional
     _voice_limit(write=True)
     body = await _voice_body(request)
     return {"ok": True, **(await _run_voice(profile, lambda: set_voice_tag(body), "tag"))}
+
+
+@router.post("/voice/archive")
+async def post_voice_archive(request: Request, response: Response, profile: Optional[str] = None) -> Dict[str, Any]:
+    response.headers["Cache-Control"] = "no-store"
+    _voice_limit(write=True)
+    body = await _voice_body(request)
+    return {"ok": True, **(await _run_voice(profile, lambda: archive_classic_voice_chat(body), "archive"))}
 
 
 @router.get("/voice/summary")

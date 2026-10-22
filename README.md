@@ -1064,6 +1064,7 @@ start the agent or call a model. A resumed call appends to the same session.
 | GET | `/api/plugins/conduit_push/voice/chat-calls?chat_id=[&call_id=]` | `{ok, chat_id, calls: [{call_id, engine, turns?: [{role, text, at}]}]}` |
 | GET | `/api/plugins/conduit_push/voice/tags` | `{ok, tags: {session_id: {kind, engine?, parent_id?, parent_title?}}}` |
 | POST | `/api/plugins/conduit_push/voice/tags` with `{session_id, kind: classic or job, parent_id?, parent_title?}` | `{ok, session_id, kind, ...}` |
+| POST | `/api/plugins/conduit_push/voice/archive` with `{session_id}` | `{ok, session_id, archived}` |
 | GET | `/api/plugins/conduit_push/voice/summary?session_id=` | `{ok, available, text, covers}` |
 | POST | `/api/plugins/conduit_push/voice/summary` with `{session_id, text, covers}` | `{ok, session_id, covers}` |
 
@@ -1100,6 +1101,13 @@ start the agent or call a model. A resumed call appends to the same session.
   retried save doesn't touch the flag, and an archive the user sets or clears stays. Conduit keeps
   listing these rows with its calls, and Desktop's Archived view and search
   still find them. Hermes builds without the stamp leave the row listed.
+- `voice/archive` archives a Classic voice chat (tagged `classic`) the same
+  way when the call that started it ends; Conduit sends it. A pinned or
+  already archived chat is left as it is (`archived: false`), and any other
+  session gets 422. Such a chat may still be open when its call ends, so
+  nothing reopens it: the next turn run in a voice chat archived this way
+  (a call row or a Classic chat) un-archives it from the `pre_llm_call`
+  hook, the way Hermes' reopen does.
 - A create is idempotent per `call_id`: a retried first save whose response
   was lost continues the row it made instead of starting a second one.
 - Appends and summaries go only to rows saved as voice calls; any other

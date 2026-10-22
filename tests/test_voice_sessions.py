@@ -282,6 +282,33 @@ def test_an_older_host_or_a_failed_archive_keeps_the_call_listed_and_saved(clien
     assert "archived" not in hermes.stores["default"].sessions[failed["session_id"]]
 
 
+def test_a_classic_voice_chat_is_archived_when_its_call_ends(client, hermes, monkeypatch):
+    _archives_like_hermes(monkeypatch)
+    assert client.post(f"{BASE}/voice/tags", json={"session_id": "classic-1", "kind": "classic"}).status_code == 200
+    FakeSessionDB.stores["default"].sessions["classic-1"] = {"id": "classic-1", "end_reason": None}
+    response = client.post(f"{BASE}/voice/archive", json={"session_id": "classic-1"})
+    assert response.status_code == 200 and response.json()["archived"] is True
+    assert response.headers["cache-control"] == "no-store"
+    row = hermes.stores["default"].sessions["classic-1"]
+    assert row["archived"] == 1 and row["auto_archived"] == 1
+
+
+def test_only_an_unpinned_unarchived_classic_voice_chat_is_archived(client, hermes, monkeypatch):
+    _archives_like_hermes(monkeypatch)
+    client.post(f"{BASE}/voice/tags", json={"session_id": "pinned", "kind": "classic"})
+    client.post(f"{BASE}/voice/tags", json={"session_id": "job-1", "kind": "job"})
+    sessions = FakeSessionDB.stores["default"].sessions
+    sessions["pinned"] = {"id": "pinned", "end_reason": None, "pinned": 1}
+    sessions["job-1"] = {"id": "job-1", "end_reason": None}
+    sessions["chat"] = {"id": "chat", "end_reason": None}
+    assert client.post(f"{BASE}/voice/archive", json={"session_id": "pinned"}).json()["archived"] is False
+    assert "archived" not in sessions["pinned"]
+    for session_id in ("job-1", "chat"):
+        assert client.post(f"{BASE}/voice/archive", json={"session_id": session_id}).status_code == 422
+        assert "archived" not in sessions[session_id]
+    assert client.post(f"{BASE}/voice/archive", json={"session_id": "gone"}).status_code == 422
+
+
 def test_nothing_to_save_creates_no_session(client, hermes):
     body = save(client, turns=[]).json()
     assert body["session_id"] is None
