@@ -379,3 +379,24 @@ def test_the_test_command_records_what_it_saw(paired, monkeypatch):
     assert client.load_state()["relay_rejected_at"]
     assert cli.dispatch(types.SimpleNamespace(conduit_push_action="test", corrupt=False)) == 0
     assert "relay_rejected_at" not in client.load_state()
+
+
+def test_a_bom_before_the_relays_json_is_not_a_block():
+    assert client.looks_like_json_object(b'\xef\xbb\xbf{"error":"forbidden"}')
+    assert api._looks_like_json_object(b' \xef\xbb\xbf{"error"')
+    assert not client.looks_like_json_object(b"") and not api._looks_like_json_object(b"<html>")
+
+
+def test_the_newest_kind_of_refusal_replaces_the_other(paired, capsys):
+    paired([401, BARE_403, 401])
+
+    client._deliver(_event(), clock=lambda: 0.0)
+    assert client.load_state()["relay_rejected_at"]
+    client._deliver(_event(), clock=lambda: 10_000.0)
+    state = client.load_state()
+    assert state["relay_blocked_at"] and "relay_rejected_at" not in state
+    assert cli.dispatch(types.SimpleNamespace(conduit_push_action="status")) == 0
+    assert "pair again from Conduit" not in capsys.readouterr().out
+    client._deliver(_event(), clock=lambda: 20_000.0)
+    state = client.load_state()
+    assert state["relay_rejected_at"] and "relay_blocked_at" not in state

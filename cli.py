@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Any
 
 from . import e2e
-from .client import DEFAULT_RELAY_URL, UnpairedLocally, build_outgoing, claim_pairing, e2e_status, load_state, post_event, send_now, set_redact_content, state_path, unpair
+from .client import DEFAULT_RELAY_URL, RelayRejected, UnpairedLocally, build_outgoing, claim_pairing, e2e_status, load_state, post_event, record_relay_refusal, send_now, set_redact_content, state_path, unpair
 from .relay_urls import check_request_url
 from .events import event_id, plugin_hello, push_event
 
@@ -147,6 +147,8 @@ def dispatch(args: argparse.Namespace) -> int:
             try:
                 post_event(outgoing)
             except _RELAY_ERRORS as error:
+                if isinstance(error, RelayRejected) and error.status in (401, 403):
+                    record_relay_refusal(state, error)
                 print(f"The Conduit relay did not accept the test notification: {error}")
                 return 1
             print("Broken encrypted test notification accepted by the Conduit relay. The phone should show only generic text.")

@@ -6245,6 +6245,11 @@ def _pair_gateway_name(raw: Any, profile: Optional[str]) -> str:
     return (name if _limiter_key(scoped) in ("", "default") else f"{name} ({scoped})")[:80]
 
 
+def _looks_like_json_object(raw: bytes) -> bool:
+    # As client.looks_like_json_object: the relay's answer, not a firewall's.
+    return raw.lstrip().removeprefix(b"\xef\xbb\xbf").lstrip().startswith(b"{")
+
+
 def _claim_pairing(relay_url: str, code: str, gateway_name: str) -> Dict[str, Any]:
     """POST /v1/pairings/claim without credentials or redirects: the relay's answer, else TokenError."""
     data = json.dumps({"pairing_code": code, "gateway_name": gateway_name}, separators=(",", ":")).encode("utf-8")
@@ -6273,7 +6278,7 @@ def _claim_pairing(relay_url: str, code: str, gateway_name: str) -> Dict[str, An
         raise TokenError(410, "This pairing code expired or was already used. Create a new one.")
     if status == 429:
         raise TokenError(429, "The push relay is rate limiting pairing; try again shortly")
-    if status == 403 and not unreadable and not raw.lstrip().startswith(b"{"):
+    if status == 403 and not unreadable and not _looks_like_json_object(raw):
         # The relay always answers with a JSON error: a bare 403 is something
         # in front of it (a firewall, a rate limiter) blocking this host.
         logger.warning("Conduit plugin: something in front of the push relay answered the pairing claim "

@@ -512,6 +512,12 @@ def cancel_decision(request_id: str) -> bool:
         return False
 
 
+def looks_like_json_object(raw: bytes) -> bool:
+    """A body that starts as a JSON object (whitespace and a BOM aside), cut
+    short or not: the relay's answer rather than a firewall's."""
+    return raw.lstrip().removeprefix(b"\xef\xbb\xbf").lstrip().startswith(b"{")
+
+
 class RelayRejected(RuntimeError):
     """The relay answered with an HTTP error or a redirect (never followed).
     ``status`` tells a redirect (3xx) or refusal (4xx) from the relay failing
@@ -605,7 +611,7 @@ def _request(
         # The relay always answers with a JSON object. An empty or non-JSON
         # body is something in front of it; one cut short or unreadable is
         # still counted as the relay's, so a misread never says "blocked".
-        from_relay = raw is None or raw.lstrip().startswith(b"{")
+        from_relay = raw is None or looks_like_json_object(raw)
         detail = (body.get("error") if isinstance(body, dict) else None) or "request_rejected"
         raise RelayRejected(error.code, detail, from_relay=from_relay) from error
 
@@ -727,9 +733,10 @@ def _deliver(event: dict[str, Any], *, sleep: Callable[[float], None] = _pause,
             return False
         with _refusal_lock:
             paused_until = _refusal.get("until", 0.0) if _refusal.get("credential") == state.get("credential") else 0.0
-        if clock() < paused_until:
-            logger.info("Conduit notification dropped for %s: the relay refused this host, paused for %d more seconds",
-                        event.get("type", "event"), paused_until - clock())
+        now = clock()
+        if now < paused_until:
+            logger.info("Conduit notification dropped for %s: the relay refused this pairing, paused for %d more seconds",
+                        event.get("type", "event"), paused_until - now)
             return False
         try:
             _send(event, state)
@@ -777,9 +784,12 @@ def record_relay_refusal(sent_with: dict[str, Any], error: RelayRejected) -> Non
     """What `status` (and Conduit) should say about a refusal: a 401 means the
     relay no longer knows this gateway, a bare 403 that this host is blocked
     in front of the relay. A relay's own 403 is neither."""
+    # The newest answer stands: one kind of refusal replaces the other.
     if error.status == 401:
+        _mark_relay_rejected(sent_with, False, field="relay_blocked_at")
         _mark_relay_rejected(sent_with, True)
     elif error.edge_blocked:
+        _mark_relay_rejected(sent_with, False)
         _mark_relay_rejected(sent_with, True, field="relay_blocked_at")
 
 
