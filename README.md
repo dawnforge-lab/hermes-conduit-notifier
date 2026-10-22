@@ -1871,6 +1871,18 @@ marked private is reported only as "at a private place".
   The task is anything a cron run can do. A rule fires once a day, or every
   time at least 30 minutes apart (`repeat: "every"`), never for an event
   over 15 minutes old, and never while sharing is paused.
+- **Other profiles on this host** (plugin 0.56+). Conduit binds sharing to
+  one profile, which keeps the store, key and place rules. With "Share with
+  this host's other profiles" on (`sharing.other_profiles: true`), every
+  other profile on the same host that is paired with the same iPhone (the
+  same relay installation in its `conduit-push.json`) reads that store:
+  `now`, `places`, `history`, `distance_to`, `locate` and maps lookups. A
+  locate or phone maps lookup goes through the asking profile's own pairing
+  and names the sharing profile, so the phone answers it as that profile's.
+  Reads are logged in the sharing profile's store as `<profile>: <chat>`.
+  `rules`, `set_rule` and `remove_rule` answer `other_profile`: rules stay
+  with the sharing profile. A profile that shares location itself (talking
+  or background on) always reads its own.
 - **No calls at places.** Calls settings `avoid_places` (place ids) and
   `avoid_unknown_place` (also hold calls when there's no recent location,
   or sharing is paused or off): a call that would ring while the user is at an

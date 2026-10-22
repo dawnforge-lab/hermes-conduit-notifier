@@ -33,7 +33,7 @@ from urllib.parse import urlencode
 
 from hermes_constants import get_hermes_home
 
-from . import client, location_tool, maps_host
+from . import client, location_profiles, location_tool, maps_host
 from .events import push_event
 from .location_store import TRUSTED_BACKGROUND_S, TRUSTED_TALKING_S, LocationError, LocationStore, sharing_paused
 from .present_store import NAVIGATE_FEATURE, PresentError, PresentStore
@@ -137,7 +137,13 @@ def register(ctx: Any, *, is_child: Callable[[Any], bool], profile: Callable[[],
 
 
 def _store() -> LocationStore:
-    return LocationStore(get_hermes_home())
+    return _shared_store()[0]
+
+
+def _shared_store() -> tuple[LocationStore, str | None]:
+    """This profile's store, or the one another profile on this host shares
+    with it (and that profile's name)."""
+    return location_profiles.store_for(get_hermes_home(), LocationStore)
 
 
 def available() -> bool:
@@ -180,7 +186,9 @@ def _handle(args: dict[str, Any], session_id: Any, is_child: Callable[[Any], boo
     action = args.get("action")
     if action not in ACTIONS:
         return {"ok": False, "error": "invalid", "note": f"action is one of {', '.join(ACTIONS)}."}
-    store = _store()
+    store, owner = _shared_store()
+    # Reads through another profile's store are logged there under this one.
+    label = profile if owner is not None else ""
     view = store.snapshot()
     if action == "navigate":
         return _navigate(store, view, args, session, profile)
@@ -189,13 +197,13 @@ def _handle(args: dict[str, Any], session_id: Any, is_child: Callable[[Any], boo
     if phone is None and not host:
         answer = _unavailable(view, args, action)
         if answer.get("rough_estimate"):
-            location_tool._log(store, f"maps {action}", session)
+            location_tool._log(store, f"maps {action}", session, label)
         return answer
     try:
         request = _request(action, args, view or {"places": {}, "sharing": {}}, store.clock())
     except _Refused as refused:
         return refused.answer
-    location_tool._log(store, f"maps {action}", session)
+    location_tool._log(store, f"maps {action}", session, label)
     uses_me = _uses_me(request)
     # Saved places' coordinates live on the phone, and only the phone gives
     # transit routes. Lookups about the user ask the phone first (its own
@@ -209,7 +217,8 @@ def _handle(args: dict[str, Any], session_id: Any, is_child: Callable[[Any], boo
     misses: list[dict[str, Any]] = []
     for engine in engines:
         if engine == "phone" and phone is not None:
-            answer = _ask_phone(store, phone, request, uses_me, profile, sleep)
+            # The phone answers for the profile sharing is bound to.
+            answer = _ask_phone(store, phone, request, uses_me, owner or profile, sleep)
         elif engine == "host" and host:
             answer = _ask_host(store, view, request, uses_me)
         else:

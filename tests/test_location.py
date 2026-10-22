@@ -719,6 +719,76 @@ def test_a_relay_without_a_reason_or_with_a_strange_one_gets_the_plain_note(home
         assert "needs updating" in result["note"]
 
 
+# --- Shared with the host's other profiles (#287) ----------------------------------
+
+
+def _paired(home, installation="installation-1"):
+    home.mkdir(parents=True, exist_ok=True)
+    (home / "conduit-push.json").write_text(json.dumps({"credential": "c", "installation_id": installation}))
+
+
+def _work_shares(home, other_profiles=True, installation="installation-1", **batch):
+    """The `work` profile beside `home` (the default profile) holds the
+    location, both paired with the same iPhone unless told otherwise."""
+    work = home / "profiles" / "work"
+    _paired(home)
+    _paired(work, installation)
+    batch.setdefault("fix", fix())
+    store, phone = _shared(work, sharing=sharing(other_profiles=other_profiles), **batch)
+    return store, phone
+
+
+def test_another_profile_on_the_host_reads_location_shared_with_it(home):
+    store, _ = _work_shares(home)
+    assert tool.available() is True
+    answer = _call({"action": "now"}, session_id="s1", profile="default")
+    assert answer["ok"] is True and answer["area"].startswith("Shoreditch")
+    # Logged where it was read, naming the profile that read it.
+    assert store.reads()[0]["session_title"] == "default: Trip planning"
+
+
+def test_location_stays_with_its_profile_unless_shared_with_the_others(home):
+    _work_shares(home, other_profiles=False)
+    assert tool.available() is False
+    assert _call({"action": "now"})["error"] == "nothing_shared"
+
+
+def test_a_profile_paired_with_another_iphone_reads_nothing(home):
+    _work_shares(home, installation="installation-2")
+    assert _call({"action": "now"})["error"] == "nothing_shared"
+
+
+def test_a_profile_that_shares_itself_reads_its_own(home):
+    _work_shares(home)
+    _shared(home, fix=fix(area={"name": "Soho", "locality": "London", "country": "United Kingdom",
+                                         "country_code": "GB"}))
+    assert _call({"action": "now"})["area"].startswith("Soho")
+
+
+def test_place_rules_stay_with_the_sharing_profile(home):
+    _work_shares(home)
+    for action in ("rules", "set_rule", "remove_rule"):
+        answer = _call({"action": action})
+        assert answer["error"] == "other_profile" and "work" in answer["note"]
+
+
+def test_a_locate_from_another_profile_names_the_sharing_one(home, monkeypatch):
+    store, phone = _work_shares(home, fix=fix("significant"))
+
+    def answer(event):
+        locate_id = event["locate"]["id"]
+        store.ingest(phone.seal(phone.batch(sharing=sharing(other_profiles=True),
+                                            fix=fix("locate", id="f_fresh", at="2026-10-13T07:00:00+01:00"),
+                                            locate_id=locate_id)))
+
+    fake = FakeClient({"accepted": True, "delivered": True}, on_send=answer)
+    monkeypatch.setattr(tool, "client", fake)
+    result = _call({"action": "locate"}, profile="default", sleep=lambda seconds: None)
+    assert result["fresh"] is True
+    # Through this profile's pairing, for the profile the phone answers.
+    assert fake.sent[0]["profile"] == "work"
+
+
 def test_locate_needs_background_sharing(home, monkeypatch):
     _shared(home, sharing=sharing(background=False), fix=fix())
     assert _call({"action": "locate"})["error"] == "background_off"

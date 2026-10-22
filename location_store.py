@@ -1149,6 +1149,12 @@ def _parse_sharing(value: Any) -> dict[str, Any]:
     if not isinstance(maps_host, bool):
         raise LocationError("malformed", "sharing.maps_host must be true or false")
     sharing["maps_host"] = maps_host
+    # "Share with this host's other profiles": the other profiles paired
+    # with the same iPhone read this store (location_profiles).
+    other_profiles = value.get("other_profiles", False)
+    if not isinstance(other_profiles, bool):
+        raise LocationError("malformed", "sharing.other_profiles must be true or false")
+    sharing["other_profiles"] = other_profiles
     return sharing
 
 

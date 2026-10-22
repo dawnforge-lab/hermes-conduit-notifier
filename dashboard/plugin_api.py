@@ -14126,6 +14126,9 @@ ROUTE_CAPABILITIES = (
     "phone-contacts",
     "location-sync",
     "location-locate",
+    # sharing.other_profiles: the host's other profiles paired with the
+    # same iPhone read the location (location_profiles).
+    "location-profiles",
     "pairing",
     "self-restart",
     "cron-notifications",
