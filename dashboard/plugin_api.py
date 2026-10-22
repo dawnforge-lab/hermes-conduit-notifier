@@ -11027,13 +11027,16 @@ class _WatchAudioSession:
         self.profile = bridge.grant.profile
         self.stopping = asyncio.Event()
         self.reason = "ended"
-        # When the provider was sent the oldest event it hasn't answered.
+        # When the provider was sent the oldest event it hasn't answered, and its type.
         self.owed_since: Optional[float] = None
+        self.owed_event = ""
 
-    def asked(self) -> None:
+    def asked(self, text: str = "") -> None:
         """An event went to the provider: it owes an answer."""
         if self.owed_since is None:
             self.owed_since = self.bridge.clock()
+            kind = re.search(r'"type"\s*:\s*"([A-Za-z0-9_.]{1,64})"', text)
+            self.owed_event = kind.group(1) if kind else "?"
 
     def answered(self) -> None:
         self.owed_since = None
@@ -11417,7 +11420,7 @@ class _GrokWatchSession(_WatchAudioSession):
             tasks = [reader, pacing, hung]
             await _first_done(None, self.stopping.wait(), reader, hung)
             if hung.done() and not reader.done() and not self.stopping.is_set():
-                logger.warning("Grok Live for the Watch: xAI stopped answering; ending the session")
+                logger.warning("Grok Live for the Watch: xAI left %s unanswered; ending the session", self.owed_event)
                 raise WatchAudioFailure("unreachable", "xAI stopped answering")
             if reader.done() and not self.stopping.is_set():
                 code, reason = _forwardable_close(getattr(upstream, "close_code", None),
@@ -11470,7 +11473,7 @@ class _GrokWatchSession(_WatchAudioSession):
             return
         with contextlib.suppress(Exception):
             await upstream.send(text)
-            self.asked()
+            self.asked(text)
 
 
 # --- Local Live on the Watch ---------------------------------------------------
@@ -12431,7 +12434,8 @@ class _LocalLiveWatchSession(_WatchAudioSession):
             if self.read_back_failure is not None:
                 raise self.read_back_failure
             if hung.done() and not reader.done() and not self.stopping.is_set():
-                logger.warning("A Watch Local Live call: the speech server stopped answering; ending the session")
+                logger.warning("A Watch Local Live call: the speech server left %s unanswered; ending the session",
+                               self.owed_event)
                 raise WatchAudioFailure("unreachable", "The speech server stopped answering")
             if reader.done() and not self.stopping.is_set():
                 code, reason = _forwardable_close(getattr(upstream, "close_code", None),
@@ -12743,7 +12747,7 @@ class _LocalLiveWatchSession(_WatchAudioSession):
             return
         with contextlib.suppress(Exception):
             await upstream.send(text)
-            self.asked()
+            self.asked(text)
 
 
 _WATCH_AUDIO_SESSIONS = {"gpt_live": _GptLiveWatchSession, "grok": _GrokWatchSession,
@@ -12978,7 +12982,7 @@ class _WatchAudioBridge:
                 logger.warning("A Watch audio stream was refused (too many streams for one call)")
             return
         self.stream = None
-        await self._end_session("watch_rejoined")
+        await self._end_session("refused" if spent else "watch_rejoined")
         self.sids.add(sid)
         stream = _WatchAudioStream(self.grant.grant_id, self.secret, sid)
         self.stream = stream

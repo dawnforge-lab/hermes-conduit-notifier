@@ -1358,7 +1358,7 @@ def test_a_speech_server_that_stops_answering_ends_the_session_and_frees_its_slo
                                                   "message": "The speech server stopped answering"}]
         assert watch.events(socket, "ended")[-1]["reason"] == "error"
         assert upstream.closed and bridge.session is None
-        assert bridge.slots.acquire()
+        assert bridge.slots.used == 0
 
     _run(scenario())
 
