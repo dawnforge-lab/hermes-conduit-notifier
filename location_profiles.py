@@ -74,6 +74,11 @@ def profile_homes(home: Path) -> list[tuple[str, Path]]:
     return found
 
 
+def label(name: str) -> str:
+    """A profile's name as it may go into another profile's access log."""
+    return _UNUSABLE_NAME.sub("", name)[:64]
+
+
 def _sharing_on(store: LocationStore) -> bool:
     if not store.exists():
         return False

@@ -856,6 +856,11 @@ def test_an_unknown_place_counts_only_when_asked(tmp_path):
     assert _blocked(tmp_path, {"avoid_places": ["p_home"], "avoid_unknown_place": True}) is True
 
 
+def test_a_profile_reading_shared_location_holds_calls_at_avoided_places_too(home):
+    _work_shares(home, fix=fix("place", place_id="p_work"))
+    assert _blocked(home, {"avoid_places": ["p_work"]}) is True
+
+
 def test_a_call_at_an_avoided_place_is_held_back_and_not_counted(tmp_path):
     store = calls_store.CallStore(tmp_path, clock=lambda: NOW, place_blocked=lambda settings: True)
     store.update_settings({"enabled": True, "avoid_places": ["p_work", "p_work"]})

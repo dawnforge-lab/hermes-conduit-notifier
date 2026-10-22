@@ -623,7 +623,8 @@ def _log(store: LocationStore, action: str, session: str, profile: str = "") -> 
     try:
         title = session_titles.title(session) if session else ""
         if profile:
-            title = f"{profile}: {title}" if title else profile
+            name = location_profiles.label(profile)
+            title = f"{name}: {title}" if title else name
         store.log_read(action, session, title)
     except Exception:  # noqa: BLE001 — the read still answers
         logger.warning("conduit_push: could not log a location read", exc_info=True)
