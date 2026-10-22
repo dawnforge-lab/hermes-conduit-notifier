@@ -1345,6 +1345,8 @@ def _migrate(db: sqlite3.Connection, now: float) -> None:
             due_all_day INTEGER NOT NULL, priority INTEGER NOT NULL, completed INTEGER NOT NULL, completed_at TEXT,
             location_alarm TEXT, recurring INTEGER NOT NULL, url TEXT, notes TEXT, received_at INTEGER NOT NULL,
             PRIMARY KEY(device, id));
+        -- delivered_at: when a sync answer first carried the change, not proof
+        -- the phone got it (only its result is)
         CREATE TABLE IF NOT EXISTS changes(
             id TEXT PRIMARY KEY, device TEXT NOT NULL, kind TEXT NOT NULL, target TEXT, fields TEXT NOT NULL,
             auto INTEGER NOT NULL, reason TEXT, session_title TEXT, created_at INTEGER NOT NULL,
