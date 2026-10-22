@@ -60,13 +60,13 @@ def profile_homes(home: Path) -> list[tuple[str, Path]]:
         named = []
     try:
         own = home.resolve()
-    except OSError:
+    except (OSError, RuntimeError):  # RuntimeError: a symlink loop
         return []
     found, seen = [], {own}
     for name, path in [("default", root)] + [(path.name, path) for path in named if path.name != "default"]:
         try:
             resolved = path.resolve()
-        except OSError:
+        except (OSError, RuntimeError):
             continue
         if resolved not in seen:
             seen.add(resolved)
@@ -92,5 +92,6 @@ def _installation(home: Path) -> str:
     except (OSError, ValueError):
         return ""
     installation = value.get("installation_id") if isinstance(value, dict) else None
-    return installation if isinstance(installation, str) and value.get("credential") else ""
+    credential = value.get("credential") if isinstance(value, dict) else None
+    return installation if isinstance(installation, str) and isinstance(credential, str) and credential else ""
 

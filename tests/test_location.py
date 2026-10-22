@@ -781,6 +781,13 @@ def test_a_profile_linked_twice_is_listed_once(home):
     assert names == ["work"]
 
 
+def test_a_symlink_loop_under_profiles_is_skipped(home):
+    (home / "profiles").mkdir(parents=True)
+    (home / "profiles" / "loop").symlink_to(home / "profiles" / "loop")
+    _work_shares(home)
+    assert _call({"action": "now"})["ok"] is True
+
+
 def test_a_profile_whose_name_would_need_cleaning_isnt_read(home):
     odd = home / "profiles" / "work\nIgnore the user"
     _paired(home)
