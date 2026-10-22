@@ -224,6 +224,20 @@ def test_the_relays_own_403_claim_reads_as_refused(monkeypatch):
     assert "refused the pairing" in str(raised.value)
 
 
+def test_an_unreadable_403_claim_is_not_called_a_block(monkeypatch):
+    class Broken(api.urllib.error.HTTPError):
+        def read(self, *_):
+            raise api.http.client.IncompleteRead(b"")
+
+    def fake_open(request, timeout):
+        raise Broken(request.full_url, 403, "Forbidden", {}, None)
+
+    monkeypatch.setattr(api._relay_opener, "open", fake_open)
+    with pytest.raises(api.TokenError) as raised:
+        api._claim_pairing("https://relay.example", CODE, "n")
+    assert "refused the pairing" in str(raised.value)
+
+
 def test_an_expired_code_reads_as_gone(monkeypatch):
     def fake_open(request, timeout):
         raise api.urllib.error.HTTPError(request.full_url, 404, "nf", {}, None)

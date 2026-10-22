@@ -6248,6 +6248,7 @@ def _pair_gateway_name(raw: Any, profile: Optional[str]) -> str:
 def _claim_pairing(relay_url: str, code: str, gateway_name: str) -> Dict[str, Any]:
     """POST /v1/pairings/claim without credentials or redirects: the relay's answer, else TokenError."""
     data = json.dumps({"pairing_code": code, "gateway_name": gateway_name}, separators=(",", ":")).encode("utf-8")
+    unreadable = False
     request = urllib.request.Request(f"{relay_url}/v1/pairings/claim", data=data, method="POST", headers={
         "Accept": "application/json", "Content-Type": "application/json",
         "User-Agent": f"Hermes-Conduit-Notifier/{_plugin_version() or 'unknown'}"})
@@ -6261,7 +6262,7 @@ def _claim_pairing(relay_url: str, code: str, gateway_name: str) -> Dict[str, An
         try:
             raw = error.read(4 * 1024)
         except (OSError, http.client.HTTPException):
-            raw = b""
+            raw, unreadable = b"", True
     except (urllib.error.URLError, OSError, http.client.HTTPException) as error:
         raise TokenError(502, f"Couldn't reach the push relay from this host ({type(error).__name__})")
     try:
@@ -6272,7 +6273,7 @@ def _claim_pairing(relay_url: str, code: str, gateway_name: str) -> Dict[str, An
         raise TokenError(410, "This pairing code expired or was already used. Create a new one.")
     if status == 429:
         raise TokenError(429, "The push relay is rate limiting pairing; try again shortly")
-    if status == 403 and not (isinstance(body, dict) and "error" in body):
+    if status == 403 and not unreadable and not raw.lstrip().startswith(b"{"):
         # The relay always answers with a JSON error: a bare 403 is something
         # in front of it (a firewall, a rate limiter) blocking this host.
         logger.warning("Conduit plugin: something in front of the push relay answered the pairing claim "

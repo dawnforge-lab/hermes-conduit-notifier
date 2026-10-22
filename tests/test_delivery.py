@@ -324,3 +324,58 @@ def test_the_test_command_names_a_block_in_front_of_the_relay(paired, capsys, mo
 
     out = capsys.readouterr().out
     assert "in front of the relay" in out and "ask whoever runs the relay" in out
+
+
+def test_another_pairings_delivery_does_not_end_the_pause(paired):
+    relay = paired([401])
+    client._deliver(_event(), clock=lambda: 0.0)
+    held = dict(client._refusal)
+
+    # Another profile's credential is accepted meanwhile.
+    client._clear_refusal("other.gw.secret")
+    assert client._refusal == held
+    client._clear_refusal(held["credential"])
+    assert client._refusal == {}
+    assert len(relay.event_ids) == 1
+
+
+def test_a_refusal_in_flight_across_a_reload_does_not_pause_it(paired, monkeypatch):
+    relay = paired([401])
+    real_request = client._request
+
+    def reload_during_the_send(url, **kwargs):
+        client.stop(timeout=0)
+        client.start()
+        return real_request(url, **kwargs)
+
+    monkeypatch.setattr(client, "_request", reload_during_the_send)
+    client._deliver(_event(), clock=lambda: 0.0)
+    monkeypatch.setattr(client, "_request", real_request)
+
+    assert client._refusal == {}
+    assert client._deliver(_event(), clock=lambda: 1.0) is True
+    assert len(relay.event_ids) == 2
+
+
+@pytest.mark.parametrize("body, blocked", [(b"", True), (b"<html>Forbidden</html>", True),
+                                            (b'{"error": "forb', False), (b'{"error":"token_proof_required"}', False)])
+def test_only_an_empty_or_non_json_403_is_a_block(monkeypatch, body, blocked):
+    import io
+
+    def refuse(request, timeout):
+        raise urllib.error.HTTPError(request.full_url, 403, "Forbidden", {}, io.BytesIO(body))
+
+    monkeypatch.setattr(client._opener, "open", refuse)
+    with pytest.raises(client.RelayRejected) as caught:
+        client.request_json("https://relay.example/v1/events", method="POST", payload={})
+    assert caught.value.edge_blocked is blocked
+
+
+def test_the_test_command_records_what_it_saw(paired, monkeypatch):
+    paired([401, 200])
+    monkeypatch.setattr(cli, "send_now", client.send_now)
+
+    assert cli.dispatch(types.SimpleNamespace(conduit_push_action="test", corrupt=False)) == 1
+    assert client.load_state()["relay_rejected_at"]
+    assert cli.dispatch(types.SimpleNamespace(conduit_push_action="test", corrupt=False)) == 0
+    assert "relay_rejected_at" not in client.load_state()

@@ -453,7 +453,7 @@ def _post_to_relay(payload: dict[str, Any]) -> dict[str, Any]:
         _mark_refused(lambda: client.record_relay_refusal(state, error))
         raise
     if state.get("relay_rejected_at") or state.get("relay_blocked_at"):
-        _mark_refused(lambda: client._mark_relay_accepted(state))
+        _mark_refused(lambda: client.record_relay_accepted(state))
     return answer
 
 

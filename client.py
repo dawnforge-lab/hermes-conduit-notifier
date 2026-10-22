@@ -277,7 +277,15 @@ def send_now(event: dict[str, Any], timeout: float = 15.0) -> dict[str, Any]:
     state = load_state()
     if not state:
         raise RuntimeError("This Hermes profile is not paired with Conduit.")
-    return _send(event, state, timeout)
+    try:
+        answer = _send(event, state, timeout)
+    except RelayRejected as error:
+        # `test` is a probe too: `status` should say what it just saw.
+        if error.status in (401, 403):
+            record_relay_refusal(state, error)
+        raise
+    record_relay_accepted(state)
+    return answer
 
 
 def _send(event: dict[str, Any], state: dict[str, Any], timeout: float = 15.0) -> dict[str, Any]:
@@ -587,12 +595,18 @@ def _request(
             return json.loads(raw) if raw else {}
     except urllib.error.HTTPError as error:
         try:
-            body = json.loads(error.read(4096))
+            raw = error.read(4096)
+        except Exception:
+            raw = None
+        try:
+            body = json.loads(raw) if raw else None
         except Exception:
             body = None
-        # Any JSON error body is the relay's own answer; none is the edge's.
-        from_relay = isinstance(body, dict) and "error" in body
-        detail = (body.get("error") if from_relay else None) or "request_rejected"
+        # The relay always answers with a JSON object. An empty or non-JSON
+        # body is something in front of it; one cut short or unreadable is
+        # still counted as the relay's, so a misread never says "blocked".
+        from_relay = raw is None or raw.lstrip().startswith(b"{")
+        detail = (body.get("error") if isinstance(body, dict) else None) or "request_rejected"
         raise RelayRejected(error.code, detail, from_relay=from_relay) from error
 
 
@@ -611,6 +625,7 @@ def _start_worker() -> None:
 def start() -> None:
     """Lets events be queued again after stop() (the plugin was enabled
     again without a fresh import)."""
+    _clear_refusal()
     _stopped.clear()
 
 
@@ -623,7 +638,7 @@ def stop(timeout: float = 1.0) -> None:
         _stopped.set()
         _generation += 1
         # A reload (after pairing again, say) starts unpaused.
-        _refusal.clear()
+        _clear_refusal()
         running, _worker, _worker_started = _worker, None, False
         dropped = 0
         while True:
@@ -659,6 +674,14 @@ RETRY_BUDGET = 30.0
 REFUSED_FIRST_S = 60.0
 REFUSED_MAX_S = 30 * 60.0
 _refusal: dict[str, Any] = {}
+_refusal_lock = threading.Lock()
+
+
+def _clear_refusal(credential: Any = None) -> None:
+    """Ends the pause: any pause, or only one held for ``credential``."""
+    with _refusal_lock:
+        if credential is None or _refusal.get("credential") == credential:
+            _refusal.clear()
 
 
 def _delivery_worker(generation: int = 0) -> None:
@@ -693,7 +716,7 @@ def _pause(seconds: float) -> None:
 
 def _deliver(event: dict[str, Any], *, sleep: Callable[[float], None] = _pause,
              clock: Callable[[], float] = time.monotonic) -> bool:
-    started = clock()
+    started, generation = clock(), _generation
     for delay in (*RETRY_DELAYS, None):
         if _stopped.is_set():
             logger.info("Conduit notification dropped for %s: the plugin was unloaded", event.get("type", "event"))
@@ -702,9 +725,11 @@ def _deliver(event: dict[str, Any], *, sleep: Callable[[float], None] = _pause,
         if not state:
             logger.warning("Conduit notification dropped for %s: this profile is no longer paired", event.get("type", "event"))
             return False
-        if _refusal.get("credential") == state.get("credential") and clock() < _refusal.get("until", 0.0):
+        with _refusal_lock:
+            paused_until = _refusal.get("until", 0.0) if _refusal.get("credential") == state.get("credential") else 0.0
+        if clock() < paused_until:
             logger.info("Conduit notification dropped for %s: the relay refused this host, paused for %d more seconds",
-                        event.get("type", "event"), _refusal["until"] - clock())
+                        event.get("type", "event"), paused_until - clock())
             return False
         try:
             _send(event, state)
@@ -715,10 +740,10 @@ def _deliver(event: dict[str, Any], *, sleep: Callable[[float], None] = _pause,
                 continue
             logger.warning("Conduit notification delivery failed for %s: %s", event.get("type", "event"), error)
             if isinstance(error, RelayRejected) and error.status in (401, 403):
-                _refused(state, error, clock())
+                _refused(state, error, clock(), generation)
             return False
-        _refusal.clear()
-        _mark_relay_accepted(state)
+        _clear_refusal(state.get("credential"))
+        record_relay_accepted(state)
         return True
     return False  # not reached: the last attempt has no delay
 
@@ -734,10 +759,14 @@ def _worth_retrying(error: Exception) -> bool:
     return isinstance(error, (TimeoutError, ConnectionError))
 
 
-def _refused(state: dict[str, Any], error: RelayRejected, now: float) -> None:
-    same = _refusal.get("credential") == state.get("credential")
-    paused_for = min(_refusal["paused_for"] * 2, REFUSED_MAX_S) if same and _refusal.get("paused_for") else REFUSED_FIRST_S
-    _refusal.update(credential=state.get("credential"), paused_for=paused_for, until=now + paused_for)
+def _refused(state: dict[str, Any], error: RelayRejected, now: float, generation: int) -> None:
+    with _refusal_lock:
+        # A refusal in flight across a stop() mustn't pause the reload.
+        if generation != _generation:
+            return
+        same = _refusal.get("credential") == state.get("credential")
+        paused_for = min(_refusal["paused_for"] * 2, REFUSED_MAX_S) if same and _refusal.get("paused_for") else REFUSED_FIRST_S
+        _refusal.update(credential=state.get("credential"), paused_for=paused_for, until=now + paused_for)
     logger.warning("Conduit notifications paused for %d minute(s): %s", paused_for // 60,
                    "something in front of the relay is blocking this host (an empty 403)" if error.edge_blocked
                    else f"the relay answered {error.status}")
@@ -754,7 +783,8 @@ def record_relay_refusal(sent_with: dict[str, Any], error: RelayRejected) -> Non
         _mark_relay_rejected(sent_with, True, field="relay_blocked_at")
 
 
-def _mark_relay_accepted(sent_with: dict[str, Any]) -> None:
+def record_relay_accepted(sent_with: dict[str, Any]) -> None:
+    """The relay took a request with this pairing: neither mark holds."""
     for field in ("relay_rejected_at", "relay_blocked_at"):
         if sent_with.get(field):
             _mark_relay_rejected(sent_with, False, field=field)
