@@ -75,6 +75,7 @@ def bring_back(home: Path, session_id: str, open_db: Callable[[Path], object] = 
         logger.warning("conduit_push: couldn't un-archive voice chat %s", session_id, exc_info=True)
         return False
     finally:
-        close = getattr(db, "close", None)
-        if close:
-            close()
+        try:
+            db.close()
+        except Exception:  # noqa: BLE001
+            logger.debug("conduit_push: closing the session store failed", exc_info=True)

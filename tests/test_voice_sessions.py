@@ -294,6 +294,14 @@ def test_an_older_host_or_a_failed_archive_keeps_the_call_listed_and_saved(clien
     assert "archived" not in hermes.stores["default"].sessions[failed["session_id"]]
 
 
+def test_the_hook_reads_the_tags_the_routes_write():
+    spec = importlib.util.spec_from_file_location("conduit_voice_archive_keys", ROOT / "voice_archive.py")
+    voice_archive = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(voice_archive)
+    assert voice_archive.VOICE_TAGS_KEY == api.VOICE_TAGS_KEY
+    assert voice_archive.ARCHIVED_KINDS == api.VOICE_TAG_KINDS - {"job"}
+
+
 def test_a_classic_voice_chat_is_archived_when_its_call_ends(client, hermes, monkeypatch):
     _archives_like_hermes(monkeypatch)
     assert client.post(f"{BASE}/voice/tags", json={"session_id": "classic-1", "kind": "classic"}).status_code == 200

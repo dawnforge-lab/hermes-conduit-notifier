@@ -558,7 +558,10 @@ def _pre_llm_call(**kwargs: Any) -> dict[str, str] | None:
         _start_parent_turn(session_id, kwargs.get("turn_id"))
         _quietly(live_activity.reporter.turn_started, session_id)
         # A voice chat archived when its call ended is in use again (#1124).
-        voice_archive.bring_back(get_hermes_home(), session_id)
+        try:
+            voice_archive.bring_back(get_hermes_home(), session_id)
+        except Exception:  # noqa: BLE001 — a hook must never break the turn
+            logger.debug("conduit_push: voice chat un-archive check failed", exc_info=True)
     notes = [
         None if child else calls.outcome_note(session_id),
         None if child else _turn_surface_note(kwargs.get("platform"), kwargs.get("user_message")),
