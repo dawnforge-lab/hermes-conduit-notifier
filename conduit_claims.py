@@ -21,12 +21,18 @@ themselves in X-Conduit-Client, and this plugin's own job transports carry
 process keeps its claim, and Bot Chats keep theirs (some Hermes versions route
 bot deliveries to the claim's holder).
 
+X-Conduit-Client is the client's own claim, made by a client that already
+holds a dashboard login; all it can get is its own idle claims let go sooner.
+Conduit's calls run no Hermes turn and need no claim, so letting go during
+one changes nothing for the call.
+
 The gateway's helpers are read off ``tui_gateway.server`` as it loaded them;
 when one this needs is missing, nothing is released.
 """
 
 from __future__ import annotations
 
+import importlib
 import logging
 import sys
 import time
@@ -50,9 +56,11 @@ def _socket_closed(transport: Any) -> bool:
         closed = getattr(transport, "closed", None)
         if closed is None:
             closed = getattr(transport, "_closed", None)
+        if callable(closed):
+            closed = closed()
     except Exception:  # noqa: BLE001 — unreadable: no client to count
         return True
-    return closed if isinstance(closed, bool) else False
+    return bool(closed)
 
 
 def _headers(transport: Any) -> Optional[dict]:
@@ -122,9 +130,11 @@ def _idle(session: dict, now: float) -> bool:
 def _turn_marked(session: dict, home: Callable[[], Any]) -> bool:
     """A turn marker under the chat's id: a turn may still be running (an
     isolated one runs in a child process). Unreadable counts as marked."""
-    turn_marker = sys.modules.get("tui_gateway.turn_marker")
-    if turn_marker is None:
-        return False  # this Hermes writes none
+    try:
+        turn_marker = importlib.import_module("tui_gateway.turn_marker")
+    except ImportError as exc:
+        # Only a Hermes without the module writes no markers.
+        return exc.name not in ("tui_gateway", "tui_gateway.turn_marker")
     key = str(session.get("session_key") or "")
     if not key:
         return True
@@ -157,32 +167,40 @@ def releasable(server: Any, sid: str, session: Any, now: float, home: Callable[[
     if str(session.get("source") or "").strip().lower() == "bot_room":
         return False
     on = clients(server, session.get("transport"))
-    if on is False:
-        session.pop(MARK, None)
+    lock = session.get("history_lock")
+    if lock is None:
         return False
-    if on is True:
-        session[MARK] = True
-    elif not session.get(MARK):
-        return False
+    with lock:  # the mark changes only under the lock release takes
+        if on is False:
+            session.pop(MARK, None)
+            return False
+        if on is True:
+            session[MARK] = True
+        elif not session.get(MARK):
+            return False
     if not _idle(session, now):
         return False
     return not _busy(server, sid, session) and not _turn_marked(session, home)
 
 
 def release(server: Any, sid: str, session: dict, now: float) -> bool:
-    """Lets go of the claim unless a turn started meanwhile: admission marks
-    the turn running under the same lock."""
+    """Lets go of the claim unless a turn started meanwhile (admission marks
+    the turn running under the same lock; pending answers, delegations and
+    wake-ups only start inside a turn) or the runtime was replaced. Hermes
+    releases a hosted room's claim under this lock too."""
     lock = session.get("history_lock")
     if lock is None:
         return False
     with lock:
         lease = _holds_claim(session)
-        if lease is None or not _idle(session, now):
+        sessions = getattr(server, "_sessions", None)
+        current = sessions.get(sid) if callable(getattr(sessions, "get", None)) else None
+        if lease is None or current is not session or not _idle(session, now):
             return False
         if not server._release_active_session_slot(session):
             return False
-    logger.info("Conduit: let go of its idle claim on chat %r so another Hermes window can open it (#1123)",
-                getattr(lease, "session_id", None) or session.get("session_key"))
+    logger.info("Conduit: let go of its idle claim on chat %r (runtime %r) so another Hermes window can open it"
+                " (#1123)", getattr(lease, "session_id", None) or session.get("session_key"), sid)
     return True
 
 

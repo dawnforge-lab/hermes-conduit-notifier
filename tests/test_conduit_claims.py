@@ -1,9 +1,11 @@
 """The dashboard lets go of Conduit's claim on a chat once it sits idle, so
 Hermes Desktop can open it again (hermes-conduit#1123)."""
 import importlib
+import importlib.util
 import pathlib
 import sys
 import threading
+import time
 import types
 
 import pytest
@@ -246,3 +248,74 @@ def test_one_odd_runtime_never_stops_the_pass():
     server._sessions["odd"]["history_lock"] = "not a lock"
     chat(server, sid="fine")
     assert sweep(server) == 1
+
+
+def test_a_transport_whose_closed_is_a_method_or_flag_object_reads_it():
+    left = desktop()
+    del left._closed
+    left.closed = lambda: True
+    server = Server()
+    chat(server, transport=FanoutTransport(conduit(), left))
+    assert sweep(server) == 1
+
+
+def test_byte_headers_are_read():
+    server = Server()
+    chat(server, transport=WSTransport({b"x-conduit-client": b"conduit"}))
+    assert sweep(server) == 1
+
+
+def test_a_fanout_that_cannot_list_its_clients_keeps_it():
+    class Broken(FanoutTransport):
+        def transports(self):
+            raise RuntimeError("closing")
+
+    server = Server()
+    chat(server, transport=Broken())
+    assert sweep(server) == 0
+
+
+def test_a_chat_without_a_stored_id_keeps_it_when_markers_exist(monkeypatch):
+    marker = types.ModuleType("tui_gateway.turn_marker")
+    marker.read_turn_marker = lambda home, key: None
+    marker.marker_writer_state = lambda entry: "dead"
+    monkeypatch.setitem(sys.modules, "tui_gateway.turn_marker", marker)
+    server = Server()
+    chat(server, session_key="")
+    assert sweep(server) == 0
+
+
+def test_a_replaced_runtime_is_not_released():
+    server = Server()
+    session = chat(server)
+    assert claims.releasable(server, "live-1", session, NOW, lambda: ROOT)
+    chat(server)  # the same live id now names a fresh runtime
+    assert not claims.release(server, "live-1", session, NOW)
+    assert server.released == []
+
+
+def test_the_sweeper_stops_once_a_newer_one_takes_over(monkeypatch):
+    spec = importlib.util.spec_from_file_location("conduit_plugin_api_claims", ROOT / "dashboard" / "plugin_api.py")
+    if "hermes_constants" not in sys.modules:
+        constants = types.ModuleType("hermes_constants")
+        constants.get_hermes_home = lambda: ROOT
+        monkeypatch.setitem(sys.modules, "hermes_constants", constants)
+    api = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(api)
+    monkeypatch.setattr(claims, "SWEEP_S", 0.01)
+    monkeypatch.setattr(api, "_plugin_package_module", lambda name: claims)
+    passes = []
+    monkeypatch.setattr(claims, "sweep", lambda server, home: passes.append(server) or 0)
+    monkeypatch.delitem(sys.__dict__, api._CLAIMS_SWEEPER, raising=False)
+    api._ensure_claims_sweeper()
+    token = sys.__dict__[api._CLAIMS_SWEEPER]
+    api._ensure_claims_sweeper()  # already running: no second one
+    assert sys.__dict__[api._CLAIMS_SWEEPER] is token
+    worker = next(t for t in threading.enumerate() if t.name == "conduit-idle-claims" and t.is_alive())
+    deadline = time.monotonic() + 5
+    while not passes and time.monotonic() < deadline:
+        time.sleep(0.01)
+    assert passes
+    sys.__dict__[api._CLAIMS_SWEEPER] = object()  # a reloaded copy took over
+    worker.join(5)
+    assert not worker.is_alive()

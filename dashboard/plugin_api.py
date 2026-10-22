@@ -5876,6 +5876,7 @@ async def post_session_takeover(request: Request, response: Response,
     try:
         body = await _read_json_body(request, TAKEOVER_MAX_BODY_BYTES)
         ids = _takeover_ids(body)
+        _ensure_claims_sweeper()
         # One budget for the whole dashboard, like the voice routes: the
         # profile isn't resolved yet, so a made-up name can't mint a window.
         _takeover_limiter.acquire("")
@@ -5932,7 +5933,14 @@ def _start_claims_sweeper() -> None:
     try:
         threading.Thread(target=_sweep_idle_claims, args=(token,), name="conduit-idle-claims", daemon=True).start()
     except RuntimeError:
+        sys.__dict__.pop(_CLAIMS_SWEEPER, None)  # the next takeover tries again
         logger.warning("Conduit: no thread to let go of idle chat claims")
+
+
+def _ensure_claims_sweeper() -> None:
+    """Starts the sweeper unless one runs: a takeover means Conduit chats here."""
+    if sys.__dict__.get(_CLAIMS_SWEEPER) is None:
+        _start_claims_sweeper()
 
 
 if "hermes_cli.web_server" in sys.modules:
