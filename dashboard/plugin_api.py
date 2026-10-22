@@ -6309,8 +6309,8 @@ def _revoke_replaced_pairing(relay_url: str, credential: str) -> None:
     try:
         url = _relay_urls().check_request_url(f"{relay_url.rstrip('/')}/v1/gateways/current")
     except ValueError:
-        # Not https:// (a pairing saved before HTTPS was required): the
-        # credential doesn't go out over it.
+        # Plain http:// off this machine (a pairing saved before HTTPS was
+        # required): the credential isn't sent there.
         return
 
     def revoke() -> None:
@@ -6321,7 +6321,15 @@ def _revoke_replaced_pairing(relay_url: str, credential: str) -> None:
         except Exception as exc:
             logger.info("Conduit plugin: the replaced pairing wasn't revoked at the relay: %s", type(exc).__name__)
 
-    threading.Thread(target=revoke, name="conduit-pair-revoke", daemon=True).start()
+    try:
+        _start_daemon(revoke, "conduit-pair-revoke")
+    except Exception as exc:
+        # The pairing is saved: no thread to revoke with doesn't undo it.
+        logger.info("Conduit plugin: the replaced pairing wasn't revoked at the relay: %s", type(exc).__name__)
+
+
+def _start_daemon(target: Callable[[], None], name: str) -> None:
+    threading.Thread(target=target, name=name, daemon=True).start()
 
 
 def pair_profile(body: Any, profile: Optional[str] = None, path: Any = None,
@@ -7978,7 +7986,9 @@ def _relay_request(url: str, method: str, credential: str, payload: Optional[Dic
         headers["Content-Type"] = "application/json"
     request = urllib.request.Request(url, data=data, headers=headers, method=method)
     try:
-        with _relay_opener.open(request, timeout=timeout) as response:
+        # Plain HTTP (only ever to this machine) skips any proxy, which would see the credential in clear.
+        opener = _relay_opener if _relay_urls().is_https(url) else _direct_relay_opener
+        with opener.open(request, timeout=timeout) as response:
             raw = response.read(64 * 1024)
             status = response.status
     except urllib.error.HTTPError as error:

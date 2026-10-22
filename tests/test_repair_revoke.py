@@ -39,16 +39,6 @@ NEW = {"installation_id": "inst-1", "gateway_id": "gw-2", "credential": "inst-1.
        "relay_url": "https://relay.example"}
 
 
-class _Thread:
-    """Runs the target at start(), so the revoke is checked without waiting."""
-
-    def __init__(self, target, name, daemon):
-        self.target = target
-
-    def start(self):
-        self.target()
-
-
 @pytest.fixture
 def relay_calls(monkeypatch):
     calls = []
@@ -58,7 +48,8 @@ def relay_calls(monkeypatch):
         return 204, {}
 
     monkeypatch.setattr(api, "_relay_request", relay_request)
-    monkeypatch.setattr(api.threading, "Thread", _Thread)
+    # Runs the revoke inline, so it is checked without waiting.
+    monkeypatch.setattr(api, "_start_daemon", lambda target, name: target())
     return calls
 
 
@@ -91,11 +82,40 @@ def test_a_failed_revoke_leaves_the_new_pairing_working(tmp_path, monkeypatch):
         raise OSError("down")
 
     monkeypatch.setattr(api, "_relay_request", relay_request)
-    monkeypatch.setattr(api.threading, "Thread", _Thread)
+    monkeypatch.setattr(api, "_start_daemon", lambda target, name: target())
     path = tmp_path / "s.json"
     path.write_text(json.dumps({"credential": "inst-1.gw-1.old", "relay_url": "https://relay.example"}))
     assert _pair(path)["paired"] is True
     assert json.loads(path.read_text())["credential"] == "inst-1.gw-2.new"
+
+
+def test_no_thread_to_revoke_with_leaves_the_pairing_saved(tmp_path, monkeypatch):
+    def no_thread(target, name):
+        raise RuntimeError("can't start new thread")
+
+    monkeypatch.setattr(api, "_start_daemon", no_thread)
+    path = tmp_path / "s.json"
+    path.write_text(json.dumps({"credential": "inst-1.gw-1.old", "relay_url": "https://relay.example"}))
+    assert _pair(path)["paired"] is True
+    assert json.loads(path.read_text())["credential"] == "inst-1.gw-2.new"
+
+
+def test_a_loopback_revoke_skips_the_proxy(monkeypatch):
+    used = []
+
+    class Opener:
+        def __init__(self, name):
+            self.name = name
+
+        def open(self, request, timeout):
+            used.append(self.name)
+            raise api.urllib.error.HTTPError(request.full_url, 401, "u", {}, io.BytesIO(b"{}"))
+
+    monkeypatch.setattr(api, "_relay_opener", Opener("proxied"))
+    monkeypatch.setattr(api, "_direct_relay_opener", Opener("direct"))
+    api._relay_request("http://127.0.0.1:8787/v1/gateways/current", "DELETE", "c", None, 1)
+    api._relay_request("https://relay.example/v1/gateways/current", "DELETE", "c", None, 1)
+    assert used == ["direct", "proxied"]
 
 
 def test_a_full_gateway_list_is_not_called_rate_limiting(monkeypatch):
