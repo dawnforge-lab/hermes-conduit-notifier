@@ -319,3 +319,12 @@ def test_the_sweeper_stops_once_a_newer_one_takes_over(monkeypatch):
     sys.__dict__[api._CLAIMS_SWEEPER] = object()  # a reloaded copy took over
     worker.join(5)
     assert not worker.is_alive()
+
+
+def test_a_viewer_joining_during_the_check_keeps_it():
+    server = Server()
+    session = chat(server)
+    assert claims.releasable(server, "live-1", session, NOW, lambda: ROOT)
+    session["transport"] = FanoutTransport(conduit(), desktop())
+    assert not claims.release(server, "live-1", session, NOW)
+    assert server.released == []

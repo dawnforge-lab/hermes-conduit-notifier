@@ -197,6 +197,12 @@ def release(server: Any, sid: str, session: dict, now: float) -> bool:
         current = sessions.get(sid) if callable(getattr(sessions, "get", None)) else None
         if lease is None or current is not session or not _idle(session, now):
             return False
+        on = clients(server, session.get("transport"))  # a viewer may have joined since
+        if on is False:
+            session.pop(MARK, None)
+            return False
+        if on is None and not session.get(MARK):
+            return False
         if not server._release_active_session_slot(session):
             return False
     logger.info("Conduit: let go of its idle claim on chat %r (runtime %r) so another Hermes window can open it"
