@@ -1885,9 +1885,10 @@ marked private is reported only as "at a private place".
   with the sharing profile. A profile that shares location itself (talking
   or background on) always reads its own, and if several profiles share
   with the others the first wins (default, then named ones alphabetically).
-  The fresh-position and maps
-  budgets belong to the sharing profile's store, so every profile reading
-  it spends the same ones.
+  The fresh-position and maps budgets belong to the sharing profile's
+  store, so every profile reading it spends the same ones. Calls placed
+  from a reading profile are held back by the shared position, but the
+  places to avoid are that profile's own calls settings.
 - **No calls at places.** Calls settings `avoid_places` (place ids) and
   `avoid_unknown_place` (also hold calls when there's no recent location,
   or sharing is paused or off): a call that would ring while the user is at an
