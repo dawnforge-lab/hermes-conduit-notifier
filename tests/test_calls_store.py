@@ -546,6 +546,7 @@ def test_an_alert_under_the_gateway_key_follows_the_turns_session_id(tmp_path):
     store = _store(tmp_path, clock=clock, enabled=True, alerts=True)
     store.add_alert(["sk-1", "st-1"], "approval", "Push?")
     assert store.add_alert(["sk-1", "st-1"], "approval", "again") is None, "one at a time"
+    assert store.add_alert(["st-1"], "approval", "replayed without the key") is None, "the same wait"
     # Answered in chat: the turn ends under its own id and drops the alert.
     assert store.fire("st-1", "done") is None
     clock.now += 120
@@ -557,6 +558,9 @@ def test_an_alert_under_the_gateway_key_follows_the_turns_session_id(tmp_path):
     # The user declined: the next turn hears it, under either id.
     store.record_outcome(due["watch"]["id"], due["watch"]["session_ids"], "declined", kind="approval")
     assert [entry["outcome"] for entry in store.take_outcomes("st-1")] == ["declined"]
+    # A key that isn't a session key leaves the turn's id to call.
+    assert store.add_alert(["bad\x00key", "st-2"], "approval", "Push?")
+    assert store._load()["watches"][-1]["session_ids"] == ["st-2"]
 
 
 def test_an_alert_does_not_write_anything_while_alerts_are_off(tmp_path):
