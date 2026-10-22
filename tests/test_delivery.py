@@ -40,6 +40,7 @@ e2e = client.e2e
 
 KID = "0123456789abcdef0123456789abcdef"
 BARE_403 = "bare 403"
+CREDENTIAL = "inst.gw.secret"
 SECRET = bytes(range(32))
 
 
@@ -88,7 +89,7 @@ def paired(tmp_path, monkeypatch):
     monkeypatch.setattr(api, "_pairing_state_path", lambda: path)
     # Retries without the real waits.
     monkeypatch.setattr(client, "RETRY_DELAYS", (0.01, 0.01, 0.01), raising=False)
-    client._refusal.clear()
+    client._refusals.clear()
     relays = []
 
     def pair(statuses, **extra):
@@ -180,7 +181,7 @@ def test_a_relay_401_is_recorded_for_status_and_keeps_the_pairing(paired, capsys
 
     # The relay knows the gateway again (restored data): the mark goes once
     # the refusal's pause has run out.
-    client._refusal["until"] = 0.0
+    client._refusals[CREDENTIAL]["until"] = 0.0
     _deliver(_event())
 
     assert "relay_rejected_at" not in client.load_state()
@@ -258,8 +259,8 @@ def test_the_refusal_pause_doubles_up_to_its_cap(paired):
     pauses = []
     for _ in range(10):
         client._deliver(_event(), clock=lambda: now[0])
-        pauses.append(client._refusal["paused_for"])
-        now[0] = client._refusal["until"]
+        pauses.append(client._refusals[CREDENTIAL]["paused_for"])
+        now[0] = client._refusals[CREDENTIAL]["until"]
     assert pauses[:3] == [client.REFUSED_FIRST_S, client.REFUSED_FIRST_S * 2, client.REFUSED_FIRST_S * 4]
     assert max(pauses) == pauses[-1] == client.REFUSED_MAX_S
     assert len(relay.event_ids) == 10
@@ -298,7 +299,7 @@ def test_a_bare_403_says_the_host_is_blocked_not_to_pair_again(paired, capsys):
     assert "empty 403" in out and "Pairing again won't help" in out and "ask whoever runs the relay" in out
     assert "pair again from Conduit" not in out
 
-    client._refusal["until"] = 0.0
+    client._refusals[CREDENTIAL]["until"] = 0.0
     _deliver(_event())
 
     assert "relay_blocked_at" not in client.load_state()
@@ -326,17 +327,26 @@ def test_the_test_command_names_a_block_in_front_of_the_relay(paired, capsys, mo
     assert "in front of the relay" in out and "ask whoever runs the relay" in out
 
 
-def test_another_pairings_delivery_does_not_end_the_pause(paired):
-    relay = paired([401])
-    client._deliver(_event(), clock=lambda: 0.0)
-    held = dict(client._refusal)
+def test_each_pairing_keeps_its_own_pause(paired):
+    relay = paired([401, 401, 401])
+    first = client.load_state()
+    second = {**first, "credential": "inst.gw2.other", "gateway_id": "gw2"}
 
-    # Another profile's credential is accepted meanwhile.
-    client._clear_refusal("other.gw.secret")
-    assert client._refusal == held
-    client._clear_refusal(held["credential"])
-    assert client._refusal == {}
-    assert len(relay.event_ids) == 1
+    # Two profiles in one process are refused in turn: neither evicts the
+    # other's pause, and each one's pause doubles on its own.
+    client._deliver(_event(), clock=lambda: 0.0)
+    client.save_state(second)
+    client._deliver(_event(), clock=lambda: 1.0)
+    client.save_state(first)
+    assert client._deliver(_event(), clock=lambda: 2.0) is False
+    assert len(relay.event_ids) == 2
+    client._deliver(_event(), clock=lambda: client.REFUSED_FIRST_S)
+    assert client._refusals[CREDENTIAL]["paused_for"] == client.REFUSED_FIRST_S * 2
+    assert client._refusals["inst.gw2.other"]["paused_for"] == client.REFUSED_FIRST_S
+
+    # An accepted delivery for one ends only its own pause.
+    client._clear_refusal("inst.gw2.other")
+    assert CREDENTIAL in client._refusals and "inst.gw2.other" not in client._refusals
 
 
 def test_a_refusal_in_flight_across_a_reload_does_not_pause_it(paired, monkeypatch):
@@ -352,7 +362,7 @@ def test_a_refusal_in_flight_across_a_reload_does_not_pause_it(paired, monkeypat
     client._deliver(_event(), clock=lambda: 0.0)
     monkeypatch.setattr(client, "_request", real_request)
 
-    assert client._refusal == {}
+    assert client._refusals == {}
     assert client._deliver(_event(), clock=lambda: 1.0) is True
     assert len(relay.event_ids) == 2
 
@@ -429,7 +439,7 @@ def test_enqueue_reports_a_paused_pairing_as_dropped(paired, monkeypatch):
     # the relay will never park.
     assert client.enqueue(_event()) is False
     assert len(relay.event_ids) == 1
-    client._refusal["until"] = 0.0
+    client._refusals[CREDENTIAL]["until"] = 0.0
     assert client.enqueue(_event()) is True
     client._events.join()
     assert len(relay.event_ids) == 2
@@ -438,14 +448,30 @@ def test_enqueue_reports_a_paused_pairing_as_dropped(paired, monkeypatch):
 def test_an_accepted_test_ends_the_pause(paired):
     relay = paired([BARE_403])
     _deliver(_event())
-    assert client._refusal
+    assert client._refusals
 
     client.send_now(_event())
 
-    assert client._refusal == {}
+    assert client._refusals == {}
     assert len(relay.event_ids) == 2
 
 
 def test_an_edge_block_says_so_in_its_message():
     assert "in front of the Conduit relay" in str(client.RelayRejected(403, "", from_relay=False))
     assert "relay rejected the request: nope (403)" in str(client.RelayRejected(403, "nope"))
+
+
+def test_a_bare_401_is_not_called_a_refused_credential(paired):
+    paired([])
+    client.record_relay_refusal(client.load_state(), client.RelayRejected(401, "", from_relay=False))
+    state = client.load_state()
+    assert "relay_rejected_at" not in state and "relay_blocked_at" not in state
+
+
+def test_notifications_paused_follows_this_profiles_pairing(paired):
+    paired([401])
+    assert client.notifications_paused() is False
+    _deliver(_event())
+    assert client.notifications_paused() is True
+    client._refusals[CREDENTIAL]["until"] = 0.0
+    assert client.notifications_paused() is False
