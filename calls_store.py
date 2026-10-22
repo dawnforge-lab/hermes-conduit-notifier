@@ -214,6 +214,12 @@ class CallStore:
             for watch in state["watches"]:
                 if watch["origin"] != "alert" and set(watch["session_ids"]).issubset(ids):
                     watch["session_ids"] = ids
+                    # A watch Hermes set on its own becomes the user's: their
+                    # request calls even with "Hermes decides" off.
+                    watch["origin"] = "conduit"
+                    watch["asked"] = True
+                    if not watch["title"]:
+                        watch["title"] = clean_title
                     if hold:
                         watch["hold_until"] = max(watch["hold_until"], now + hold)
                     return {"status": "watching", "id": watch["id"]}
@@ -250,12 +256,14 @@ class CallStore:
 
     def add_alert(self, session_id: Any, kind: str, reason: Any, delay_s: int = ALERT_DELAY_S) -> str | None:
         """Hermes is waiting on the user's approval or answer in
-        ``session_id``: unless it's answered within ``delay_s`` seconds
-        (``cancel_alerts``), the waiter calls. The alert's id, or None when
-        alerts are off (nothing is written then) or one is already waiting."""
+        ``session_id`` (or a list of the ids one session goes by, the first
+        the one the call opens): unless it's answered within ``delay_s``
+        seconds (``cancel_alerts``), the waiter calls. The alert's id, or None
+        when alerts are off (nothing is written then) or one is already
+        waiting."""
         if kind not in ALERT_KINDS:
             raise ValueError(f"unknown alert {kind}")
-        ids = _session_ids([session_id])
+        ids = _session_ids(session_id if isinstance(session_id, list) else [session_id])
         settings = self.settings()
         if not settings["enabled"] or not settings["alerts"]:
             return None
