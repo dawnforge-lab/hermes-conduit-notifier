@@ -6093,6 +6093,9 @@ def e2e_status(path: Any = None) -> Dict[str, Any]:
         # The relay answered 401 to this pairing's last delivery (client.py):
         # it no longer knows this gateway, so the phone should pair again.
         "relay_rejected": bool(state.get("relay_rejected_at")),
+        # Something in front of the relay answered a bare 403 (client.py):
+        # this host is blocked there, and pairing again won't get through.
+        "relay_blocked": bool(state.get("relay_blocked_at")),
     }
 
 
@@ -6269,6 +6272,13 @@ def _claim_pairing(relay_url: str, code: str, gateway_name: str) -> Dict[str, An
         raise TokenError(410, "This pairing code expired or was already used. Create a new one.")
     if status == 429:
         raise TokenError(429, "The push relay is rate limiting pairing; try again shortly")
+    if status == 403 and not (isinstance(body, dict) and "error" in body):
+        # The relay always answers with a JSON error: a bare 403 is something
+        # in front of it (a firewall, a rate limiter) blocking this host.
+        logger.warning("Conduit plugin: something in front of the push relay answered the pairing claim "
+                       "with an empty 403: this host's address is blocked there")
+        raise TokenError(502, "Something in front of the push relay is blocking this host, so pairing can't get "
+                              "through. Pairing again won't help until the relay's operator lifts the block.")
     if not 200 <= status < 300 or not isinstance(body, dict):
         # The relay's own status stays in the log: the answer doesn't probe hosts.
         logger.warning("Conduit plugin: the push relay answered the pairing claim with HTTP %s", status)

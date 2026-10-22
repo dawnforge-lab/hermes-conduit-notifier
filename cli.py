@@ -71,6 +71,13 @@ def _printable(value: object) -> str:
     return "".join(c for c in str(value) if c.isprintable())
 
 
+def _block_operator(relay_url: str) -> str:
+    """Who can lift a block in front of the relay."""
+    if relay_url.rstrip("/") == DEFAULT_RELAY_URL:
+        return "email support@milim.dev with this host's public IP address"
+    return "ask whoever runs the relay"
+
+
 def dispatch(args: argparse.Namespace) -> int:
     action = getattr(args, "conduit_push_action", None)
     if action == "pair":
@@ -104,6 +111,11 @@ def dispatch(args: argparse.Namespace) -> int:
             print(f"Warning: the relay refused this pairing's credential "
                   f"(since {_printable(state['relay_rejected_at'])}), so notifications aren't arriving. "
                   "Conduit removed this gateway or the relay lost its data: pair again from Conduit.")
+        if state.get("relay_blocked_at"):
+            print(f"Warning: something in front of the relay (a firewall or rate limiter) has been answering this host "
+                  f"with an empty 403 since {_printable(state['relay_blocked_at'])}, so notifications, calls and "
+                  "Lock Screen progress aren't arriving. Pairing again won't help: it meets the same block. "
+                  f"To get it lifted, {_block_operator(relay_url)}.")
         print(f"Redact content: {'on' if state.get('redact_content') else 'off'}")
         encryption = e2e_status(state)
         if encryption["enabled"]:
@@ -143,6 +155,10 @@ def dispatch(args: argparse.Namespace) -> int:
             send_now(event)
         except _RELAY_ERRORS as error:
             print(f"The Conduit relay did not accept the test notification: {error}")
+            if getattr(error, "edge_blocked", False):
+                relay_url = str((load_state() or {}).get("relay_url") or DEFAULT_RELAY_URL)
+                print("That empty 403 came from something in front of the relay blocking this host, not from the "
+                      f"relay, so pairing again won't help. To get it lifted, {_block_operator(relay_url)}.")
             return 1
         print("Test notification accepted by the Conduit relay.")
         return 0

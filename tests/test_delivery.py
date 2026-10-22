@@ -39,6 +39,7 @@ api = _private_copy("conduit_plugin_api_delivery", ROOT / "dashboard" / "plugin_
 e2e = client.e2e
 
 KID = "0123456789abcdef0123456789abcdef"
+BARE_403 = "bare 403"
 SECRET = bytes(range(32))
 
 
@@ -56,7 +57,11 @@ class _Relay:
                 body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
                 relay.event_ids.append(body.get("event_id"))
                 status = relay.statuses.pop(0) if relay.statuses else 200
-                answer = json.dumps({"accepted": True} if status < 300 else {"error": "nope"}).encode()
+                if status == BARE_403:
+                    # Something in front of the relay: no JSON error body.
+                    status, answer = 403, b""
+                else:
+                    answer = json.dumps({"accepted": True} if status < 300 else {"error": "nope"}).encode()
                 self.send_response(status)
                 self.send_header("Content-Type", "application/json")
                 self.send_header("Content-Length", str(len(answer)))
@@ -83,6 +88,7 @@ def paired(tmp_path, monkeypatch):
     monkeypatch.setattr(api, "_pairing_state_path", lambda: path)
     # Retries without the real waits.
     monkeypatch.setattr(client, "RETRY_DELAYS", (0.01, 0.01, 0.01), raising=False)
+    client._refusal.clear()
     relays = []
 
     def pair(statuses, **extra):
@@ -172,7 +178,9 @@ def test_a_relay_401_is_recorded_for_status_and_keeps_the_pairing(paired, capsys
     assert cli.dispatch(types.SimpleNamespace(conduit_push_action="status")) == 0
     assert "relay refused this pairing's credential" in capsys.readouterr().out
 
-    # The relay knows the gateway again (restored data): the mark goes.
+    # The relay knows the gateway again (restored data): the mark goes once
+    # the refusal's pause has run out.
+    client._refusal["until"] = 0.0
     _deliver(_event())
 
     assert "relay_rejected_at" not in client.load_state()
@@ -214,3 +222,105 @@ def test_a_profile_unpaired_between_retries_stops_retrying(paired, monkeypatch):
     _deliver(_event())
 
     assert len(relay.event_ids) == 1
+
+
+@pytest.mark.parametrize("status", [401, 403, BARE_403])
+def test_a_refusal_parks_notifications_until_the_pause_runs_out(paired, status):
+    relay = paired([status, status])
+    now = [0.0]
+    clock = lambda: now[0]
+
+    assert client._deliver(_event(), clock=clock) is False
+    # Refused the same way: the next events don't reach the relay at all.
+    assert client._deliver(_event(), clock=clock) is False
+    now[0] += client.REFUSED_FIRST_S - 1
+    assert client._deliver(_event(), clock=clock) is False
+    assert len(relay.event_ids) == 1
+
+    # The first event after the pause is the probe; refused again, the pause doubles.
+    now[0] += 1
+    assert client._deliver(_event(), clock=clock) is False
+    assert len(relay.event_ids) == 2
+    now[0] += client.REFUSED_FIRST_S
+    assert client._deliver(_event(), clock=clock) is False
+    assert len(relay.event_ids) == 2
+
+    # Accepted: the pause is over, the next event goes straight out.
+    now[0] += client.REFUSED_FIRST_S
+    assert client._deliver(_event(), clock=clock) is True
+    assert client._deliver(_event(), clock=clock) is True
+    assert len(relay.event_ids) == 4
+
+
+def test_the_refusal_pause_doubles_up_to_its_cap(paired):
+    relay = paired([401] * 20)
+    now = [0.0]
+    pauses = []
+    for _ in range(10):
+        client._deliver(_event(), clock=lambda: now[0])
+        pauses.append(client._refusal["paused_for"])
+        now[0] = client._refusal["until"]
+    assert pauses[:3] == [client.REFUSED_FIRST_S, client.REFUSED_FIRST_S * 2, client.REFUSED_FIRST_S * 4]
+    assert max(pauses) == pauses[-1] == client.REFUSED_MAX_S
+    assert len(relay.event_ids) == 10
+
+
+def test_pairing_again_is_not_held_by_the_old_pause(paired):
+    relay = paired([401])
+    client._deliver(_event(), clock=lambda: 0.0)
+    state = client.load_state()
+    client.save_state({**state, "credential": "inst.gw2.new", "gateway_id": "gw2"})
+
+    assert client._deliver(_event(), clock=lambda: 1.0) is True
+    assert len(relay.event_ids) == 2
+
+
+def test_a_reload_starts_unpaused(paired):
+    relay = paired([401])
+    client._deliver(_event(), clock=lambda: 0.0)
+    client.stop(timeout=0)
+    client.start()
+
+    assert client._deliver(_event(), clock=lambda: 1.0) is True
+    assert len(relay.event_ids) == 2
+
+
+def test_a_bare_403_says_the_host_is_blocked_not_to_pair_again(paired, capsys):
+    paired([BARE_403])
+
+    _deliver(_event())
+
+    state = client.load_state()
+    assert state["relay_blocked_at"] and "relay_rejected_at" not in state
+    assert api.e2e_status()["relay_blocked"] is True and api.e2e_status()["relay_rejected"] is False
+    assert cli.dispatch(types.SimpleNamespace(conduit_push_action="status")) == 0
+    out = capsys.readouterr().out
+    assert "empty 403" in out and "Pairing again won't help" in out and "ask whoever runs the relay" in out
+    assert "pair again from Conduit" not in out
+
+    client._refusal["until"] = 0.0
+    _deliver(_event())
+
+    assert "relay_blocked_at" not in client.load_state()
+    assert api.e2e_status()["relay_blocked"] is False
+    assert cli.dispatch(types.SimpleNamespace(conduit_push_action="status")) == 0
+    assert "empty 403" not in capsys.readouterr().out
+
+
+def test_the_relays_own_403_is_not_a_block(paired):
+    paired([403])
+
+    _deliver(_event())
+
+    state = client.load_state()
+    assert "relay_blocked_at" not in state and "relay_rejected_at" not in state
+
+
+def test_the_test_command_names_a_block_in_front_of_the_relay(paired, capsys, monkeypatch):
+    paired([BARE_403])
+    monkeypatch.setattr(cli, "send_now", client.send_now)
+
+    assert cli.dispatch(types.SimpleNamespace(conduit_push_action="test", corrupt=False)) == 1
+
+    out = capsys.readouterr().out
+    assert "in front of the relay" in out and "ask whoever runs the relay" in out
