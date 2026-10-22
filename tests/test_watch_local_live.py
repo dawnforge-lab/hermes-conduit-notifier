@@ -1328,3 +1328,63 @@ def test_a_resumed_chats_runner_knows_about_the_card_before_it_hears_hermes(call
     _run(scenario())
     # Both the first stream and the rejoin attached the listener last.
     assert attached == [(True, True), (True, True)]
+
+
+# --- A hung speech server, and a spent grant ------------------------------------
+
+
+def test_a_speech_server_that_stops_answering_ends_the_session_and_frees_its_slot(call, monkeypatch):
+    monkeypatch.setattr(api, "WATCH_AUDIO_UPSTREAM_QUIET_S", 0.3)
+    monkeypatch.setattr(api, "WATCH_AUDIO_UPSTREAM_QUIET_CHECK_S", 0.02)
+
+    async def scenario():
+        bridge = _bridge()
+        socket = await _attach(bridge)
+        watch = Watch()
+        assert (await _start(bridge, socket, watch))["type"] == "started"
+        upstream = call.speech.sockets[0]
+        # Answered, then a quiet stretch with nothing asked: a pause, not a hang.
+        await bridge._handle(watch.event({"type": "session.update", "session": {"type": "realtime"}}))
+        await _until(lambda: upstream.received)
+        upstream.push({"type": "session.updated"})
+        await _until(lambda: watch.events(socket, "session.updated"))
+        await bridge._handle(watch.seal(1, b"\x01\x00"))
+        await asyncio.sleep(0.6)
+        assert bridge.session is not None and not watch.events(socket, "error")
+        # Asked and never answered: the session ends and says so.
+        await bridge._handle(watch.event({"type": "response.create"}))
+        await _until(lambda: watch.events(socket, "ended"), timeout=3)
+        assert watch.events(socket, "error") == [{"type": "error", "code": "unreachable",
+                                                  "message": "The speech server stopped answering"}]
+        assert watch.events(socket, "ended")[-1]["reason"] == "error"
+        assert upstream.closed and bridge.session is None
+        assert bridge.slots.acquire()
+
+    _run(scenario())
+
+
+def test_a_hello_past_the_grants_streams_is_told_to_start_the_call_again(call, monkeypatch):
+    monkeypatch.setattr(api, "WATCH_AUDIO_STREAMS_PER_GRANT", 2)
+    monkeypatch.setattr(api, "WATCH_AUDIO_REFUSALS_PER_GRANT", 1)
+
+    async def scenario():
+        bridge = _bridge()
+        socket = await _attach(bridge)
+        first = Watch()
+        assert (await _start(bridge, socket, first))["type"] == "started"
+        assert (await _start(bridge, socket, Watch()))["type"] == "started"
+        spent = Watch()
+        refused = await _start(bridge, socket, spent)
+        assert refused == {"type": "error", "code": "streams_spent",
+                           "message": "This call can't reconnect to Hermes again. Start the call again."}
+        # The rejoin it stood for ended the call's session, and its start
+        # went nowhere.
+        assert bridge.session is None and bridge.stream is None
+        assert len(call.speech.sockets) == 2
+        # Past the refusals, and a spent id again: nothing more is sealed.
+        before = len(socket.sent)
+        await bridge._handle(Watch().hello())
+        await bridge._handle(first.hello())
+        assert len(socket.sent) == before
+
+    _run(scenario())

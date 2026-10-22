@@ -10591,6 +10591,9 @@ WATCH_AUDIO_MAX_MESSAGE_BYTES = 64 * 1024
 WATCH_AUDIO_MAX_PLAIN_BYTES = WATCH_AUDIO_MAX_MESSAGE_BYTES - 1 - 8 - 16
 # Streams one grant may open: a call and its rejoins.
 WATCH_AUDIO_STREAMS_PER_GRANT = 32
+# Hellos past that told why they were refused (each takes a fresh id); the
+# rest only get the log line.
+WATCH_AUDIO_REFUSALS_PER_GRANT = 4
 # Engine sessions this host holds for Watches at once, every profile together.
 WATCH_AUDIO_MAX_SESSIONS = 4
 WATCH_AUDIO_RELAY_TIMEOUT_S = 15.0
@@ -10600,6 +10603,14 @@ WATCH_AUDIO_RECONNECT_MAX_S = 10.0
 WATCH_AUDIO_STABLE_S = 5.0
 # A session that won't stop when asked is cancelled after this.
 WATCH_AUDIO_STOP_TIMEOUT_S = 5.0
+# Grok and Local Live: a provider that leaves a Watch event unanswered this
+# long is hung (each event gets one back: session.updated, response.created,
+# conversation.item.created…). Its session ends with "unreachable", which
+# frees the slot, and the Watch reconnects. A quiet stretch with nothing
+# asked is a pause in the conversation, and a dead connection is the
+# socket's own keepalive pings' to find.
+WATCH_AUDIO_UPSTREAM_QUIET_S = 60.0
+WATCH_AUDIO_UPSTREAM_QUIET_CHECK_S = 5.0
 # GPT-Live: the helper's offer (ICE gathering included), then WebRTC
 # connecting after the answer. Past that, one more try with STUN: host
 # candidates alone usually reach OpenAI's public media servers, and skip
@@ -11016,6 +11027,24 @@ class _WatchAudioSession:
         self.profile = bridge.grant.profile
         self.stopping = asyncio.Event()
         self.reason = "ended"
+        # When the provider was sent the oldest event it hasn't answered.
+        self.owed_since: Optional[float] = None
+
+    def asked(self) -> None:
+        """An event went to the provider: it owes an answer."""
+        if self.owed_since is None:
+            self.owed_since = self.bridge.clock()
+
+    def answered(self) -> None:
+        self.owed_since = None
+
+    async def _hung(self) -> None:
+        """Returns once the provider has owed an answer for WATCH_AUDIO_UPSTREAM_QUIET_S."""
+        while True:
+            owed = self.owed_since
+            if owed is not None and self.bridge.clock() - owed >= WATCH_AUDIO_UPSTREAM_QUIET_S:
+                return
+            await asyncio.sleep(WATCH_AUDIO_UPSTREAM_QUIET_CHECK_S)
 
     def stop(self, reason: str) -> None:
         if not self.stopping.is_set():
@@ -11377,8 +11406,12 @@ class _GrokWatchSession(_WatchAudioSession):
             })
             pacing = asyncio.ensure_future(pacer.run())
             reader = asyncio.ensure_future(self._read(upstream, pacer))
-            tasks = [reader, pacing]
-            await _first_done(None, self.stopping.wait(), reader)
+            hung = asyncio.ensure_future(self._hung())
+            tasks = [reader, pacing, hung]
+            await _first_done(None, self.stopping.wait(), reader, hung)
+            if hung.done() and not reader.done() and not self.stopping.is_set():
+                logger.warning("Grok Live for the Watch: xAI stopped answering; ending the session")
+                raise WatchAudioFailure("unreachable", "xAI stopped answering")
             if reader.done() and not self.stopping.is_set():
                 code, reason = _forwardable_close(getattr(upstream, "close_code", None),
                                                   str(getattr(upstream, "close_reason", "") or ""))
@@ -11394,6 +11427,7 @@ class _GrokWatchSession(_WatchAudioSession):
     async def _read(self, upstream: Any, pacer: _WatchAudioPacer) -> None:
         with contextlib.suppress(Exception):
             async for message in upstream:
+                self.answered()
                 if not isinstance(message, str):
                     continue
                 try:
@@ -11429,6 +11463,7 @@ class _GrokWatchSession(_WatchAudioSession):
             return
         with contextlib.suppress(Exception):
             await upstream.send(text)
+            self.asked()
 
 
 # --- Local Live on the Watch ---------------------------------------------------
@@ -12383,10 +12418,14 @@ class _LocalLiveWatchSession(_WatchAudioSession):
             await self._show_approval()
             pacing = asyncio.ensure_future(pacer.run())
             reader = asyncio.ensure_future(self._read(upstream, pacer))
-            tasks = [reader, pacing]
-            await _first_done(None, self.stopping.wait(), reader)
+            hung = asyncio.ensure_future(self._hung())
+            tasks = [reader, pacing, hung]
+            await _first_done(None, self.stopping.wait(), reader, hung)
             if self.read_back_failure is not None:
                 raise self.read_back_failure
+            if hung.done() and not reader.done() and not self.stopping.is_set():
+                logger.warning("A Watch Local Live call: the speech server stopped answering; ending the session")
+                raise WatchAudioFailure("unreachable", "The speech server stopped answering")
             if reader.done() and not self.stopping.is_set():
                 code, reason = _forwardable_close(getattr(upstream, "close_code", None),
                                                   str(getattr(upstream, "close_reason", "") or ""))
@@ -12462,6 +12501,7 @@ class _LocalLiveWatchSession(_WatchAudioSession):
     async def _read(self, upstream: Any, pacer: _WatchAudioPacer) -> None:
         with contextlib.suppress(Exception):
             async for message in upstream:
+                self.answered()
                 if not isinstance(message, str):
                     continue
                 if self.read_back is not None:
@@ -12691,6 +12731,7 @@ class _LocalLiveWatchSession(_WatchAudioSession):
             return
         with contextlib.suppress(Exception):
             await upstream.send(text)
+            self.asked()
 
 
 _WATCH_AUDIO_SESSIONS = {"gpt_live": _GptLiveWatchSession, "grok": _GrokWatchSession,
@@ -12913,17 +12954,28 @@ class _WatchAudioBridge:
         if len(message) != 18:
             return
         sid, version = message[1:17], message[17]
-        if sid in self.sids or len(self.sids) >= WATCH_AUDIO_STREAMS_PER_GRANT:
-            # A stream id's keys are spent once; a Watch that sends one again gets nothing.
-            logger.warning("A Watch audio stream was refused (%s)",
-                           "its id came twice" if sid in self.sids else "too many streams for one call")
+        if sid in self.sids:
+            # A stream id's keys are spent once: nothing can be sealed to it
+            # again, not even a refusal. The Watch never sends one twice.
+            logger.warning("A Watch audio stream was refused (its id came twice)")
+            return
+        spent = len(self.sids) >= WATCH_AUDIO_STREAMS_PER_GRANT
+        if spent and len(self.sids) >= WATCH_AUDIO_STREAMS_PER_GRANT + WATCH_AUDIO_REFUSALS_PER_GRANT:
+            logger.warning("A Watch audio stream was refused (too many streams for one call)")
             return
         self.stream = None
         await self._end_session("watch_rejoined")
         self.sids.add(sid)
         stream = _WatchAudioStream(self.grant.grant_id, self.secret, sid)
         self.stream = stream
-        if version != WATCH_AUDIO_VERSION:
+        if spent:
+            # A fresh id, so its keys can carry the refusal: the Watch ends
+            # the call instead of waiting for a start that never comes.
+            logger.warning("A Watch audio stream was refused (too many streams for one call)")
+            await self.control(stream, {"type": "error", "code": "streams_spent",
+                                        "message": "This call can't reconnect to Hermes again. Start the call again."})
+            self.stream = None
+        elif version != WATCH_AUDIO_VERSION:
             await self.control(stream, {"type": "error", "code": "version",
                                         "message": f"This Hermes host speaks Watch audio version {WATCH_AUDIO_VERSION}"})
             self.stream = None
