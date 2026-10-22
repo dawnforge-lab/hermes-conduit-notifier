@@ -6322,14 +6322,14 @@ def _revoke_replaced_pairing(relay_url: str, credential: str) -> None:
             logger.info("Conduit plugin: the replaced pairing wasn't revoked at the relay: %s", type(exc).__name__)
 
     try:
-        _start_daemon(revoke, "conduit-pair-revoke")
-    except Exception as exc:
-        # The pairing is saved: no thread to revoke with doesn't undo it.
-        logger.info("Conduit plugin: the replaced pairing wasn't revoked at the relay: %s", type(exc).__name__)
+        _start_revoke_thread(revoke)
+    except RuntimeError as exc:
+        # Out of threads. The pairing is saved, and this doesn't undo it.
+        logger.warning("Conduit plugin: the replaced pairing wasn't revoked at the relay: %s", exc)
 
 
-def _start_daemon(target: Callable[[], None], name: str) -> None:
-    threading.Thread(target=target, name=name, daemon=True).start()
+def _start_revoke_thread(target: Callable[[], None]) -> None:
+    threading.Thread(target=target, name="conduit-pair-revoke", daemon=True).start()
 
 
 def pair_profile(body: Any, profile: Optional[str] = None, path: Any = None,

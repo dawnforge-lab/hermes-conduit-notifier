@@ -49,7 +49,7 @@ def relay_calls(monkeypatch):
 
     monkeypatch.setattr(api, "_relay_request", relay_request)
     # Runs the revoke inline, so it is checked without waiting.
-    monkeypatch.setattr(api, "_start_daemon", lambda target, name: target())
+    monkeypatch.setattr(api, "_start_revoke_thread", lambda target: target())
     return calls
 
 
@@ -63,6 +63,28 @@ def test_re_pairing_revokes_the_replaced_credential_at_its_relay(tmp_path, relay
     _pair(path)
     assert relay_calls == [("https://relay.example/v1/gateways/current", "DELETE", "inst-1.gw-1.old")]
     assert json.loads(path.read_text())["credential"] == "inst-1.gw-2.new"
+
+
+def test_the_revoke_runs_on_its_own_daemon_thread(tmp_path, monkeypatch):
+    # The real seam, with only Thread stubbed: a broken helper can't hide behind a patched one.
+    calls, threads = [], []
+
+    class Thread:
+        def __init__(self, target, name, daemon):
+            threads.append((name, daemon))
+            self.target = target
+
+        def start(self):
+            self.target()
+
+    monkeypatch.setattr(api, "_relay_request", lambda url, method, credential, payload, timeout:
+                        calls.append((method, credential)) or (204, {}))
+    monkeypatch.setattr(api.threading, "Thread", Thread)
+    path = tmp_path / "s.json"
+    path.write_text(json.dumps({"credential": "inst-1.gw-1.old", "relay_url": "https://relay.example"}))
+    _pair(path)
+    assert threads == [("conduit-pair-revoke", True)]
+    assert calls == [("DELETE", "inst-1.gw-1.old")]
 
 
 def test_a_first_pairing_revokes_nothing(tmp_path, relay_calls):
@@ -82,7 +104,7 @@ def test_a_failed_revoke_leaves_the_new_pairing_working(tmp_path, monkeypatch):
         raise OSError("down")
 
     monkeypatch.setattr(api, "_relay_request", relay_request)
-    monkeypatch.setattr(api, "_start_daemon", lambda target, name: target())
+    monkeypatch.setattr(api, "_start_revoke_thread", lambda target: target())
     path = tmp_path / "s.json"
     path.write_text(json.dumps({"credential": "inst-1.gw-1.old", "relay_url": "https://relay.example"}))
     assert _pair(path)["paired"] is True
@@ -90,10 +112,10 @@ def test_a_failed_revoke_leaves_the_new_pairing_working(tmp_path, monkeypatch):
 
 
 def test_no_thread_to_revoke_with_leaves_the_pairing_saved(tmp_path, monkeypatch):
-    def no_thread(target, name):
+    def no_thread(target):
         raise RuntimeError("can't start new thread")
 
-    monkeypatch.setattr(api, "_start_daemon", no_thread)
+    monkeypatch.setattr(api, "_start_revoke_thread", no_thread)
     path = tmp_path / "s.json"
     path.write_text(json.dumps({"credential": "inst-1.gw-1.old", "relay_url": "https://relay.example"}))
     assert _pair(path)["paired"] is True
