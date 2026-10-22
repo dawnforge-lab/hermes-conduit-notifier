@@ -786,11 +786,9 @@ def record_relay_refusal(sent_with: dict[str, Any], error: RelayRejected) -> Non
     in front of the relay. A relay's own 403 is neither."""
     # The newest answer stands: one kind of refusal replaces the other.
     if error.status == 401:
-        _mark_relay_rejected(sent_with, False, field="relay_blocked_at")
-        _mark_relay_rejected(sent_with, True)
+        _mark_relay_rejected(sent_with, True, replaces="relay_blocked_at")
     elif error.edge_blocked:
-        _mark_relay_rejected(sent_with, False)
-        _mark_relay_rejected(sent_with, True, field="relay_blocked_at")
+        _mark_relay_rejected(sent_with, True, field="relay_blocked_at", replaces="relay_rejected_at")
 
 
 def record_relay_accepted(sent_with: dict[str, Any]) -> None:
@@ -800,22 +798,25 @@ def record_relay_accepted(sent_with: dict[str, Any]) -> None:
             _mark_relay_rejected(sent_with, False, field=field)
 
 
-def _mark_relay_rejected(sent_with: dict[str, Any], rejected: bool, *, field: str = "relay_rejected_at") -> None:
+def _mark_relay_rejected(sent_with: dict[str, Any], rejected: bool, *, field: str = "relay_rejected_at",
+                         replaces: str | None = None) -> None:
     """Records that the relay refused this pairing's credential (401), or that
     it accepts it again. A 401 means the relay no longer knows the gateway:
     the phone removed it, or the relay lost its data. The pairing is kept
     (it holds the redaction key, and the relay may be restored), but
     `status` tells the user to pair again. ``field`` "relay_blocked_at" marks
     a bare 403 from in front of the relay the same way, which `status` says
-    pairing again won't fix. Only the pairing that was used is marked: one
-    replaced or removed meanwhile is left alone."""
+    pairing again won't fix; ``replaces`` names the other mark, dropped in
+    the same write. Only the pairing that was used is marked: one replaced or
+    removed meanwhile is left alone."""
 
     def mark(current: dict[str, Any]) -> bool:
         if any(current.get(name) != sent_with.get(name) for name in ("credential", "installation_id", "gateway_id")):
             return False
         if rejected:
+            replaced = replaces is not None and current.pop(replaces, None) is not None
             if current.get(field):
-                return False
+                return replaced
             current[field] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
             return True
         return current.pop(field, None) is not None

@@ -277,8 +277,7 @@ def test_a_refused_credential_tells_status_to_pair_again(monkeypatch):
     monkeypatch.setattr(client, "request_json", refuse)
     with pytest.raises(client.RelayRejected):
         live._post_to_relay({"session_id": "s", "state": {"phase": "thinking", "tools": 0}})
-    # The block mark (if any) gives way to the newer refusal.
-    assert marked == [(state, False), (state, True)]
+    assert marked == [(state, True)]
 
 
 def test_an_end_the_relay_did_not_take_is_sent_again(reporter, relay, clock):
@@ -490,7 +489,7 @@ def test_a_bare_403_marks_the_host_blocked_not_the_credential(monkeypatch):
     marked = []
     monkeypatch.setattr(client, "load_state", lambda: state)
     monkeypatch.setattr(client, "_mark_relay_rejected",
-                        lambda sent_with, rejected, field="relay_rejected_at": marked.append((field, rejected)))
+                        lambda sent_with, rejected, field="relay_rejected_at", **_: marked.append((field, rejected)))
 
     def refuse(url, **kwargs):
         raise client.RelayRejected(403, "request_rejected", from_relay=False)
@@ -498,7 +497,7 @@ def test_a_bare_403_marks_the_host_blocked_not_the_credential(monkeypatch):
     monkeypatch.setattr(client, "request_json", refuse)
     with pytest.raises(client.RelayRejected):
         live._post_to_relay({"session_id": "s", "state": {"phase": "thinking", "tools": 0}})
-    assert marked == [("relay_rejected_at", False), ("relay_blocked_at", True)]
+    assert marked == [("relay_blocked_at", True)]
 
     state["relay_blocked_at"] = "2026-10-21T00:00:00Z"
     marked.clear()

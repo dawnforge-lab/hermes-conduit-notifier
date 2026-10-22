@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Any
 
 from . import e2e
-from .client import DEFAULT_RELAY_URL, RelayRejected, UnpairedLocally, build_outgoing, claim_pairing, e2e_status, load_state, post_event, record_relay_refusal, send_now, set_redact_content, state_path, unpair
+from .client import DEFAULT_RELAY_URL, RelayRejected, UnpairedLocally, build_outgoing, claim_pairing, e2e_status, load_state, post_event, record_relay_accepted, record_relay_refusal, send_now, set_redact_content, state_path, unpair
 from .relay_urls import check_request_url
 from .events import event_id, plugin_hello, push_event
 
@@ -85,6 +85,9 @@ def dispatch(args: argparse.Namespace) -> int:
             state = claim_pairing(args.code, args.relay_url, args.name)
         except _RELAY_ERRORS as error:
             print(f"Pairing failed: {error}")
+            if getattr(error, "edge_blocked", False):
+                print("That empty 403 came from something in front of the relay blocking this host, so pairing "
+                      f"can't get through. To get it lifted, {_block_operator(str(args.relay_url or DEFAULT_RELAY_URL))}.")
             return 1
         print(f"Paired {state['gateway_name']} with Conduit.")
         try:
@@ -151,6 +154,7 @@ def dispatch(args: argparse.Namespace) -> int:
                     record_relay_refusal(state, error)
                 print(f"The Conduit relay did not accept the test notification: {error}")
                 return 1
+            record_relay_accepted(state)
             print("Broken encrypted test notification accepted by the Conduit relay. The phone should show only generic text.")
             return 0
         try:

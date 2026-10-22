@@ -400,3 +400,22 @@ def test_the_newest_kind_of_refusal_replaces_the_other(paired, capsys):
     client._deliver(_event(), clock=lambda: 20_000.0)
     state = client.load_state()
     assert state["relay_rejected_at"] and "relay_blocked_at" not in state
+
+
+def test_cli_pair_names_a_block_in_front_of_the_relay(monkeypatch, capsys):
+    def blocked(code, relay_url, name):
+        raise client.RelayRejected(403, "request_rejected", from_relay=False)
+
+    monkeypatch.setattr(cli, "claim_pairing", blocked)
+    args = types.SimpleNamespace(conduit_push_action="pair", code="ABCD", relay_url=client.DEFAULT_RELAY_URL, name="")
+    assert cli.dispatch(args) == 1
+    assert "support@milim.dev" in capsys.readouterr().out
+
+
+def test_one_write_swaps_the_refusal_marks(paired):
+    paired([])
+    state = client.load_state()
+    client.save_state({**state, "relay_rejected_at": "2026-10-21T00:00:00Z"})
+    client.record_relay_refusal(client.load_state(), client.RelayRejected(403, "", from_relay=False))
+    state = client.load_state()
+    assert state["relay_blocked_at"] and "relay_rejected_at" not in state
