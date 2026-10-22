@@ -619,6 +619,51 @@ def test_the_total_key_check_budget_backs_up_every_profile(monkeypatch):
     assert api.local_live_profile_for_key(None) is None
 
 
+def test_wrong_keys_spending_a_profiles_budget_dont_lock_out_its_right_key(hermes, monkeypatch):
+    monkeypatch.setattr(api, "_local_live_verified", {})
+    monkeypatch.setattr(api, "_local_live_known", {})
+    monkeypatch.setattr(api, "_local_live_key_check_limiter", api._MintLimiter(2, 60.0, message="Too many"))
+    monkeypatch.setattr(api, "_local_live_key_check_total_limiter", api._MintLimiter(100, 60.0, message="Too many"))
+    key = _key(hermes, "work")
+    assert api.local_live_profile_for_key(key) == "work"
+    wrong = ".".join(key.split(".")[:2] + ["wrong"])
+    for _ in range(5):
+        assert api.local_live_profile_for_key(wrong) is None
+    # The 30 s cache has expired: the right key still gets in, the wrong one doesn't.
+    api._local_live_verified.clear()
+    assert api.local_live_profile_for_key(key) == "work"
+    api._local_live_verified.clear()
+    assert api.local_live_profile_for_key(wrong) is None
+
+
+def test_a_rotation_by_another_process_retires_the_remembered_key(hermes, monkeypatch):
+    monkeypatch.setattr(api, "_local_live_verified", {})
+    monkeypatch.setattr(api, "_local_live_known", {})
+    key = _key(hermes, "work")
+    assert api.local_live_profile_for_key(key) == "work"
+    # Another dashboard process replaces the file; this one's counter never moves.
+    with hermes_scope(hermes, "work"):
+        path = hermes.home() / api.LOCAL_LIVE_FILE
+    rotated = ".".join(key.split(".")[:2] + ["rotated"])
+    replacement = path.with_name("replacement")
+    replacement.write_text(json.dumps({"version": 1, "api_key": rotated}))
+    os.replace(replacement, path)
+    api._local_live_verified.clear()
+    assert api.local_live_profile_for_key(key) is None
+    assert api.local_live_profile_for_key(rotated) == "work"
+
+
+def test_a_rotation_here_retires_the_remembered_key(hermes, monkeypatch):
+    monkeypatch.setattr(api, "_local_live_verified", {})
+    monkeypatch.setattr(api, "_local_live_known", {})
+    key = _key(hermes, "work")
+    assert api.local_live_profile_for_key(key) == "work"
+    with hermes_scope(hermes, "work"):
+        api.local_live_key("work", rotate=True)
+    assert "work" not in api._local_live_known
+    assert api.local_live_profile_for_key(key) is None
+
+
 # --- Read-back speech servers ---------------------------------------------------
 #
 # A server that only transcribes and reads text back (the farm's voice

@@ -400,9 +400,10 @@ def _take_result(state: dict[str, Any], installation: str, result: Any, now: flo
         # An Undo comes after the request was applied and left the queue.
         earlier = next((item for item in state["results"] if item["id"] == request_id
                         and item["device"] == installation), None)
-        if earlier is None:
-            return
-        request = {**earlier, "installation_id": installation}
+        # Its "applied" may have aged out of the ring by now; Hermes is still
+        # told, by request id, that the user put the setting back.
+        request = ({**earlier, "installation_id": installation} if earlier is not None
+                   else {"key": "", "value": None, "installation_id": installation})
     state["results"] = [item for item in state["results"] if item["id"] != request_id]
     state["results"].append({
         "id": request_id, "device": installation, "key": request["key"], "title": request.get("title", ""),

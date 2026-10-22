@@ -108,6 +108,24 @@ def test_an_undo_after_apply_is_kept_as_the_latest_result(store):
     assert result["status"] == "undone" and result["note"] == "user tapped Undo"
 
 
+def test_an_undo_whose_apply_left_the_ring_still_reaches_hermes(store, clock):
+    _sync(store)
+    [request] = store.request([{"key": "voice.live.tone", "value": "relaxed"}], "Calmer.")["requests"]
+    _sync(store, results=[{"id": request["id"], "status": "applied"}])
+    for n in range(store_module.MAX_RESULTS):
+        clock.now += store_module.HOUR_S / store_module.PER_HOUR
+        [other] = store.request([{"key": "voice.live.greeting", "value": f"hi {n}"}], "Greet.")["requests"]
+        _sync(store, results=[{"id": other["id"], "status": "applied"}])
+    assert request["id"] not in [item["id"] for item in store.view()["results"]]
+    _sync(store, results=[{"id": request["id"], "status": "undone", "note": "user tapped Undo"}])
+    result = store.view()["results"][-1]
+    assert result["id"] == request["id"] and result["status"] == "undone" and result["device"] == PHONE
+    assert result["note"] == "user tapped Undo" and result["key"] == ""
+    # The file it's saved to reads back with it.
+    reloaded = SettingsStore(store.path.parent, clock=store.clock)
+    assert reloaded.view()["results"][-1]["id"] == request["id"]
+
+
 def test_a_result_for_another_device_or_unknown_request_is_ignored(store):
     _sync(store)
     _sync(store, installation=IPAD)
