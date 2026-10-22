@@ -41,6 +41,7 @@ def _load(name, path):
 
 location = _load("conduit_push.location_store", ROOT / "location_store.py")
 tool = _load("conduit_push.location_tool", ROOT / "location_tool.py")
+profiles = _load("conduit_push.location_profiles", ROOT / "location_profiles.py")
 calls_store = _load("conduit_push.calls_store", ROOT / "calls_store.py")
 calls = _load("conduit_push.calls", ROOT / "calls.py")
 _api_spec = importlib.util.spec_from_file_location("conduit_plugin_api_location", ROOT / "dashboard" / "plugin_api.py")
@@ -770,6 +771,14 @@ def test_place_rules_stay_with_the_sharing_profile(home):
     for action in ("rules", "set_rule", "remove_rule"):
         answer = _call({"action": action})
         assert answer["error"] == "other_profile" and "work" in answer["note"]
+
+
+def test_a_profile_linked_twice_is_listed_once(home):
+    work = home / "profiles" / "work"
+    work.mkdir(parents=True)
+    (home / "profiles" / "work-link").symlink_to(work)
+    names = [name for name, _ in profiles.profile_homes(home)]
+    assert names == ["work"]
 
 
 def test_a_locate_from_another_profile_names_the_sharing_one(home, monkeypatch):

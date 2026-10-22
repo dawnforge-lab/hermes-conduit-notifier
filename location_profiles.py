@@ -25,7 +25,7 @@ from .location_store import LocationStore
 PAIRING_FILE = "conduit-push.json"
 
 
-def store_for(home: Any, make: Callable[[Any], LocationStore] = LocationStore) -> tuple[LocationStore, str | None]:
+def store_for(home: str | Path, make: Callable[[Any], LocationStore] = LocationStore) -> tuple[LocationStore, str | None]:
     """The store this profile reads, and the name of the profile it belongs
     to when that's another one (None for its own). ``make`` opens a store."""
     own = make(home)
@@ -57,13 +57,15 @@ def profile_homes(home: Path) -> list[tuple[str, Path]]:
         own = home.resolve()
     except OSError:
         return []
-    found = []
+    found, seen = [], {own}
     for name, path in [("default", root)] + [(path.name, path) for path in named]:
         try:
-            if path.resolve() != own:
-                found.append((name, path))
+            resolved = path.resolve()
         except OSError:
             continue
+        if resolved not in seen:
+            seen.add(resolved)
+            found.append((name, path))
     return found
 
 

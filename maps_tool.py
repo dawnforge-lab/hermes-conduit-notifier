@@ -191,7 +191,7 @@ def _handle(args: dict[str, Any], session_id: Any, is_child: Callable[[Any], boo
     label = profile if owner is not None else ""
     view = store.snapshot()
     if action == "navigate":
-        return _navigate(store, view, args, session, profile)
+        return _navigate(store, view, args, session, profile, label)
     phone = store.maps_device()
     host = maps_host.configured() and store.maps_host_allowed()
     if phone is None and not host:
@@ -431,7 +431,7 @@ def _uses_me(request: dict[str, Any]) -> bool:
 
 
 def _navigate(store: LocationStore, view: dict[str, Any] | None, args: dict[str, Any], session: str,
-              profile: str) -> dict[str, Any]:
+              profile: str, reader: str = "") -> dict[str, Any]:
     """Asks Conduit to open Apple Maps with directions to a place, from
     wherever the user is when they say go."""
     targets = args.get("to")
@@ -480,7 +480,7 @@ def _navigate(store: LocationStore, view: dict[str, Any] | None, args: dict[str,
                                  ttl_minutes=NAVIGATE_TTL_MINUTES, maps={"to": to, "mode": mode})
     except PresentError as error:
         return {"ok": False, "error": error.code, "note": str(error)}
-    location_tool._log(store, "maps navigate", session)
+    location_tool._log(store, "maps navigate", session, reader)
     try:
         client.enqueue(push_event("phone.changes", identifier=f"present:{prompt['id']}", profile=profile,
                                   title=prompt["title"], body="Tap Go to open Apple Maps.", mode="alert"))
