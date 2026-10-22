@@ -1062,7 +1062,7 @@ start the agent or call a model. A resumed call appends to the same session.
 | --- | --- | --- |
 | POST | `/api/plugins/conduit_push/voice/sessions` with `{call_id, engine, session_id?, chat_id?, title?, turns: [{index, role, text, at?}]}` | `{ok, session_id, chat_id?, written, appended, created}` |
 | GET | `/api/plugins/conduit_push/voice/chat-calls?chat_id=[&call_id=]` | `{ok, chat_id, calls: [{call_id, engine, turns?: [{role, text, at}]}]}` |
-| GET | `/api/plugins/conduit_push/voice/tags` | `{ok, tags: {session_id: {kind, engine?, parent_id?, parent_title?}}}` |
+| GET | `/api/plugins/conduit_push/voice/tags` | `{ok, tags: {session_id: {kind, engine?, archived?, parent_id?, parent_title?}}}` |
 | POST | `/api/plugins/conduit_push/voice/tags` with `{session_id, kind: classic or job, parent_id?, parent_title?}` | `{ok, session_id, kind, ...}` |
 | POST | `/api/plugins/conduit_push/voice/archive` with `{session_id}` | `{ok, session_id, archived}` |
 | GET | `/api/plugins/conduit_push/voice/summary?session_id=` | `{ok, available, text, covers}` |
@@ -1097,8 +1097,10 @@ start the agent or call a model. A resumed call appends to the same session.
   when its first save lands, with Hermes' auto-archive stamp
   (`auto_archived`), so Hermes Desktop's chat list doesn't fill up with
   calls. Typing into the row reopens it, and Hermes then un-archives it by
-  itself, so a call continued as a chat comes back. A resumed call or a
-  retried save doesn't touch the flag, and an archive the user sets or clears stays. Conduit keeps
+  itself, so a call continued as a chat comes back. A resumed call doesn't
+  touch the flag, a retried first save finishes an archive its first
+  attempt didn't get to (the call's tag records a done one with
+  `archived: true`), and an archive the user sets or clears stays. Conduit keeps
   listing these rows with its calls, and Desktop's Archived view and search
   still find them. Hermes builds without the stamp leave the row listed.
 - `voice/archive` archives a Classic voice chat (tagged `classic`) the same

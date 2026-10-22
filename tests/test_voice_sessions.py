@@ -264,6 +264,18 @@ def test_a_retried_create_archives_a_row_its_first_attempt_left_unfinished(clien
     assert store.sessions[first["session_id"]]["archived"] == 1
 
 
+def test_a_retried_create_heals_an_archive_that_failed(client, hermes, monkeypatch):
+    _archives_like_hermes(monkeypatch, fail=True)
+    first = save(client, turns=turns(("user", "hi"))).json()
+    row = hermes.stores["default"].sessions[first["session_id"]]
+    assert "archived" not in row
+    _archives_like_hermes(monkeypatch)
+    save(client, turns=turns(("user", "hi")))
+    assert row["archived"] == 1
+    tags = client.get(f"{BASE}/voice/tags").json()["tags"]
+    assert tags[first["session_id"]] == {"kind": "call", "engine": "gemini-live", "archived": True}
+
+
 def test_a_retried_create_leaves_an_un_archive_alone(client, hermes, monkeypatch):
     _archives_like_hermes(monkeypatch)
     first = save(client, turns=turns(("user", "hi"))).json()

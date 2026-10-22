@@ -5205,17 +5205,16 @@ def save_voice_turns(body: Dict[str, Any],
                     # later flushes are no-ops. Hermes refuses appends only to rows
                     # that compression closed, so this end doesn't block them.
                     db.end_session(session_id, VOICE_END_REASON)
-                if created:
-                    if title and hasattr(db, "set_session_title"):
-                        _set_voice_title(db, session_id, title)
-                    _set_voice_tag(db, session_id, {"kind": "call", "engine": engine})
-                    _archive_ended_voice_row(db, session_id)
-                elif adopted and _voice_tags(db).get(session_id, {}).get("kind") != "call":
-                    # The first attempt died before tagging its row, so
-                    # before archiving it too: finish both. One that got
-                    # further leaves the flag as the user may have set it.
-                    _set_voice_tag(db, session_id, {"kind": "call", "engine": engine})
-                    _archive_ended_voice_row(db, session_id)
+                if created and title and hasattr(db, "set_session_title"):
+                    _set_voice_title(db, session_id, title)
+                # The tag records a successful archive, so a retried create
+                # finishes a first attempt that died before tagging or whose
+                # archive failed, and leaves alone a row the user un-archived.
+                tag = {} if created else _voice_tags(db).get(session_id, {}) if adopted else None
+                if tag is not None and (tag.get("kind") != "call" or not tag.get("archived")):
+                    archived = _archive_ended_voice_row(db, session_id)
+                    _set_voice_tag(db, session_id, {"kind": "call", "engine": engine,
+                                                    **({"archived": True} if archived else {})})
             except Exception:
                 if created:
                     _discard_new_voice_session(db, session_id)
@@ -5238,7 +5237,8 @@ def _archive_ended_voice_row(db, session_id: str) -> bool:
     archive: the first turn anyone types into the row reopens it, and Hermes
     then un-archives it by itself, so a call continued as a chat comes back.
     Conduit still lists these rows with its calls. Only a call's first save
-    archives its row; a resumed call leaves the flag as the user left it.
+    (or a retry finishing it) archives its row; a resumed call leaves the
+    flag as the user left it.
     Hosts without the stamp keep the row visible. Never fails the save.
     True when the row was archived."""
     archive = getattr(db, "_auto_archive_lineage", None)
