@@ -1872,7 +1872,7 @@ marked private is reported only as "at a private place".
   The task is anything a cron run can do. A rule fires once a day, or every
   time at least 30 minutes apart (`repeat: "every"`), never for an event
   over 15 minutes old, and never while sharing is paused.
-- **Other profiles on this host** (plugin 0.57+). Conduit binds sharing to
+- **Other profiles on this host** (plugin 0.58+). Conduit binds sharing to
   one profile, which keeps the store, key and place rules. With "Share with
   this host's other profiles" on (`sharing.other_profiles: true`), every
   other profile on the same host that is paired with the same iPhone (the
