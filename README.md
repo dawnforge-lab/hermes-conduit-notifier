@@ -1092,6 +1092,14 @@ start the agent or call a model. A resumed call appends to the same session.
   session, but no session-end hooks fire: the chat goes on. A chat that no
   longer exists gets 422, and Conduit then saves the call on its own. Older
   plugins ignore `chat_id` and save a session as before.
+- A call saved as its own session (one not kept with a chat) is archived
+  when its first save lands, with Hermes' auto-archive stamp
+  (`auto_archived`), so Hermes Desktop's chat list doesn't fill up with
+  calls. Typing into the row reopens it, and Hermes then un-archives it by
+  itself, so a call continued as a chat comes back. A resumed call doesn't
+  touch the flag, and an archive the user sets or clears stays. Conduit keeps
+  listing these rows with its calls, and Desktop's Archived view and search
+  still find them. Hermes builds without the stamp leave the row listed.
 - A create is idempotent per `call_id`: a retried first save whose response
   was lost continues the row it made instead of starting a second one.
 - Appends and summaries go only to rows saved as voice calls; any other

@@ -222,6 +222,55 @@ def test_first_save_tags_the_session_as_a_call(client, hermes, engine):
     assert tags == {session_id: {"kind": "call", "engine": engine}}
 
 
+def _archives_like_hermes(monkeypatch, fail=False):
+    """Hermes' idle-sweep archive: stamps auto_archived only on rows it hides."""
+    def archive(self, session_id):
+        if fail:
+            raise RuntimeError("database is locked")
+        row = self.store.sessions[session_id]
+        if not row.get("archived"):
+            row["archived"] = row["auto_archived"] = 1
+        return True
+    monkeypatch.setattr(FakeSessionDB, "_auto_archive_lineage", archive, raising=False)
+
+
+@pytest.mark.parametrize("engine", ["gemini-live", "gpt-live", "grok-live", "local-live"])
+def test_a_standalone_call_is_auto_archived_when_it_ends(client, hermes, monkeypatch, engine):
+    # hermes-conduit#1124: kept out of Desktop's list, back once someone types in it.
+    _archives_like_hermes(monkeypatch)
+    session_id = save(client, engine=engine, turns=turns(("user", "hi"), ("assistant", "hello"))).json()["session_id"]
+    row = hermes.stores["default"].sessions[session_id]
+    assert row["archived"] == 1 and row["auto_archived"] == 1
+    assert row["end_reason"] == api.VOICE_END_REASON
+
+
+def test_a_resumed_call_leaves_the_archive_flag_as_the_user_left_it(client, hermes, monkeypatch):
+    _archives_like_hermes(monkeypatch)
+    first = save(client, turns=turns(("user", "hi"))).json()
+    row = hermes.stores["default"].sessions[first["session_id"]]
+    row["archived"] = row["auto_archived"] = 0  # un-archived in Desktop or Conduit
+    again = save(client, session_id=first["session_id"], call_id="call-2", turns=turns(("user", "again"))).json()
+    assert again["appended"] == 1 and row["archived"] == 0
+
+
+def test_a_retried_create_still_archives_its_row(client, hermes, monkeypatch):
+    first = save(client, turns=turns(("user", "hi"))).json()
+    assert "archived" not in hermes.stores["default"].sessions[first["session_id"]]
+    _archives_like_hermes(monkeypatch)
+    again = save(client, turns=turns(("user", "hi"))).json()
+    assert again["session_id"] == first["session_id"] and not again["created"]
+    assert hermes.stores["default"].sessions[first["session_id"]]["archived"] == 1
+
+
+def test_an_older_host_or_a_failed_archive_keeps_the_call_listed_and_saved(client, hermes, monkeypatch):
+    plain = save(client, turns=turns(("user", "hi"))).json()
+    assert plain["created"] and "archived" not in hermes.stores["default"].sessions[plain["session_id"]]
+    _archives_like_hermes(monkeypatch, fail=True)
+    failed = save(client, call_id="call-2", turns=turns(("user", "hello"))).json()
+    assert failed["created"] and failed["written"] == 1
+    assert "archived" not in hermes.stores["default"].sessions[failed["session_id"]]
+
+
 def test_nothing_to_save_creates_no_session(client, hermes):
     body = save(client, turns=[]).json()
     assert body["session_id"] is None

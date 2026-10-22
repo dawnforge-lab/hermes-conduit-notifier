@@ -5212,6 +5212,8 @@ def save_voice_turns(body: Dict[str, Any],
                 elif adopted and _voice_tags(db).get(session_id, {}).get("kind") != "call":
                     # The first attempt died before tagging its row: finish it.
                     _set_voice_tag(db, session_id, {"kind": "call", "engine": engine})
+                if created or adopted:
+                    _archive_ended_voice_row(db, session_id)
             except Exception:
                 if created:
                     _discard_new_voice_session(db, session_id)
@@ -5225,6 +5227,24 @@ def save_voice_turns(body: Dict[str, Any],
         if end_messages and on_end is not None:
             on_end(session_id, engine, end_messages)
     return result
+
+
+def _archive_ended_voice_row(db, session_id: str) -> None:
+    """Keeps a standalone call out of Desktop's chat list (hermes-conduit#1124).
+
+    Archived with Hermes' idle-sweep stamp (``auto_archived``), not as a user
+    archive: the first turn anyone types into the row reopens it, and Hermes
+    then un-archives it by itself, so a call continued as a chat comes back.
+    Conduit still lists these rows with its calls. Only a call's first save
+    archives its row; a resumed call leaves the flag as the user left it.
+    Hosts without the stamp keep the row visible. Never fails the save."""
+    archive = getattr(db, "_auto_archive_lineage", None)
+    if archive is None:
+        return
+    try:
+        archive(session_id)
+    except Exception:  # noqa: BLE001 — the turns are stored; the row just stays listed
+        logger.warning("Couldn't archive Conduit voice call %s", session_id, exc_info=True)
 
 
 def _chat_call(db, call_id: str) -> Optional[Dict[str, Any]]:
