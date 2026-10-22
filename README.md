@@ -1096,8 +1096,8 @@ start the agent or call a model. A resumed call appends to the same session.
   when its first save lands, with Hermes' auto-archive stamp
   (`auto_archived`), so Hermes Desktop's chat list doesn't fill up with
   calls. Typing into the row reopens it, and Hermes then un-archives it by
-  itself, so a call continued as a chat comes back. A resumed call doesn't
-  touch the flag, and an archive the user sets or clears stays. Conduit keeps
+  itself, so a call continued as a chat comes back. A resumed call or a
+  retried save doesn't touch the flag, and an archive the user sets or clears stays. Conduit keeps
   listing these rows with its calls, and Desktop's Archived view and search
   still find them. Hermes builds without the stamp leave the row listed.
 - A create is idempotent per `call_id`: a retried first save whose response

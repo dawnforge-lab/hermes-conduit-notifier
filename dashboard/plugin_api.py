@@ -5209,10 +5209,12 @@ def save_voice_turns(body: Dict[str, Any],
                     if title and hasattr(db, "set_session_title"):
                         _set_voice_title(db, session_id, title)
                     _set_voice_tag(db, session_id, {"kind": "call", "engine": engine})
+                    _archive_ended_voice_row(db, session_id)
                 elif adopted and _voice_tags(db).get(session_id, {}).get("kind") != "call":
-                    # The first attempt died before tagging its row: finish it.
+                    # The first attempt died before tagging its row, so
+                    # before archiving it too: finish both. One that got
+                    # further leaves the flag as the user may have set it.
                     _set_voice_tag(db, session_id, {"kind": "call", "engine": engine})
-                if created or adopted:
                     _archive_ended_voice_row(db, session_id)
             except Exception:
                 if created:

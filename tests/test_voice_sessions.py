@@ -253,13 +253,24 @@ def test_a_resumed_call_leaves_the_archive_flag_as_the_user_left_it(client, herm
     assert again["appended"] == 1 and row["archived"] == 0
 
 
-def test_a_retried_create_still_archives_its_row(client, hermes, monkeypatch):
+def test_a_retried_create_archives_a_row_its_first_attempt_left_unfinished(client, hermes, monkeypatch):
     first = save(client, turns=turns(("user", "hi"))).json()
-    assert "archived" not in hermes.stores["default"].sessions[first["session_id"]]
+    store = hermes.stores["default"]
+    assert "archived" not in store.sessions[first["session_id"]]
+    store.meta[api.VOICE_TAGS_KEY] = "{}"  # the first attempt died before tagging, so before archiving
     _archives_like_hermes(monkeypatch)
     again = save(client, turns=turns(("user", "hi"))).json()
     assert again["session_id"] == first["session_id"] and not again["created"]
-    assert hermes.stores["default"].sessions[first["session_id"]]["archived"] == 1
+    assert store.sessions[first["session_id"]]["archived"] == 1
+
+
+def test_a_retried_create_leaves_an_un_archive_alone(client, hermes, monkeypatch):
+    _archives_like_hermes(monkeypatch)
+    first = save(client, turns=turns(("user", "hi"))).json()
+    row = hermes.stores["default"].sessions[first["session_id"]]
+    row["archived"] = row["auto_archived"] = 0  # the user kept it as a chat
+    again = save(client, turns=turns(("user", "hi"))).json()
+    assert again["session_id"] == first["session_id"] and row["archived"] == 0
 
 
 def test_an_older_host_or_a_failed_archive_keeps_the_call_listed_and_saved(client, hermes, monkeypatch):
