@@ -44,7 +44,7 @@ def store_for(home: str | Path, make: Callable[[Any], LocationStore] = LocationS
             store = make(path)
             if not store.exists():
                 continue
-            view = store.snapshot()
+            view = store.snapshot(upgrade=False)  # never another profile's write lock
             if view is not None and view["sharing"].get("other_profiles") is True and _on(view["sharing"]):
                 return store, name
     return own, None

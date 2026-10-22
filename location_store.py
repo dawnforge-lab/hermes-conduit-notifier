@@ -437,11 +437,12 @@ class LocationStore:
                 connection.close()
 
     @contextlib.contextmanager
-    def _read(self) -> Iterator[sqlite3.Connection | None]:
+    def _read(self, upgrade: bool = True) -> Iterator[sqlite3.Connection | None]:
         if not self.path.exists():
             yield None
             return
-        self._upgrade()
+        if upgrade:
+            self._upgrade()
         try:
             connection = sqlite3.connect(f"{self.path.as_uri()}?mode=ro", uri=True, timeout=15)
         except sqlite3.DatabaseError:
@@ -713,13 +714,15 @@ class LocationStore:
 
     # The agent's view -------------------------------------------------------------------
 
-    def snapshot(self, device_id: str | None = None) -> dict[str, Any] | None:
+    def snapshot(self, device_id: str | None = None, upgrade: bool = True) -> dict[str, Any] | None:
         """Where the user is: the device with the newest fix, with its sharing
         and places, or None when nothing is shared. The device that synced
         last decides when it says sharing is paused or off (the user's
         latest word), and when no device has a fix. ``device_id`` (a voice
-        read) reads that device alone, matched as an id."""
-        with self._read() as db:
+        read) reads that device alone, matched as an id. ``upgrade=False``
+        (another profile looking) leaves a store an older plugin wrote as it
+        is, unread, rather than taking its write lock."""
+        with self._read(upgrade) as db:
             if db is None:
                 return None
             if device_id is not None:
