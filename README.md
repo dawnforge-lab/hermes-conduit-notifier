@@ -1862,7 +1862,8 @@ marked private is reported only as "at a private place".
 - **On-demand locate.** `locate` asks the phone for a fresh fix through the
   relay as a silent location push (Apple's Location Push Service Extension),
   which the phone answers only while background sharing is on and not
-  paused. At most one every 5 minutes and 30 a day per profile.
+  paused. At most one every 5 minutes and 30 a day per location store
+  (profiles reading a shared one spend its budget).
 - **Place rules.** `set_rule` keeps a Hermes cron job named
   `Place rule: <what>` that never runs on its own schedule; an arrive or
   leave event that matches the rule's place (one saved place or any), move

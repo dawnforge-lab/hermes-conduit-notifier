@@ -63,7 +63,7 @@ def profile_homes(home: Path) -> list[tuple[str, Path]]:
     except OSError:
         return []
     found, seen = [], {own}
-    for name, path in [("default", root)] + [(path.name, path) for path in named]:
+    for name, path in [("default", root)] + [(path.name, path) for path in named if path.name != "default"]:
         try:
             resolved = path.resolve()
         except OSError:
