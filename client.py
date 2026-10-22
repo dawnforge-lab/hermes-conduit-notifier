@@ -252,13 +252,18 @@ def enqueue(event: dict[str, Any]) -> bool:
     """Queue an event for asynchronous relay delivery.
 
     Returns True when the event was accepted by the local delivery queue and
-    False when it was DROPPED (queue full, or the profile lost its pairing
-    between the caller's check and here). Fire-and-forget callers can ignore
+    False when it was DROPPED (queue full, the profile lost its pairing
+    between the caller's check and here, or the relay refused this pairing
+    and its notifications are paused). Fire-and-forget callers can ignore
     the result; the clarify middleware MUST NOT — it parks a relay decision
     on this event, so a drop has to fall back to the native clarify path
     instead of polling an answer that can never arrive.
     """
-    if _stopped.is_set() or not load_state():
+    state = load_state()
+    if _stopped.is_set() or not state:
+        return False
+    if _paused_until(state) > time.monotonic():
+        logger.info("Conduit notification dropped for %s: %s", event.get("type", "event"), _pause_reason())
         return False
     _start_worker()
     try:
@@ -280,10 +285,13 @@ def send_now(event: dict[str, Any], timeout: float = 15.0) -> dict[str, Any]:
     try:
         answer = _send(event, state, timeout)
     except RelayRejected as error:
-        # `test` is a probe too: `status` should say what it just saw.
+        # `test` is a probe too: `status` should say what it just saw. A
+        # refusal doesn't start a pause (one person typed it), but an
+        # accepted test ends one.
         if error.status in (401, 403):
             record_relay_refusal(state, error)
         raise
+    _clear_refusal(state.get("credential"))
     record_relay_accepted(state)
     return answer
 
@@ -530,7 +538,8 @@ class RelayRejected(RuntimeError):
         # whatever the relay sent.
         detail = " ".join("".join(ch if ch.isprintable() else " " for ch in str(detail)).split())[:200]
         detail = detail or "request_rejected"
-        super().__init__(f"Conduit relay rejected the request: {detail} ({status}).")
+        super().__init__(f"Conduit relay rejected the request: {detail} ({status})." if from_relay
+                         else f"Something in front of the Conduit relay refused the request ({status}).")
         self.status = status
         self.detail = detail
         self.from_relay = from_relay
@@ -683,6 +692,19 @@ _refusal: dict[str, Any] = {}
 _refusal_lock = threading.Lock()
 
 
+def _paused_until(state: dict[str, Any]) -> float:
+    """When this pairing's refusal pause ends (0 when it has none)."""
+    with _refusal_lock:
+        return _refusal.get("until", 0.0) if _refusal.get("credential") == state.get("credential") else 0.0
+
+
+def _pause_reason() -> str:
+    with _refusal_lock:
+        blocked = _refusal.get("edge_blocked")
+    return ("something in front of the relay is blocking this host, notifications are paused" if blocked
+            else "the relay refused this pairing, notifications are paused")
+
+
 def _clear_refusal(credential: Any = None) -> None:
     """Ends the pause: any pause, or only one held for ``credential``."""
     with _refusal_lock:
@@ -731,12 +753,10 @@ def _deliver(event: dict[str, Any], *, sleep: Callable[[float], None] = _pause,
         if not state:
             logger.warning("Conduit notification dropped for %s: this profile is no longer paired", event.get("type", "event"))
             return False
-        with _refusal_lock:
-            paused_until = _refusal.get("until", 0.0) if _refusal.get("credential") == state.get("credential") else 0.0
-        now = clock()
+        paused_until, now = _paused_until(state), clock()
         if now < paused_until:
-            logger.info("Conduit notification dropped for %s: the relay refused this pairing, paused for %d more seconds",
-                        event.get("type", "event"), paused_until - now)
+            logger.info("Conduit notification dropped for %s: %s for %d more seconds",
+                        event.get("type", "event"), _pause_reason(), paused_until - now)
             return False
         try:
             _send(event, state)
@@ -773,7 +793,8 @@ def _refused(state: dict[str, Any], error: RelayRejected, now: float, generation
             return
         same = _refusal.get("credential") == state.get("credential")
         paused_for = min(_refusal["paused_for"] * 2, REFUSED_MAX_S) if same and _refusal.get("paused_for") else REFUSED_FIRST_S
-        _refusal.update(credential=state.get("credential"), paused_for=paused_for, until=now + paused_for)
+        _refusal.update(credential=state.get("credential"), paused_for=paused_for, until=now + paused_for,
+                        edge_blocked=error.edge_blocked)
     logger.warning("Conduit notifications paused for %d minute(s): %s", paused_for // 60,
                    "something in front of the relay is blocking this host (an empty 403)" if error.edge_blocked
                    else f"the relay answered {error.status}")

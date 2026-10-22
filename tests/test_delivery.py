@@ -419,3 +419,33 @@ def test_one_write_swaps_the_refusal_marks(paired):
     client.record_relay_refusal(client.load_state(), client.RelayRejected(403, "", from_relay=False))
     state = client.load_state()
     assert state["relay_blocked_at"] and "relay_rejected_at" not in state
+
+
+def test_enqueue_reports_a_paused_pairing_as_dropped(paired, monkeypatch):
+    relay = paired([401])
+    _deliver(_event())
+
+    # The clarify middleware falls back at once instead of polling a decision
+    # the relay will never park.
+    assert client.enqueue(_event()) is False
+    assert len(relay.event_ids) == 1
+    client._refusal["until"] = 0.0
+    assert client.enqueue(_event()) is True
+    client._events.join()
+    assert len(relay.event_ids) == 2
+
+
+def test_an_accepted_test_ends_the_pause(paired):
+    relay = paired([BARE_403])
+    _deliver(_event())
+    assert client._refusal
+
+    client.send_now(_event())
+
+    assert client._refusal == {}
+    assert len(relay.event_ids) == 2
+
+
+def test_an_edge_block_says_so_in_its_message():
+    assert "in front of the Conduit relay" in str(client.RelayRejected(403, "", from_relay=False))
+    assert "relay rejected the request: nope (403)" in str(client.RelayRejected(403, "nope"))
