@@ -1388,3 +1388,23 @@ def test_a_hello_past_the_grants_streams_is_told_to_start_the_call_again(call, m
         assert len(socket.sent) == before
 
     _run(scenario())
+
+
+def test_a_speech_server_waiting_on_a_hermes_turn_is_not_hung(call, monkeypatch):
+    monkeypatch.setattr(api, "WATCH_AUDIO_UPSTREAM_QUIET_S", 0.3)
+    monkeypatch.setattr(api, "WATCH_AUDIO_UPSTREAM_QUIET_CHECK_S", 0.02)
+
+    async def scenario():
+        bridge = _bridge()
+        socket = await _attach(bridge)
+        watch = Watch()
+        assert (await _start(bridge, socket, watch))["type"] == "started"
+        await bridge._handle(watch.event({"type": "response.create"}))
+        await bridge.session.call.start_turn("Look something up")
+        await _until(lambda: call.hermes.prompts())
+        # The server is quiet while Hermes takes its time: the call goes on.
+        await asyncio.sleep(0.8)
+        assert bridge.session is not None and not watch.events(socket, "error")
+        await bridge._end_session("test")
+
+    _run(scenario())

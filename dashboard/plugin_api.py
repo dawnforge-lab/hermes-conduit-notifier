@@ -11038,9 +11038,16 @@ class _WatchAudioSession:
     def answered(self) -> None:
         self.owed_since = None
 
+    def waiting_on_hermes(self) -> bool:
+        """Whether the provider's answer waits on a Hermes turn this host runs."""
+        return False
+
     async def _hung(self) -> None:
         """Returns once the provider has owed an answer for WATCH_AUDIO_UPSTREAM_QUIET_S."""
         while True:
+            if self.owed_since is not None and self.waiting_on_hermes():
+                # A slow turn isn't a hung provider: the wait starts over after it.
+                self.owed_since = self.bridge.clock()
             owed = self.owed_since
             if owed is not None and self.bridge.clock() - owed >= WATCH_AUDIO_UPSTREAM_QUIET_S:
                 return
@@ -12527,6 +12534,11 @@ class _LocalLiveWatchSession(_WatchAudioSession):
     # Approvals on the Watch
 
 
+    def waiting_on_hermes(self) -> bool:
+        # The speech server says nothing until the call's Hermes turn answers it.
+        runner = self.runner
+        return runner is not None and runner.turn is not None
+
     def _rejoins(self, other: Any) -> bool:
         """This Watch's earlier call, still winding down: a rejoin may start."""
         return isinstance(other, _LocalLiveWatchCall) and other.session.bridge is self.bridge
@@ -12961,7 +12973,9 @@ class _WatchAudioBridge:
             return
         spent = len(self.sids) >= WATCH_AUDIO_STREAMS_PER_GRANT
         if spent and len(self.sids) >= WATCH_AUDIO_STREAMS_PER_GRANT + WATCH_AUDIO_REFUSALS_PER_GRANT:
-            logger.warning("A Watch audio stream was refused (too many streams for one call)")
+            self.rejected += 1
+            if self.rejected <= 3:
+                logger.warning("A Watch audio stream was refused (too many streams for one call)")
             return
         self.stream = None
         await self._end_session("watch_rejoined")
