@@ -11,18 +11,23 @@ profile, so the phone answers it like one of that profile's. Place rules
 stay with the sharing profile.
 
 A profile that shares location itself (talking or background on) always
-reads its own store.
+reads its own store. If several profiles share with the others, the first
+one wins: the default profile, then named ones alphabetically.
 """
 
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 from typing import Any, Callable
 
 from .location_store import LocationStore
 
 PAIRING_FILE = "conduit-push.json"
+# A folder name goes into notes the agent reads and into the access log, and
+# is sent to the phone as is, so one that would need cleaning isn't used.
+_UNUSABLE_NAME = re.compile("[\x00-\x1f\x7f-\x9f\u200b-\u200f\u2028-\u202e\u2060-\u206f\ufeff]")
 
 
 def store_for(home: str | Path, make: Callable[[Any], LocationStore] = LocationStore) -> tuple[LocationStore, str | None]:
@@ -34,7 +39,7 @@ def store_for(home: str | Path, make: Callable[[Any], LocationStore] = LocationS
     installation = _installation(Path(home))
     if installation:
         for name, path in profile_homes(Path(home)):
-            if _installation(path) != installation:
+            if len(name) > 64 or _UNUSABLE_NAME.search(name) or _installation(path) != installation:
                 continue
             store = make(path)
             if not store.exists():

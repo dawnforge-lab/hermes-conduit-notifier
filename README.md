@@ -1882,7 +1882,9 @@ marked private is reported only as "at a private place".
   Reads are logged in the sharing profile's store as `<profile>: <chat>`.
   `rules`, `set_rule` and `remove_rule` answer `other_profile`: rules stay
   with the sharing profile. A profile that shares location itself (talking
-  or background on) always reads its own. The fresh-position and maps
+  or background on) always reads its own, and if several profiles share
+  with the others the first wins (default, then named ones alphabetically).
+  The fresh-position and maps
   budgets belong to the sharing profile's store, so every profile reading
   it spends the same ones.
 - **No calls at places.** Calls settings `avoid_places` (place ids) and
