@@ -26,6 +26,7 @@ def _unix_backend(monkeypatch):
     monkeypatch.delenv("HERMES_DESKTOP_CHILD_PID", raising=False)
     monkeypatch.setattr(api, "_self_restart_scheduled", False)
     monkeypatch.setattr(api, "_self_update_thread", None)
+    monkeypatch.setattr(api, "_self_update_limiter", api._MintLimiter(3, 600.0))
 
 
 def _run(tmp_path, *, pull=None, gateway=0, version="9.9.9", markers=None, monkeypatch=None):
@@ -188,3 +189,41 @@ def _events():
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
+
+
+def test_a_job_waiting_for_its_dashboard_restart_is_returned_not_replaced(monkeypatch, tmp_path):
+    path = tmp_path / "job.json"
+    path.write_text(json.dumps({"id": "j1", "step": "restarting_dashboard", "boot_id": api.BOOT_ID,
+                                "updated_at": api.time.time()}))
+    monkeypatch.setattr(api, "_self_restart_scheduled", True)
+    job = api.start_self_update(None, lambda *a: None, path=path, steps=(dict, int), homes=lambda: [tmp_path])
+    assert job["id"] == "j1" and api._self_update_thread is None
+
+
+def test_a_failed_handover_lets_a_later_restart_through(monkeypatch, tmp_path):
+    def unwritable(path, job):
+        if job.get("step") == "restarting_dashboard":
+            raise OSError("disk full")
+        path.write_text(json.dumps(job))
+
+    monkeypatch.setattr(api, "_write_self_update", unwritable)
+    monkeypatch.setattr(api, "_plugin_version", lambda: "9.9.9")
+    job = {"id": "j1", "step": "downloading", "boot_id": api.BOOT_ID}
+    notified = []
+    api._run_self_update(job, tmp_path / "job.json", lambda: {"ok": True}, lambda: 0, lambda *a: None,
+                         lambda: [tmp_path], notified.append, sleep=lambda s: None)
+    assert job["step"] == "failed" and api._self_restart_scheduled is False and len(notified) == 1
+
+
+def test_starts_are_rate_limited(monkeypatch, tmp_path):
+    def run(i):
+        path = tmp_path / f"job{i}.json"
+        api.start_self_update(None, lambda *a: None, path=path, steps=(lambda: {"ok": False, "error": "x"}, int),
+                              homes=lambda: [tmp_path], notify=lambda job: None)
+        api._self_update_thread.join(5)
+
+    for i in range(3):
+        run(i)
+    with pytest.raises(api.TokenError) as raised:
+        run(3)
+    assert raised.value.status == 429

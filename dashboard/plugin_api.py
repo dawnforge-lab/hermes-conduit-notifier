@@ -14582,6 +14582,10 @@ SELF_UPDATE_STALE_S = 3600.0
 SELF_UPDATE_RUNNING = ("downloading", "restarting_gateway", "waiting_for_chats", "restarting_dashboard")
 _self_update_lock = threading.Lock()
 _self_update_thread: Optional[threading.Thread] = None
+# The job this process started, for when its file can't be read back.
+_self_update_job: Optional[Dict[str, Any]] = None
+# Each start pulls and restarts the gateway: a few per hour is plenty.
+_self_update_limiter = _MintLimiter(3, 600.0, message="Too many plugin updates; try again in a few minutes")
 
 
 def _self_update_path() -> Path:
@@ -14614,7 +14618,10 @@ def _hermes_update_steps() -> Tuple[Callable[[], Dict[str, Any]], Callable[[], i
     try:
         from hermes_cli.plugins_cmd import dashboard_update_user_plugin
         from hermes_cli.web_server import _spawn_gateway_restart
-    except ImportError:
+    except ImportError as exc:
+        # Only a Hermes without these calls; a broken import inside Hermes is a real failure.
+        if exc.name not in ("hermes_cli", "hermes_cli.plugins_cmd", "hermes_cli.web_server"):
+            raise
         raise TokenError(501, "This Hermes can't run the plugin update on its own")
 
     def pull() -> Dict[str, Any]:
@@ -14638,6 +14645,7 @@ def _run_self_update(job: Dict[str, Any], path: Path, pull: Callable[[], Dict[st
                      homes: Callable[[], List[Path]], notify: Callable[[Dict[str, Any]], None],
                      sleep: Callable[[float], None] = time.sleep) -> None:
     global _self_restart_scheduled
+    claimed_restart = False
     try:
         result = pull()
         if not result.get("ok"):
@@ -14670,19 +14678,20 @@ def _run_self_update(job: Dict[str, Any], path: Path, pull: Callable[[], Dict[st
             # the restart step without a restart on its way.
             already = _self_restart_scheduled
             _self_restart_scheduled = True
+        claimed_restart = not already
         job.update(step="restarting_dashboard", running_chats=0)
         _write_self_update(path, job)
         if already:
             return
-        try:
-            # It checks again for a turn started meanwhile.
-            schedule(SELF_RESTART_DELAY_S, lambda: _restart_when_idle(schedule, homes))
-        except BaseException:
-            with _self_restart_lock:
-                _self_restart_scheduled = False
-            raise
+        # It checks again for a turn started meanwhile.
+        schedule(SELF_RESTART_DELAY_S, lambda: _restart_when_idle(schedule, homes))
+        claimed_restart = False
         return
     except Exception as exc:  # noqa: BLE001 — the job says how it ended, whatever ended it
+        if claimed_restart:
+            # Nothing was scheduled: a later restart must not read as already on its way.
+            with _self_restart_lock:
+                _self_restart_scheduled = False
         logger.exception("Conduit plugin: the update on the host failed")
         _self_update_failed(job, f"The update failed on the host ({type(exc).__name__})")
     finally:
@@ -14697,8 +14706,8 @@ def start_self_update(profile: Optional[str], schedule: Callable[[float, Callabl
                       steps: Optional[Tuple[Callable[[], Dict[str, Any]], Callable[[], int]]] = None,
                       homes: Optional[Callable[[], List[Path]]] = None,
                       notify: Optional[Callable[[Dict[str, Any]], None]] = None) -> Dict[str, Any]:
-    """Starts the update on the host, or returns the one already running here."""
-    global _self_update_thread
+    """Starts the update on the host, or returns the one still under way."""
+    global _self_update_thread, _self_update_job
     refusal = _self_restart_refusal()
     if refusal is not None:
         raise TokenError(*refusal)
@@ -14706,14 +14715,19 @@ def start_self_update(profile: Optional[str], schedule: Callable[[float, Callabl
     path = path or _self_update_path()
     with _self_update_lock:
         if _self_update_thread is not None and _self_update_thread.is_alive():
-            running = _read_self_update(path)
-            if running is not None:
-                return running
+            return _read_self_update(path) or dict(_self_update_job or {})
+        # A job whose thread ended can still be under way: the dashboard
+        # restart it handed over hasn't happened yet.
+        current = self_update_status(path)
+        if current is not None and current.get("step") in SELF_UPDATE_RUNNING:
+            return current
+        _self_update_limiter.acquire("")
         job: Dict[str, Any] = {
             "id": uuid.uuid4().hex, "step": "downloading", "from_version": LOADED_VERSION,
             "boot_id": BOOT_ID, "profile": profile or "", "started_at": time.time(),
         }
         _write_self_update(path, job)
+        _self_update_job = job
         _self_update_thread = threading.Thread(
             target=_run_self_update, name="conduit-self-update", daemon=True,
             args=(job, path, pull, restart_gateway, schedule, homes or _hermes_homes, notify or _notify_self_update))
