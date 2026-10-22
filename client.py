@@ -291,7 +291,6 @@ def send_now(event: dict[str, Any], timeout: float = 15.0) -> dict[str, Any]:
         if error.status in (401, 403):
             record_relay_refusal(state, error)
         raise
-    _clear_refusal(state.get("credential"))
     record_relay_accepted(state)
     return answer
 
@@ -779,7 +778,6 @@ def _deliver(event: dict[str, Any], *, sleep: Callable[[float], None] = _pause,
             if isinstance(error, RelayRejected) and error.status in (401, 403):
                 _refused(state, error, clock(), generation)
             return False
-        _clear_refusal(state.get("credential"))
         record_relay_accepted(state)
         return True
     return False  # not reached: the last attempt has no delay
@@ -825,7 +823,9 @@ def record_relay_refusal(sent_with: dict[str, Any], error: RelayRejected) -> Non
 
 
 def record_relay_accepted(sent_with: dict[str, Any]) -> None:
-    """The relay took a request with this pairing: neither mark holds."""
+    """The relay took a request with this pairing: its notification pause
+    ends, and neither mark holds."""
+    _clear_refusal(sent_with.get("credential"))
     for field in ("relay_rejected_at", "relay_blocked_at"):
         if sent_with.get(field):
             _mark_relay_rejected(sent_with, False, field=field)

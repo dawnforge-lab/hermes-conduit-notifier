@@ -452,8 +452,8 @@ def _post_to_relay(payload: dict[str, Any]) -> dict[str, Any]:
         # clear), for a host whose only relay traffic is Live Activities.
         _mark_refused(lambda: client.record_relay_refusal(state, error))
         raise
-    if state.get("relay_rejected_at") or state.get("relay_blocked_at"):
-        _mark_refused(lambda: client.record_relay_accepted(state))
+    # Also ends a notification pause: the relay takes this pairing again.
+    _mark_refused(lambda: client.record_relay_accepted(state))
     return answer
 
 
