@@ -13,7 +13,7 @@ checks it). The format is fixed, because Conduit reads it:
 - One line per change, starting with `- `. Fixes say what goes wrong without
   the update. Plain words: these show on a phone.
 
-## 0.63.1 (2026-10-23)
+## 0.63.2 (2026-10-23)
 
 ### Security
 - A flood of wrong Local Live keys can no longer lock out your voice server's
@@ -22,6 +22,15 @@ checks it). The format is fixed, because Conduit reads it:
 ### Fixes
 - Undoing a setting change Hermes made reaches Hermes even when the change was
   made a while ago. Without this, Hermes could miss that you put it back.
+
+## 0.63.1 (2026-10-23)
+
+### New and improved
+- Pulse has a nudge setting: gentle, balanced or eager. It sets how many
+  reminders a day you get, how soon promises are checked, how much Pulse may
+  spend on follow-ups and how much it takes to make a report.
+- Pulse's daily budgets for memory and follow-ups can be set from Conduit or
+  with `hermes conduit pulse budget`.
 
 ## 0.63.0 (2026-10-23)
 
