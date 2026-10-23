@@ -700,8 +700,9 @@ VOICE_ALARMS_DESCRIPTION = (
 VOICE_CONTACTS_DESCRIPTION = (
     "The people the user picked for Hermes to know: name, nickname, relation (e.g. wife), phone numbers, emails, "
     "birthday. Action people; query narrows by name, nickname, relation or organization. Use it to know who "
-    "someone is. Never read out numbers or emails unless the user asks. To text someone, put a contact card on "
-    "screen with their phone and the message; the user taps Send, so say it's ready, never that it was sent.")
+    "someone is. Never read out numbers or emails unless the user asks. To text someone, show a contact card with "
+    "their phone and the message (show_on_screen, or ask Hermes when you can't); the user taps Send, so say it's "
+    "ready, never that it was sent.")
 VOICE_NOTE = ("On a voice call: answer by ear in a sentence or two, times the way people say them, and leave ids and "
               "links out when speaking. To add or delete an event or reminder, use the phone's own add or remove tool "
               "when there is one (deleting takes the id from this read); to change one, send the request to Hermes.")
