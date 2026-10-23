@@ -14637,7 +14637,9 @@ def _hermes_update_steps() -> Tuple[Callable[[], Dict[str, Any]], Callable[[], i
 
 
 def _self_update_failed(job: Dict[str, Any], detail: str, code: Optional[str] = None) -> None:
-    job.update(step="failed", detail=detail, finished_at=time.time())
+    # failed_step says how far it got: Conduit runs the steps itself only
+    # when the pull itself failed.
+    job.update(failed_step=job.get("step"), step="failed", detail=detail, finished_at=time.time())
     if code:
         job["code"] = code
 

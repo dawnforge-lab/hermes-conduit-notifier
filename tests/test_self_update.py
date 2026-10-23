@@ -81,7 +81,7 @@ def test_nothing_new_on_disk_finishes_without_a_restart(monkeypatch, tmp_path):
 def test_a_refused_pull_fails_with_hermes_words(monkeypatch, tmp_path):
     job, scheduled, notified, _ = _run(tmp_path, monkeypatch=monkeypatch, pull=lambda: {
         "ok": False, "consent_required": True, "error": "Plugin 'conduit_push' wants new capabilities"})
-    assert job["step"] == "failed" and job["code"] == "consent_required"
+    assert job["step"] == "failed" and job["code"] == "consent_required" and job["failed_step"] == "downloading"
     assert "new capabilities" in job["detail"] and scheduled == []
     assert [n["step"] for n in notified] == ["failed"]
 
@@ -89,6 +89,7 @@ def test_a_refused_pull_fails_with_hermes_words(monkeypatch, tmp_path):
 def test_a_gateway_that_doesnt_come_back_fails(monkeypatch, tmp_path):
     job, scheduled, _, _ = _run(tmp_path, monkeypatch=monkeypatch, gateway=api.subprocess.TimeoutExpired("hermes", 1))
     assert job["step"] == "failed" and "gateway" in job["detail"] and scheduled == []
+    assert job["failed_step"] == "restarting_gateway"
     job, _, _, _ = _run(tmp_path, monkeypatch=monkeypatch, gateway=1)
     assert job["step"] == "failed"
 

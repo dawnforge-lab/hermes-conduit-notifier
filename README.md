@@ -2324,8 +2324,8 @@ while it runs:
 - `GET /api/plugins/conduit_push/self/update` answers `{ok, job, boot_id,
   loaded_version}`. `job.step` is `downloading`, `restarting_gateway`,
   `waiting_for_chats` (with `running_chats`), `restarting_dashboard`, `done`
-  or `failed` (with `detail`, and `code` for `consent_required`,
-  `scan_blocked` or `restart_needed`).
+  or `failed` (with `detail`, `failed_step` naming the step it failed in,
+  and `code` for `consent_required`, `scan_blocked` or `restart_needed`).
 - The job is kept in `conduit-self-update.json` in the Hermes root. The
   restarted dashboard marks it done and sends the profile that asked a
   notification saying which version is running, or why the update didn't
