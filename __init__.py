@@ -170,6 +170,8 @@ def _pre_tool_call(**kwargs: Any) -> dict[str, str] | None:
         session_id=_text(kwargs.get("session_id")),
         profile=_profile,
         title=_titled("Input needed", kwargs.get("session_id")),
+        title_label="input.needed",
+        session_title=_session_title(kwargs.get("session_id")),
         body=clarification_text(kwargs.get("args")),
     ))
 
@@ -210,6 +212,8 @@ def _post_llm_call(**kwargs: Any) -> None:
         session_id=session_id,
         profile=_profile,
         title=_session_title(session_id),
+        title_label="response.ready",
+        session_title=_session_title(session_id),
         body=plain_text(response),
     )
     # A quick reply in a chat Hermes Desktop has selected: the user most
@@ -384,6 +388,8 @@ def _on_session_end(**kwargs: Any) -> None:
         session_id=session_id,
         profile=_profile,
         title=_titled("Turn failed", session_id),
+        title_label="turn.failed",
+        session_title=_session_title(session_id),
     )
     if calls.turn_ended(session_id, "failed", profile=_profile, fallback=failed):
         return
@@ -415,7 +421,10 @@ def _pre_approval_request(**kwargs: Any) -> None:
         session_id=session_id,
         profile=_profile,
         title=_titled("Approval needed", session_id),
-        body=description or "Hermes is waiting for your approval.",
+        title_label="approval.needed",
+        session_title=_session_title(session_id),
+        # No description: the phone writes the generic line in its language.
+        body=description,
         # Attach the structured card so Conduit can render an answerable
         # approval from the push payload while backgrounded. Requires both a
         # session_key (to route the choice back via approval.respond) and a
@@ -513,7 +522,10 @@ def _subagent_stop(**kwargs: Any) -> None:
         session_id=parent,
         profile=_profile,
         title=_titled("Task finished", parent),
-        body=plain_text(kwargs.get("child_summary")) or f"A delegated task {status}.",
+        title_label="background_task.finished",
+        session_title=_session_title(parent),
+        # A plain finish is the phone's generic line, in its language.
+        body=plain_text(kwargs.get("child_summary")) or ("" if status == "finished" else f"A delegated task {status}."),
     ))
 
 
