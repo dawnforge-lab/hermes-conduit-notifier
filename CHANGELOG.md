@@ -13,13 +13,32 @@ checks it). The format is fixed, because Conduit reads it:
 - One line per change, starting with `- `. Fixes say what goes wrong without
   the update. Plain words: these show on a phone.
 
-## 0.63.1 (2026-10-23)
+## 0.63.3 (2026-10-23)
 
 ### Fixes
 - A Watch call that has reconnected too many times is told to start again, so
   it ends at once instead of waiting for a reply that never comes.
 - A Watch call on Grok or Local Live whose voice service stops answering ends
   after about a minute and frees its place, so other Watch calls can start.
+
+## 0.63.2 (2026-10-23)
+
+### Security
+- A flood of wrong Local Live keys can no longer lock out your voice server's
+  real key. Without this, its key stopped working for up to a minute.
+
+### Fixes
+- Undoing a setting change Hermes made reaches Hermes even when the change was
+  made a while ago. Without this, Hermes could miss that you put it back.
+
+## 0.63.1 (2026-10-23)
+
+### New and improved
+- Pulse has a nudge setting: gentle, balanced or eager. It sets how many
+  reminders a day you get, how soon promises are checked, how much Pulse may
+  spend on follow-ups and how much it takes to make a report.
+- Pulse's daily budgets for memory and follow-ups can be set from Conduit or
+  with `hermes conduit pulse budget`.
 
 ## 0.63.0 (2026-10-23)
 
