@@ -10611,6 +10611,8 @@ WATCH_AUDIO_STOP_TIMEOUT_S = 5.0
 # socket's own keepalive pings' to find.
 WATCH_AUDIO_UPSTREAM_QUIET_S = 60.0
 WATCH_AUDIO_UPSTREAM_QUIET_CHECK_S = 5.0
+# The event's type, for the log line when one goes unanswered.
+_WATCH_AUDIO_EVENT_TYPE = re.compile(r'"type"\s*:\s*"([A-Za-z0-9_.]{1,64})"')
 # GPT-Live: the helper's offer (ICE gathering included), then WebRTC
 # connecting after the answer. Past that, one more try with STUN: host
 # candidates alone usually reach OpenAI's public media servers, and skip
@@ -11035,7 +11037,7 @@ class _WatchAudioSession:
         """An event went to the provider: it owes an answer."""
         if self.owed_since is None:
             self.owed_since = self.bridge.clock()
-            kind = re.search(r'"type"\s*:\s*"([A-Za-z0-9_.]{1,64})"', text)
+            kind = _WATCH_AUDIO_EVENT_TYPE.search(text)
             self.owed_event = kind.group(1) if kind else "?"
 
     def answered(self) -> None:
@@ -11045,14 +11047,17 @@ class _WatchAudioSession:
         """Whether the provider's answer waits on a Hermes turn this host runs."""
         return False
 
+    def overdue(self) -> bool:
+        owed = self.owed_since
+        return owed is not None and self.bridge.clock() - owed >= WATCH_AUDIO_UPSTREAM_QUIET_S
+
     async def _hung(self) -> None:
         """Returns once the provider has owed an answer for WATCH_AUDIO_UPSTREAM_QUIET_S."""
         while True:
             if self.owed_since is not None and self.waiting_on_hermes():
                 # A slow turn isn't a hung provider: the wait starts over after it.
                 self.owed_since = self.bridge.clock()
-            owed = self.owed_since
-            if owed is not None and self.bridge.clock() - owed >= WATCH_AUDIO_UPSTREAM_QUIET_S:
+            if self.overdue():
                 return
             await asyncio.sleep(WATCH_AUDIO_UPSTREAM_QUIET_CHECK_S)
 
@@ -11419,7 +11424,7 @@ class _GrokWatchSession(_WatchAudioSession):
             hung = asyncio.ensure_future(self._hung())
             tasks = [reader, pacing, hung]
             await _first_done(None, self.stopping.wait(), reader, hung)
-            if hung.done() and self.owed_since is not None and not reader.done() and not self.stopping.is_set():
+            if hung.done() and self.overdue() and not reader.done() and not self.stopping.is_set():
                 logger.warning("Grok Live for the Watch: xAI left %s unanswered; ending the session", self.owed_event)
                 raise WatchAudioFailure("unreachable", "xAI stopped answering")
             if reader.done() and not self.stopping.is_set():
@@ -12433,7 +12438,7 @@ class _LocalLiveWatchSession(_WatchAudioSession):
             await _first_done(None, self.stopping.wait(), reader, hung)
             if self.read_back_failure is not None:
                 raise self.read_back_failure
-            if hung.done() and self.owed_since is not None and not reader.done() and not self.stopping.is_set():
+            if hung.done() and self.overdue() and not reader.done() and not self.stopping.is_set():
                 logger.warning("A Watch Local Live call: the speech server left %s unanswered; ending the session",
                                self.owed_event)
                 raise WatchAudioFailure("unreachable", "The speech server stopped answering")
