@@ -6325,7 +6325,8 @@ async def get_e2e(response: Response, profile: Optional[str] = None) -> Dict[str
         return {"ok": True, **(await _run_scoped(profile, e2e_status))}
     except TokenError as exc:
         raise HTTPException(status_code=exc.status, detail=str(exc), headers={"Cache-Control": "no-store"})
-    except HTTPException:
+    except HTTPException as exc:
+        exc.headers = {**(exc.headers or {}), "Cache-Control": "no-store"}
         raise
     except Exception as exc:
         raise _unexpected("status", exc, feature="Encrypted notifications")

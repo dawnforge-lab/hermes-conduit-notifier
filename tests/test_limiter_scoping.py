@@ -76,21 +76,28 @@ def test_an_unknown_profile_gets_no_rate_limit_bucket(client, hermes_scope, monk
 
 def test_a_hung_gpt_live_status_never_wedges_later_checks(client, hermes_scope, monkeypatch):
     release = threading.Event()
+    inside = threading.Semaphore(0)
     hung = {"left": 2}
+    hung_lock = threading.Lock()
 
     def status():
-        if hung["left"] > 0:
-            hung["left"] -= 1
+        with hung_lock:
+            hangs = hung["left"] > 0
+            hung["left"] -= hangs
+        if hangs:
+            inside.release()
             release.wait(10)
         return {"available": True}
 
     monkeypatch.setattr(api, "gpt_live_status", status)
-    monkeypatch.setattr(api, "GPT_LIVE_REQUEST_TIMEOUT_S", 0.2)
+    # Long enough that each read is running (holding its slot) when it times out.
+    monkeypatch.setattr(api, "GPT_LIVE_REQUEST_TIMEOUT_S", 1.0)
     monkeypatch.setattr(api, "_gpt_live_status_executor", ThreadPoolExecutor(max_workers=2))
     monkeypatch.setattr(api, "_gpt_live_status_slots", threading.BoundedSemaphore(2))
     try:
         assert client.get(f"{BASE}/gpt-live/status").status_code == 504
         assert client.get(f"{BASE}/gpt-live/status").status_code == 504
+        assert inside.acquire(timeout=5) and inside.acquire(timeout=5), "both reads hold a worker"
         # Both workers are still held: turned away at once, not queued.
         busy = client.get(f"{BASE}/gpt-live/status")
         assert busy.status_code == 503 and busy.headers["cache-control"] == "no-store"
