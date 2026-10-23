@@ -171,7 +171,8 @@ export function createMailbox({
     if (store.senderFor(inbox, tokenHash(bearer[1])) !== sender) throw new MailboxError('unauthorized', 401);
     const receipt = store.put(inbox, sender, body, idempotencyKey ?? null);
     if (!receipt.duplicate) polls.wake(inbox);
-    sendJson(response, receipt.duplicate ? 200 : 201, { seq: receipt.seq, expires_at: receipt.expires_at });
+    // Not its seq: the gap since a sender's last one would say how much the inbox gets from its other links.
+    sendJson(response, receipt.duplicate ? 200 : 201, { expires_at: receipt.expires_at });
   }
 
   // Envelopes after `after`, oldest first. With `wait`, an empty inbox holds
@@ -212,8 +213,10 @@ export function createMailbox({
     return body;
   }
 
+  // Owners sign the host name in lowercase, the way URLs give it.
   function ownerSignature(request, key, body, now) {
-    return verifyOwnerSignature({ key, method: request.method, target: request.url, body, authorization: request.headers.authorization, now });
+    return verifyOwnerSignature({ key, method: request.method, host: (request.headers.host ?? '').toLowerCase(), target: request.url, body,
+      authorization: request.headers.authorization, now });
   }
 
   // Claims an owner's checked signature, then counts the request against its

@@ -41,11 +41,11 @@ function owner(base) {
   const { publicKey, privateKey } = generateKeyPairSync('ed25519');
   const key = Buffer.from(publicKey.export({ format: 'jwk' }).x, 'base64url');
   const inbox = sha256(key);
-  function signed(method, target, body) {
+  function signed(method, target, body, { host = new URL(base).host } = {}) {
     const bytes = body === undefined ? Buffer.alloc(0) : Buffer.from(JSON.stringify(body));
     const ts = Math.floor(Date.now() / 1000);
     const nonce = randomBytes(16).toString('base64url');
-    const signature = sign(null, Buffer.from(`mailbox-v1\n${method}\n${target}\n${ts}\n${nonce}\n${sha256(bytes)}`), privateKey);
+    const signature = sign(null, Buffer.from(`mailbox-v1\n${method}\n${host}\n${target}\n${ts}\n${nonce}\n${sha256(bytes)}`), privateKey);
     return { authorization: `Mailbox-Ed25519 ts=${ts},nonce=${nonce},sig=${base64url(signature)}`, bytes };
   }
   function call(method, target, body, { headers = {}, signal } = {}) {
@@ -83,13 +83,20 @@ test('an owner registers, adds a sender, reads envelopes and acknowledges them',
 
   const sent = await send(base, me.inbox, Buffer.from('sealed-1'), { key: 'dispatch-1' });
   assert.equal(sent.status, 201);
-  const { seq } = await sent.json();
-  assert.equal((await send(base, me.inbox, Buffer.from('sealed-1'), { key: 'dispatch-1' })).status, 200, 'a retried send');
+  // Only when it expires: its seq would tell a sender how much the inbox gets from its other links.
+  const { expires_at: expiresAt, ...rest } = await sent.json();
+  assert.ok(expiresAt > Date.now() / 1000);
+  assert.deepEqual(rest, {});
+  const retried = await send(base, me.inbox, Buffer.from('sealed-1'), { key: 'dispatch-1' });
+  assert.equal(retried.status, 200, 'a retried send');
+  assert.deepEqual(await retried.json(), { expires_at: expiresAt });
 
   const polled = await me.call('GET', `/v1/inboxes/${me.inbox}/envelopes?after=0`);
   assert.equal(polled.status, 200);
   const page = await polled.json();
   assert.equal(page.envelopes.length, 1);
+  const { seq } = page.envelopes[0];
+  assert.ok(Number.isSafeInteger(seq) && seq > 0);
   assert.deepEqual({ ...page.envelopes[0], received_at: 0 }, { seq, sender: 'laifu', received_at: 0, body: Buffer.from('sealed-1').toString('base64') });
   assert.equal(page.next, seq);
 
@@ -99,6 +106,39 @@ test('an owner registers, adds a sender, reads envelopes and acknowledges them',
   assert.deepEqual(await (await me.call('GET', `/v1/inboxes/${me.inbox}`)).json(), { inbox: me.inbox, pending: 0, pending_bytes: 0, senders: 1 });
   const senders = await (await me.call('GET', `/v1/inboxes/${me.inbox}/senders`)).json();
   assert.deepEqual(senders.senders.map(({ sender, pending }) => ({ sender, pending })), [{ sender: 'laifu', pending: 0 }]);
+});
+
+test('an owner\'s seqs count its own envelopes only', async (t) => {
+  const { base } = await start(t);
+  const me = await ownerWithSender(base);
+  const other = await ownerWithSender(base);
+
+  assert.equal((await send(base, me.inbox, Buffer.from('mine-1'))).status, 201);
+  for (const text of ['theirs-1', 'theirs-2', 'theirs-3']) assert.equal((await send(base, other.inbox, Buffer.from(text))).status, 201);
+  assert.equal((await send(base, me.inbox, Buffer.from('mine-2'))).status, 201);
+
+  const [first, second] = (await (await me.call('GET', `/v1/inboxes/${me.inbox}/envelopes`)).json()).envelopes;
+  assert.equal(second.seq, first.seq + 1, 'no gap for the other inbox\'s envelopes');
+});
+
+test('a request signed for another mailbox is refused', async (t) => {
+  const { base } = await start(t);
+  const me = await ownerWithSender(base);
+  const target = `/v1/inboxes/${me.inbox}`;
+  // A GET that arrives with `host` as its Host header, as a proxy passes it on.
+  async function status(host, signedFor) {
+    const { authorization } = me.signed('GET', target, undefined, { host: signedFor });
+    const request = httpRequest({ port: new URL(base).port, host: '127.0.0.1', path: target, headers: { host, authorization } }).end();
+    const [answer] = await once(request, 'response');
+    answer.resume();
+    return answer.statusCode;
+  }
+
+  assert.equal(await status('rooms.example', 'rooms.elsewhere.example'), 401, 'signed for another mailbox');
+  assert.equal(await status('rooms.example', 'rooms.example'), 200);
+  assert.equal(await status('Rooms.Example', 'rooms.example'), 200, 'a host name in any case');
+  assert.equal(await status('rooms.example', 'Rooms.Example'), 401, 'the host is signed in lowercase');
+  assert.equal(await status('rooms.example:8443', 'rooms.example'), 401, 'with its port when the request has one');
 });
 
 test('a page holds at most `limit` envelopes and says where the next one starts', async (t) => {

@@ -37,6 +37,10 @@ services:
       # the mailbox exits when it can't write there.
       - ./data:/var/lib/conduit-rooms
     networks:
+      # The proxy's network. Nothing else may reach port 9130: with
+      # TRUST_PROXY set, whatever does picks the client address it's
+      # counted as. If other containers share this network, use one that
+      # only the proxy also joins.
       - pangolin
     security_opt:
       - no-new-privileges:true
