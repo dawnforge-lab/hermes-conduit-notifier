@@ -1513,11 +1513,11 @@ def test_an_addition_is_steered_not_redirected():
 
 
 def test_an_addition_hermes_wont_steer_is_redirected():
-    for refusal in ("rejected", "Method not found"):
+    for refusal in ("rejected", "Rejected", "Method not found"):
         grant, server = running_job()
         server.results["session.redirect"] = {"status": "redirected"}
-        if refusal == "rejected":
-            server.results["session.steer"] = {"status": "rejected"}
+        if refusal.lower() == "rejected":
+            server.results["session.steer"] = {"status": refusal}
         else:
             server.fail["session.steer"] = refusal
         answer = api.run_watch_job_call(grant, "interrupt_job", {"job_id": next(iter(grant.jobs.jobs)), "message": "a quiet table", "kind": "ADD"})
@@ -1588,6 +1588,9 @@ def test_follow_ups_reach_the_job_through_the_sealed_grant_route():
     grant.tools = grant.tools + (api.WATCH_JOB_FOLLOW_UP,)
     answer = api.run_watch_tool(grant, {"tool": "interrupt_job", "args": {"job_id": "watch-1", "message": "hold that"}})
     assert answer["outcome"] == "interrupted"
+    # The kind gets through the sealed route too.
+    api.run_watch_tool(grant, {"tool": "interrupt_job", "args": {"job_id": "watch-1", "message": "a quiet table", "kind": "add"}})
+    assert server.methods("session.steer") == [{"session_id": "rt-1", "text": "a quiet table"}]
 
 
 def test_an_end_held_for_queued_words_whose_turn_never_comes_settles_the_job(monkeypatch):

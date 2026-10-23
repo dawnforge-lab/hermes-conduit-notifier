@@ -10433,14 +10433,17 @@ class _WatchJobs:
         that refuses the steer, or has none, gets the redirect instead, as on
         the phone (VoiceBackgroundJobSupervisor, AppState.isUnsupportedSteer)."""
         if adds:
+            started = time.monotonic()
             try:
                 status = self.rpc("session.steer", {"session_id": sid, "text": words}, timeout=timeout).get("status")
             except WatchJobError as exc:
                 if not exc.unsupported_steer:
                     raise
             else:
-                if status != "rejected":
+                if str(status or "").lower() != "rejected":
                     return "redirected"
+            # The redirect gets what is left of the follow-up's time, not a second budget.
+            timeout = max(1.0, timeout - (time.monotonic() - started))
         try:
             status = self.rpc("session.redirect", {"session_id": sid, "text": words}, timeout=timeout).get("status")
         except WatchJobError as exc:
