@@ -2874,11 +2874,10 @@ def local_live_profile_for_key(token: str) -> Optional[str]:
         generation = _local_live_key_generation
     if _local_live_is_known(token, named):
         with _local_live_key_lock:
-            # A rotation since the stat retired this key: check it the long way.
+            # A rotation since the stat retired this key: it takes the budgeted check below.
             if generation == _local_live_key_generation:
                 _local_live_remember_verified(token, named, now)
                 return named
-        return local_live_profile_for_key(token)
     try:
         mint = _local_live_key_check_limiter.acquire(bucket)
     except TokenError:

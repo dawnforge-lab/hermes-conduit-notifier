@@ -404,8 +404,13 @@ def _take_result(state: dict[str, Any], installation: str, result: Any, now: flo
         # An Undo comes after the request was applied and left the queue. Its
         # "applied" may have aged out of the results ring by then; the ledger
         # of applied requests still knows it.
-        earlier = next((item for item in state["results"] + state["applied"] if item["id"] == request_id
-                        and item["device"] == installation), None)
+        # Only an apply can be undone, and once only.
+        latest = next((item for item in reversed(state["results"]) if item["id"] == request_id
+                       and item["device"] == installation), None)
+        if latest is not None and latest["status"] != "applied":
+            return
+        earlier = latest or next((item for item in state["applied"] if item["id"] == request_id
+                                  and item["device"] == installation), None)
         if earlier is None:
             return
         request = {**earlier, "installation_id": installation}

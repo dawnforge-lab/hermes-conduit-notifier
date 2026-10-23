@@ -127,6 +127,21 @@ def test_an_undo_whose_apply_left_the_ring_still_reaches_hermes(store, clock):
     assert reloaded.view()["results"][-1]["id"] == request["id"]
 
 
+def test_only_an_applied_request_is_undone_and_only_once(store, clock):
+    _sync(store)
+    [request] = store.request([{"key": "voice.live.tone", "value": "relaxed"}], "Calmer.")["requests"]
+    _sync(store, results=[{"id": request["id"], "status": "dismissed"}])
+    _sync(store, results=[{"id": request["id"], "status": "undone"}])
+    assert [item["status"] for item in store.view()["results"]] == ["dismissed"]
+    [applied] = store.request([{"key": "voice.live.tone", "value": "professional"}], "Formal.")["requests"]
+    _sync(store, results=[{"id": applied["id"], "status": "applied"}])
+    _sync(store, results=[{"id": applied["id"], "status": "undone"}])
+    first = store.view()["results"][-1]
+    clock.now += 60
+    _sync(store, results=[{"id": applied["id"], "status": "undone"}])
+    assert store.view()["results"][-1] == first
+
+
 def test_an_undo_for_a_request_never_applied_here_is_ignored(store):
     _sync(store)
     [request] = store.request([{"key": "voice.live.tone", "value": "relaxed"}], "Calmer.")["requests"]
