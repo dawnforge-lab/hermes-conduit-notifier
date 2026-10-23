@@ -1206,10 +1206,12 @@ GPT_LIVE_PERSONA = (
 )
 
 _gpt_live_executor = ThreadPoolExecutor(max_workers=GPT_LIVE_WORKERS, thread_name_prefix="conduit-gpt-live")
-_gpt_live_status_executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="conduit-gpt-live-status")
+GPT_LIVE_STATUS_WORKERS = 2
+_gpt_live_status_executor = ThreadPoolExecutor(max_workers=GPT_LIVE_STATUS_WORKERS,
+                                               thread_name_prefix="conduit-gpt-live-status")
 # A timed-out status read keeps its worker until Hermes answers, so a check
-# finding both busy is turned away (503) rather than queued behind them.
-_gpt_live_status_slots = threading.BoundedSemaphore(2)
+# finding every worker busy is turned away (503) rather than queued behind them.
+_gpt_live_status_slots = threading.BoundedSemaphore(GPT_LIVE_STATUS_WORKERS)
 _gpt_live_limiter = _MintLimiter(GPT_LIVE_LIMIT, GPT_LIVE_WINDOW_S,
                                  message="Too many GPT-Live session requests; try again shortly")
 _gpt_live_api_daily = _MintLimiter(GPT_LIVE_API_DAILY_CALLS, GPT_LIVE_DAY_S,
@@ -2907,7 +2909,10 @@ LOCAL_LIVE_VERIFIED_TTL_S = 30.0
 # naming one profile cost no less than they did.
 LOCAL_LIVE_KEY_CHECK_LIMIT = 60
 LOCAL_LIVE_KEY_CHECK_TOTAL_LIMIT = 300
-_local_live_key_check_limiter = _MintLimiter(LOCAL_LIVE_KEY_CHECK_LIMIT, 60.0, message="Too many Local Live key checks")
+# Its keys are bounded by the total budget below (a refused check gives its
+# slot back), so a flood of made-up profile names never fills it.
+_local_live_key_check_limiter = _MintLimiter(LOCAL_LIVE_KEY_CHECK_LIMIT, 60.0, message="Too many Local Live key checks",
+                                             max_keys=LOCAL_LIVE_KEY_CHECK_TOTAL_LIMIT + 1)
 _local_live_key_check_total_limiter = _MintLimiter(LOCAL_LIVE_KEY_CHECK_TOTAL_LIMIT, 60.0,
                                                    message="Too many Local Live key checks")
 
@@ -3422,6 +3427,8 @@ async def post_local_live_key(response: Response, profile: Optional[str] = None)
             _run_scoped(profile, lambda: local_live_key(profile, rotate=True), _speech_server_executor),
             timeout=SPEECH_SERVER_SETUP_TIMEOUT_S)
     except asyncio.TimeoutError:
+        # The worker can't be stopped: the rotation may still land, which a
+        # retry (or the status route's key) then picks up.
         raise HTTPException(status_code=504, detail="Local Live key rotation timed out", headers={"Cache-Control": "no-store"})
     except TokenError as exc:
         raise HTTPException(status_code=exc.status, detail=str(exc), headers={"Cache-Control": "no-store"})
@@ -6331,7 +6338,8 @@ async def post_e2e(request: Request, response: Response, profile: Optional[str] 
         return {"ok": True, **(await _run_scoped(profile, lambda: provision_e2e(body)))}
     except TokenError as exc:
         raise HTTPException(status_code=exc.status, detail=str(exc), headers={"Cache-Control": "no-store"})
-    except HTTPException:
+    except HTTPException as exc:
+        exc.headers = {**(exc.headers or {}), "Cache-Control": "no-store"}
         raise
     except Exception as exc:
         raise _unexpected("key", exc, feature="Encrypted notifications")

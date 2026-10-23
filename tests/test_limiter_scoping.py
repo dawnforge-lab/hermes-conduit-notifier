@@ -97,8 +97,12 @@ def test_a_hung_gpt_live_status_never_wedges_later_checks(client, hermes_scope, 
     finally:
         release.set()
     api._gpt_live_status_executor.shutdown(wait=True)
-    monkeypatch.setattr(api, "_gpt_live_status_executor", ThreadPoolExecutor(max_workers=2))
-    assert client.get(f"{BASE}/gpt-live/status").json() == {"ok": True, "available": True}
+    recovered = ThreadPoolExecutor(max_workers=2)
+    monkeypatch.setattr(api, "_gpt_live_status_executor", recovered)
+    try:
+        assert client.get(f"{BASE}/gpt-live/status").json() == {"ok": True, "available": True}
+    finally:
+        recovered.shutdown(wait=True)
 
 
 def test_a_hung_local_live_key_rotation_times_out(client, hermes_scope, monkeypatch):
@@ -108,7 +112,8 @@ def test_a_hung_local_live_key_rotation_times_out(client, hermes_scope, monkeypa
     monkeypatch.setattr(api, "_local_live_profile_can_carry_key", lambda profile: True)
     monkeypatch.setattr(api, "local_live_key", lambda profile, rotate=False: release.wait(10) and "key")
     monkeypatch.setattr(api, "SPEECH_SERVER_SETUP_TIMEOUT_S", 0.2)
-    monkeypatch.setattr(api, "_speech_server_executor", ThreadPoolExecutor(max_workers=2))
+    pool = ThreadPoolExecutor(max_workers=2)
+    monkeypatch.setattr(api, "_speech_server_executor", pool)
     try:
         response = client.post(f"{BASE}/local-live/key")
         assert response.status_code == 504 and response.headers["cache-control"] == "no-store"
@@ -116,6 +121,13 @@ def test_a_hung_local_live_key_rotation_times_out(client, hermes_scope, monkeypa
         release.set()
     # An unknown profile is Hermes' own 404, not a host failure.
     assert client.post(f"{BASE}/local-live/key?profile=ghost").status_code == 404
+    pool.shutdown(wait=True)
+
+
+def test_made_up_local_live_key_profiles_never_fill_the_check_limiter():
+    # The total budget bounds its live keys, so the key cap never turns a
+    # real profile's first check away.
+    assert api._local_live_key_check_limiter.max_keys > api.LOCAL_LIVE_KEY_CHECK_TOTAL_LIMIT
 
 
 def test_voice_shared_reads_the_calling_location_device_alone():
