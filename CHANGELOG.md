@@ -20,6 +20,14 @@ checks it). The format is fixed, because Conduit reads it:
   tells the phone what each notification is about and sends the chat's title
   on its own, so Conduit writes the titles itself.
 
+## 0.64.2 (2026-10-23)
+
+### Fixes
+- When the last location has no distance to a saved place, the agent no
+  longer blames the "places only" setting. It says the phone left distances
+  out of that update, the update was taken at a private place, or the place
+  was added after it, and offers a fresh location only when that can work.
+
 ## 0.64.1 (2026-10-23)
 
 ### Fixes
