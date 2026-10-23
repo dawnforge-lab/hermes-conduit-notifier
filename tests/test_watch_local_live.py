@@ -1408,3 +1408,30 @@ def test_a_speech_server_waiting_on_a_hermes_turn_is_not_hung(call, monkeypatch)
         await bridge._end_session("test")
 
     _run(scenario())
+
+
+def test_a_provider_answering_just_as_the_hang_check_fires_keeps_the_call():
+    async def scenario():
+        bridge = types.SimpleNamespace(clock=time.monotonic, grant=types.SimpleNamespace(profile=None))
+        session = api._WatchAudioSession(bridge, None, {})
+        checks = []
+
+        async def hung():
+            # The first check saw a debt that was answered before the verdict.
+            checks.append(1)
+            if len(checks) > 1:
+                await asyncio.Event().wait()
+
+        session._hung = hung
+        reader = asyncio.get_running_loop().create_future()
+        tasks = []
+        waiting = asyncio.ensure_future(session._wait_or_hang(reader, tasks))
+        await _until(lambda: len(checks) == 2)
+        assert not waiting.done()
+        reader.set_result(None)
+        assert await waiting is False
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+
+    _run(scenario())

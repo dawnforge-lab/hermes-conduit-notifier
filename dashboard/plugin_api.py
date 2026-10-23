@@ -11061,6 +11061,19 @@ class _WatchAudioSession:
                 return
             await asyncio.sleep(WATCH_AUDIO_UPSTREAM_QUIET_CHECK_S)
 
+    async def _wait_or_hang(self, reader: asyncio.Future, tasks: list) -> bool:
+        """Until a stop, the reader's end or a hung provider (True). Each
+        watch it starts goes in ``tasks``, for the caller to cancel."""
+        while True:
+            hung = asyncio.ensure_future(self._hung())
+            tasks.append(hung)
+            await _first_done(None, self.stopping.wait(), reader, hung)
+            if reader.done() or self.stopping.is_set():
+                return False
+            if self.overdue():
+                return True
+            # Answered in the moment since it looked: the wait goes on.
+
     def stop(self, reason: str) -> None:
         if not self.stopping.is_set():
             self.reason = reason
@@ -11421,10 +11434,8 @@ class _GrokWatchSession(_WatchAudioSession):
             })
             pacing = asyncio.ensure_future(pacer.run())
             reader = asyncio.ensure_future(self._read(upstream, pacer))
-            hung = asyncio.ensure_future(self._hung())
-            tasks = [reader, pacing, hung]
-            await _first_done(None, self.stopping.wait(), reader, hung)
-            if hung.done() and self.overdue() and not reader.done() and not self.stopping.is_set():
+            tasks = [reader, pacing]
+            if await self._wait_or_hang(reader, tasks):
                 logger.warning("Grok Live for the Watch: xAI left %s unanswered; ending the session", self.owed_event)
                 raise WatchAudioFailure("unreachable", "xAI stopped answering")
             if reader.done() and not self.stopping.is_set():
@@ -12433,12 +12444,11 @@ class _LocalLiveWatchSession(_WatchAudioSession):
             await self._show_approval()
             pacing = asyncio.ensure_future(pacer.run())
             reader = asyncio.ensure_future(self._read(upstream, pacer))
-            hung = asyncio.ensure_future(self._hung())
-            tasks = [reader, pacing, hung]
-            await _first_done(None, self.stopping.wait(), reader, hung)
+            tasks = [reader, pacing]
+            hung = await self._wait_or_hang(reader, tasks)
             if self.read_back_failure is not None:
                 raise self.read_back_failure
-            if hung.done() and self.overdue() and not reader.done() and not self.stopping.is_set():
+            if hung:
                 logger.warning("A Watch Local Live call: the speech server left %s unanswered; ending the session",
                                self.owed_event)
                 raise WatchAudioFailure("unreachable", "The speech server stopped answering")
