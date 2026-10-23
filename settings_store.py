@@ -409,7 +409,8 @@ def _take_result(state: dict[str, Any], installation: str, result: Any, now: flo
         if earlier is None:
             return
         request = {**earlier, "installation_id": installation}
-    state["results"] = [item for item in state["results"] if item["id"] != request_id]
+    state["results"] = [item for item in state["results"]
+                        if item["id"] != request_id or item["device"] != installation]
     state["results"].append({
         "id": request_id, "device": installation, "key": request["key"], "title": request.get("title", ""),
         "value": request["value"], "from": request.get("from"), "status": status,
@@ -417,7 +418,8 @@ def _take_result(state: dict[str, Any], installation: str, result: Any, now: flo
     })
     state["results"] = state["results"][-MAX_RESULTS:]
     if status == "applied":
-        state["applied"] = [item for item in state["applied"] if item["id"] != request_id]
+        state["applied"] = [item for item in state["applied"]
+                            if item["id"] != request_id or item["device"] != installation]
         state["applied"].append({key: state["results"][-1][key] for key in _APPLIED_FIELDS})
         state["applied"] = state["applied"][-MAX_APPLIED:]
 

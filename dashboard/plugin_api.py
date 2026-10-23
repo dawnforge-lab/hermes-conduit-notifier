@@ -2856,7 +2856,7 @@ _local_live_key_check_total_limiter = _MintLimiter(LOCAL_LIVE_KEY_CHECK_TOTAL_LI
 # spend the budget and lock its voice server out once the cache above expires.
 # Kept as a digest beside the key file's stat, so a rotation by another
 # dashboard process on this home (which replaces the file) retires it too.
-_local_live_known: Dict[str, Tuple[bytes, Tuple[int, int, int]]] = {}
+_local_live_known: Dict[str, Tuple[bytes, Tuple[int, int, int, int]]] = {}
 
 
 def local_live_profile_for_key(token: str) -> Optional[str]:
@@ -2870,10 +2870,15 @@ def local_live_profile_for_key(token: str) -> Optional[str]:
     if named is None:
         return None
     bucket = _local_live_profile_key(named)
+    with _local_live_key_lock:
+        generation = _local_live_key_generation
     if _local_live_is_known(token, named):
         with _local_live_key_lock:
-            _local_live_remember_verified(token, named, now)
-        return named
+            # A rotation since the stat retired this key: check it the long way.
+            if generation == _local_live_key_generation:
+                _local_live_remember_verified(token, named, now)
+                return named
+        return local_live_profile_for_key(token)
     try:
         mint = _local_live_key_check_limiter.acquire(bucket)
     except TokenError:
@@ -2913,14 +2918,14 @@ def _local_live_digest(token: str) -> bytes:
     return hashlib.sha256(token.encode("utf-8")).digest()
 
 
-def _local_live_key_stamp(profile: str) -> Optional[Tuple[int, int, int]]:
-    """The profile's key file as it stands on disk (inode, mtime, size), else None."""
+def _local_live_key_stamp(profile: str) -> Optional[Tuple[int, int, int, int]]:
+    """The profile's key file as it stands on disk (inode, mtime, ctime, size), else None."""
     try:
         with _profile_scope(profile or None):
             stat = os.stat(_local_live_key_path())
     except Exception:  # noqa: BLE001 — no stamp just means the key is checked again
         return None
-    return (stat.st_ino, stat.st_mtime_ns, stat.st_size)
+    return (stat.st_ino, stat.st_mtime_ns, stat.st_ctime_ns, stat.st_size)
 
 
 def _local_live_is_known(token: str, profile: str) -> bool:

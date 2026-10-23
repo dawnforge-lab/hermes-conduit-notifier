@@ -654,6 +654,23 @@ def test_a_rotation_by_another_process_retires_the_remembered_key(hermes, monkey
     assert api.local_live_profile_for_key(rotated) == "work"
 
 
+def test_a_rotation_racing_the_remembered_key_sends_it_the_long_way(monkeypatch):
+    monkeypatch.setattr(api, "_local_live_verified", {})
+    calls = []
+
+    def known_until_rotated(token, profile):
+        calls.append(token)
+        if len(calls) > 1:
+            return False
+        monkeypatch.setattr(api, "_local_live_key_generation", api._local_live_key_generation + 1)
+        return True
+
+    monkeypatch.setattr(api, "_local_live_is_known", known_until_rotated)
+    monkeypatch.setattr(api, "_local_live_check_key", lambda token: None)
+    assert api.local_live_profile_for_key("cll1.-.old") is None
+    assert api._local_live_verified == {}
+
+
 def test_a_rotation_here_retires_the_remembered_key(hermes, monkeypatch):
     monkeypatch.setattr(api, "_local_live_verified", {})
     monkeypatch.setattr(api, "_local_live_known", {})
