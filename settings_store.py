@@ -397,6 +397,9 @@ def _take_result(state: dict[str, Any], installation: str, result: Any, now: flo
     request = next((item for item in state["pending"]
                     if item["id"] == request_id and item["installation_id"] == installation), None)
     if request is not None:
+        # Nothing waiting was applied, so there is nothing to undo.
+        if status == "undone":
+            return
         state["pending"].remove(request)
     elif status != "undone":
         return

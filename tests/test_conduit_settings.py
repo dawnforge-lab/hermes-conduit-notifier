@@ -130,6 +130,8 @@ def test_an_undo_whose_apply_left_the_ring_still_reaches_hermes(store, clock):
 def test_only_an_applied_request_is_undone_and_only_once(store, clock):
     _sync(store)
     [request] = store.request([{"key": "voice.live.tone", "value": "relaxed"}], "Calmer.")["requests"]
+    _sync(store, results=[{"id": request["id"], "status": "undone"}])
+    assert [item["id"] for item in store.view()["pending"]] == [request["id"]] and store.view()["results"] == []
     _sync(store, results=[{"id": request["id"], "status": "dismissed"}])
     _sync(store, results=[{"id": request["id"], "status": "undone"}])
     assert [item["status"] for item in store.view()["results"]] == ["dismissed"]
