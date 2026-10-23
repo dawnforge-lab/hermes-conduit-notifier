@@ -2179,7 +2179,7 @@ seals the answers back. This host opens no inbound route of its own.
   carries `interrupt_job` (`{job_id, message, kind?}`), as does one that names it. It puts the
   user's words into a job Hermes is still working on, through Hermes'
   `session.redirect` (a steer on a Hermes without it), as Conduit's phone
-  calls do. With `kind: "add"` (plugin 0.64.3) the words only add to the
+  calls do. With `kind: "add"` (plugin 0.65.1) the words only add to the
   work, so they go in as a `session.steer` instead, falling back to the
   redirect when Hermes refuses or lacks the steer: Hermes keeps the work so far and the job's result still comes as
   news. The answer is `{ok, outcome, title?, error?}`, the outcome being
