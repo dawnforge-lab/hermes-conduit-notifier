@@ -10731,8 +10731,8 @@ WATCH_AUDIO_STOP_TIMEOUT_S = 5.0
 # socket's own keepalive pings' to find.
 WATCH_AUDIO_UPSTREAM_QUIET_S = 60.0
 WATCH_AUDIO_UPSTREAM_QUIET_CHECK_S = 5.0
-# The event's type, for the log line when one goes unanswered.
-_WATCH_AUDIO_EVENT_TYPE = re.compile(r'"type"\s*:\s*"([A-Za-z0-9_.]{1,64})"')
+# An event type fit for the log line when one goes unanswered.
+_WATCH_AUDIO_EVENT_TYPE = re.compile(r"[A-Za-z0-9_.]{1,64}")
 # GPT-Live: the helper's offer (ICE gathering included), then WebRTC
 # connecting after the answer. Past that, one more try with STUN: host
 # candidates alone usually reach OpenAI's public media servers, and skip
@@ -11157,11 +11157,25 @@ class _WatchAudioSession:
         """An event went to the provider: it owes an answer."""
         if self.owed_since is None:
             self.owed_since = self.bridge.clock()
-            kind = _WATCH_AUDIO_EVENT_TYPE.search(text)
-            self.owed_event = kind.group(1) if kind else "?"
+            try:
+                kind = json.loads(text).get("type")
+            except (ValueError, AttributeError):
+                kind = None
+            self.owed_event = kind if isinstance(kind, str) and _WATCH_AUDIO_EVENT_TYPE.fullmatch(kind) else "?"
 
     def answered(self) -> None:
         self.owed_since = None
+
+    async def send_asking(self, upstream: Any, text: str) -> None:
+        """Sends a Watch event to the provider, which then owes an answer.
+        Armed first: the answer can arrive while the send is still awaited."""
+        armed = self.owed_since is None
+        self.asked(text)
+        try:
+            await upstream.send(text)
+        except Exception:  # noqa: BLE001 — a dropped provider; its reader ends the session
+            if armed:
+                self.answered()
 
     def waiting_on_hermes(self) -> bool:
         """Whether the provider's answer waits on a Hermes turn this host runs."""
@@ -11607,9 +11621,7 @@ class _GrokWatchSession(_WatchAudioSession):
             text = data.decode("utf-8")
         except UnicodeDecodeError:
             return
-        with contextlib.suppress(Exception):
-            await upstream.send(text)
-            self.asked(text)
+        await self.send_asking(upstream, text)
 
 
 # --- Local Live on the Watch ---------------------------------------------------
@@ -12881,9 +12893,7 @@ class _LocalLiveWatchSession(_WatchAudioSession):
                 return
         if self.read_back is not None and await self.read_back.from_client(text):
             return
-        with contextlib.suppress(Exception):
-            await upstream.send(text)
-            self.asked(text)
+        await self.send_asking(upstream, text)
 
 
 _WATCH_AUDIO_SESSIONS = {"gpt_live": _GptLiveWatchSession, "grok": _GrokWatchSession,
@@ -12969,6 +12979,7 @@ class _WatchAudioBridge:
         self.session_task: Optional[asyncio.Task] = None
         self.sids: set = set()
         self.rejected = 0
+        self.refused_hellos = 0
         # Local Live's chats, by the id the Watch resumes them with: they
         # outlive a stream, and end with the grant.
         self.call_chats: Dict[str, "_WatchCallChat"] = {}
@@ -13109,14 +13120,14 @@ class _WatchAudioBridge:
         if sid in self.sids:
             # A stream id's keys are spent once: nothing can be sealed to it
             # again, not even a refusal. The Watch never sends one twice.
-            self.rejected += 1
-            if self.rejected <= 3:
+            self.refused_hellos += 1
+            if self.refused_hellos <= 3:
                 logger.warning("A Watch audio stream was refused (its id came twice)")
             return
         spent = len(self.sids) >= WATCH_AUDIO_STREAMS_PER_GRANT
         if spent and len(self.sids) >= WATCH_AUDIO_STREAMS_PER_GRANT + WATCH_AUDIO_REFUSALS_PER_GRANT:
-            self.rejected += 1
-            if self.rejected <= 3:
+            self.refused_hellos += 1
+            if self.refused_hellos <= 3:
                 logger.warning("A Watch audio stream was refused (too many streams for one call)")
             return
         self.stream = None

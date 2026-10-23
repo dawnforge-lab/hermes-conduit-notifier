@@ -1423,6 +1423,9 @@ def test_a_provider_answering_just_as_the_hang_check_fires_keeps_the_call():
                 await asyncio.Event().wait()
 
         session._hung = hung
+        # A fresh debt: owed, but not for long.
+        session.asked('{"type":"response.create"}')
+        assert session.owed_event == "response.create"
         reader = asyncio.get_running_loop().create_future()
         tasks = []
         waiting = asyncio.ensure_future(session._wait_or_hang(reader, tasks))
@@ -1433,5 +1436,27 @@ def test_a_provider_answering_just_as_the_hang_check_fires_keeps_the_call():
         for task in tasks:
             task.cancel()
         await asyncio.gather(*tasks, return_exceptions=True)
+
+    _run(scenario())
+
+
+def test_an_answer_that_arrives_while_its_event_is_still_sending_pays_it():
+    async def scenario():
+        bridge = types.SimpleNamespace(clock=time.monotonic, grant=types.SimpleNamespace(profile=None))
+        session = api._WatchAudioSession(bridge, None, {})
+
+        class Upstream:
+            async def send(self, text):
+                # The provider's reply is read before the send returns.
+                session.answered()
+
+        class Dropped:
+            async def send(self, text):
+                raise ConnectionError("gone")
+
+        await session.send_asking(Upstream(), '{"session":{"type":"realtime"},"type":"session.update"}')
+        assert session.owed_since is None
+        await session.send_asking(Dropped(), '{"type":"response.create"}')
+        assert session.owed_since is None
 
     _run(scenario())
