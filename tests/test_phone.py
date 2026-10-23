@@ -923,7 +923,8 @@ def test_a_change_reaches_the_phone_and_its_outcome_comes_back(store, iphone):
                                "end": "2026-10-16T16:00:00+01:00", "all_day": False, "calendar_id": "c_personal",
                                "location": "12 High St", "notes": None, "url": None, "alarms_min": [30]}}
     view = store.changes(mark_reported=False)
-    assert view[0]["state"] == "waiting" and view[0]["seen_by_phone"] is True
+    assert view[0]["state"] == "waiting" and view[0]["offered_to_phone"] is True
+    assert view[0]["offered_at"] == "2026-10-14T07:00:00Z" and "seen_by_phone" not in view[0]
     # The phone reports the outcome and gets the (now empty) queue back.
     assert iphone.changes(store, [{"id": change["id"], "outcome": "applied", "item_id": "e_new"}],
                           call_id="call-00000002") == []
@@ -1412,6 +1413,20 @@ def test_voice_lists_calendar_and_phone_reads_only_once_shared(client):
     assert "add_event" not in tools["conduit_calendar"]["description"]
 
 
+def test_voice_lists_only_what_the_calling_device_shares(client):
+    # The iPhone shares phone status alone; the iPad shares the calendar.
+    # A call on the iPhone reads the iPhone only, so it isn't offered the
+    # iPad's calendar; without a device the list stays any device's.
+    _route_shared(client, calendar="off", reminders=False)
+    _route_shared(client, Phone("ipad-installation-2", name="iPad"), status=False, focus=False)
+    tools = lambda **query: {tool["name"]: tool for tool in client.http.get(
+        f"{BASE}/voice-tools", params=query).json()["tools"]}
+    assert set(tools()) == {"conduit_calendar", "conduit_phone"}
+    assert set(tools(phone_device=DEVICE)) == {"conduit_phone"}
+    assert set(tools(phone_device="ipad-installation-2")) == {"conduit_calendar"}
+    assert tools(phone_device="someone-else") == {}
+
+
 def test_voice_reads_this_phones_calendar_sealed(client):
     handset = _route_shared(client)
     found = _voice_read(client, handset, "conduit_calendar",
@@ -1489,7 +1504,25 @@ def test_an_exchange_that_outlives_its_key_hands_out_nothing(store, iphone, monk
         store.exchange(envelope)
     assert refused.value.code == "unknown_key"
     [kept] = store.changes(mark_reported=False)
-    assert kept["state"] == "waiting" and kept["seen_by_phone"] is False, "the new key's change isn't handed out"
+    assert kept["state"] == "waiting" and kept["offered_to_phone"] is False, "the new key's change isn't handed out"
+
+
+def test_a_change_whose_answer_was_lost_is_offered_again_not_seen(store, iphone):
+    """An answer that never reaches the phone leaves the change offered: the
+    agent isn't told the phone has it, and the next exchange carries it
+    again until the phone reports a result."""
+    store.ingest(iphone.seal(_batch()))
+    change = store.add_change("add_reminder", {"title": "Milk"})
+    store.exchange(iphone.exchange_request())  # the sealed answer is lost on its way
+    [offered] = store.changes(mark_reported=False)
+    assert offered["state"] == "waiting" and offered["offered_to_phone"] is True
+    assert "seen_by_phone" not in offered
+    [again] = iphone.changes(store, call_id="call-00000002")
+    assert again["id"] == change["id"]
+    assert iphone.changes(store, [{"id": change["id"], "outcome": "applied", "item_id": "r_milk"}],
+                          call_id="call-00000003") == []
+    [done] = store.changes(mark_reported=False)
+    assert done["state"] == "applied" and "offered_to_phone" not in done
 
 
 def test_an_exchange_that_outlives_its_kid_records_no_outcome(store, iphone, monkeypatch):
@@ -1547,7 +1580,7 @@ def test_a_broken_calendar_store_leaves_health_listed(client, monkeypatch):
     real = api._plugin_package_module
     health = real("health_tool")
     # Some phone shares health, so its tool is listed.
-    monkeypatch.setattr(health.HealthStore, "overview", lambda self: {"devices": [{"id": "phone-installation-3"}]})
+    monkeypatch.setattr(health.HealthStore, "overview", lambda self, only=None: {"devices": [{"id": "phone-installation-3"}]})
 
     def broken(name):
         if name == "phone_tool":

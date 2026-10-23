@@ -22,6 +22,30 @@ checks it). The format is fixed, because Conduit reads it:
 - This changelog: Conduit's update notice shows what each version brings and
   when it was released.
 
+## 0.62.4 (2026-10-23)
+
+### Fixes
+- Deleting a place rule removes its jobs too. Without this, they kept running.
+- Rate limits count per profile, a stuck GPT-Live status clears on its own, and
+  voice tools follow the device that's on the call.
+
+## 0.62.3 (2026-10-23)
+
+### Security
+- A Watch approval answers only the command the Watch showed. Without this, an
+  approval could land on a different command that replaced it.
+
+## 0.62.2 (2026-10-23)
+
+### Fixes
+- Phone changes read as offered, not seen, until the phone answers.
+
+## 0.62.1 (2026-10-23)
+
+### Fixes
+- Approval alert calls follow the chat the turn moved to, and the Watch you
+  chose wins when two devices' settings merge.
+
 ## 0.62.0 (2026-10-22)
 
 ### Security
