@@ -963,6 +963,16 @@ def test_a_same_command_asked_again_under_a_new_server_request_is_news_again():
     assert answer(grant, request_id="", fingerprint=second["approval"]["fingerprint"])["status"] == "approved"
 
 
+def test_a_request_changed_under_the_same_id_is_news_again():
+    grant = make_jobs()
+    server = grant.jobs.server
+    start(grant)
+    server.ask_approval("rt-1", request_id="appr-1", server_id="srq-1")
+    assert [item["approval"]["command"] for item in news(grant)["news"]] == ["rm -rf build"]
+    server.ask_approval("rt-1", request_id="appr-1", server_id="srq-1", command="rm -rf ~")
+    assert [item["approval"]["command"] for item in news(grant)["news"]] == ["rm -rf ~"]
+
+
 def test_two_long_commands_cut_alike_have_different_fingerprints():
     grant = make_jobs()
     server = grant.jobs.server

@@ -9623,7 +9623,7 @@ class _WatchJob:
         # (for request.cancel), the redacted command and its description.
         self.approval: Optional[Dict[str, Any]] = None
         # Told to the Watch: the outcome, and the approval request last told
-        # (None before any, as a request's key can be empty).
+        # (None before any request has been told).
         self.outcome_told = False
         self.approval_told: Optional[str] = None
         self.closed = False
@@ -9671,11 +9671,12 @@ class _WatchJob:
 
     @property
     def approval_key(self) -> str:
-        """Which approval request is pending, for telling each one once."""
+        """Which approval request is pending, for telling each one once: its
+        fingerprint, which holds its ids, so a request changed under the
+        same id is news again too."""
         if not self.approval:
             return ""
-        return (self.approval["request_id"] or self.approval["server_request_id"]
-                or self.approval["fingerprint"])
+        return self.approval["fingerprint"]
 
 
 def _watch_approval_fingerprint(approval: Dict[str, Any], command: str) -> str:

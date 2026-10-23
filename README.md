@@ -2144,7 +2144,8 @@ seals the answers back. This host opens no inbound route of its own.
   request as shown; `answer_approval` sends it back, and is answered
   `changed` (the new request comes as news) if the request changed since.
   A request Hermes sent without a `request_id` can only be answered with
-  it, since Hermes then answers its oldest pending request. A start Hermes takes longer than 18 s to accept
+  the card's `fingerprint`, since Hermes then answers its oldest pending
+  request. A start Hermes takes longer than 18 s to accept
   is answered `accepted`, inside the relay's wait, and a start that then
   fails comes as job news. News whose answer doesn't reach the relay is
   sent again with the next call. A renewal names the call's previous grant
