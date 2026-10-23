@@ -14633,7 +14633,13 @@ def _hermes_update_steps() -> Tuple[Callable[[], Dict[str, Any]], Callable[[], i
 
     def restart_gateway() -> int:
         proc, _reused = _spawn_gateway_restart(None, interrupt=True)
-        return proc.wait(timeout=SELF_UPDATE_GATEWAY_LIMIT_S)
+        try:
+            return proc.wait(timeout=SELF_UPDATE_GATEWAY_LIMIT_S)
+        except subprocess.TimeoutExpired:
+            # Failed is failed: a restart finishing later mustn't contradict the job.
+            with contextlib.suppress(OSError):
+                proc.kill()
+            raise
 
     return pull, restart_gateway
 

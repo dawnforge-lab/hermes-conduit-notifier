@@ -2320,12 +2320,14 @@ while it runs:
   dashboard re-executes once no chat turn runs here. A second call while one
   runs answers the same job. 501 where `/self/restart` would, or when Hermes
   lacks its own pull and gateway restart calls; Conduit then runs the steps
-  above itself.
+  above itself. 429 after three starts in ten minutes.
 - `GET /api/plugins/conduit_push/self/update` answers `{ok, job, boot_id,
   loaded_version}`. `job.step` is `downloading`, `restarting_gateway`,
   `waiting_for_chats` (with `running_chats`), `restarting_dashboard`, `done`
   or `failed` (with `detail`, `failed_step` naming the step it failed in,
   and `code` for `consent_required`, `scan_blocked` or `restart_needed`).
+  Chats still running after two hours fail the job with `restart_needed`:
+  the new plugin is on disk and loads on the next dashboard restart.
 - The job is kept in `conduit-self-update.json` in the Hermes root. The
   restarted dashboard marks it done and sends the profile that asked a
   notification saying which version is running, or why the update didn't
