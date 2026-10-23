@@ -427,3 +427,15 @@ def test_a_text_message_goes_only_to_a_conduit_that_offers_send_text(tool_home):
 def test_the_tool_says_a_text_is_sent_only_by_the_users_tap():
     description = tool.SCHEMA["description"]
     assert "Send text" in description and "never that it was sent" in description
+
+
+
+def test_a_text_left_off_is_left_out_of_the_markdown_and_named_when_nothing_shows(tool_home, monkeypatch):
+    _exchange(PresentStore(tool_home), features=("show-cards", "media-cards"))
+    _call({"title": "Text Mei", "cards": [TEXT]})
+    [card] = _exchange(PresentStore(tool_home), features=("show-cards", "media-cards"))["cards"]
+    assert "Text to send" not in card["markdown"], "the Markdown is built from the cards without the text"
+    monkeypatch.setattr(store_module, "CARDS_PER_HOUR", 1)
+    answer = _call({"title": "Text Mei", "cards": [TEXT]})
+    assert answer["error"] == "rate_limited" and tool.NO_TEXT_DRAFTS_NOTE in answer["note"], \
+        "an answer that shows nothing still says the text was left off"

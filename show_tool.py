@@ -91,7 +91,7 @@ UNSUPPORTED_CARDS_NOTE = ("This version of Conduit can't draw these cards. On a 
 LEFT_OUT_NOTE = ("This version of Conduit can't draw {kinds} cards, so they weren't shown: give what they held in "
                  "your reply.")
 NO_TEXT_DRAFTS_NOTE = ("This version of Conduit can't fill in a text message, so the message was left off the card: "
-                       "give the user the text in your reply to copy.")
+                       "give the user the text in your reply.")
 SHOWN_NOTE = ("On the user's screen. Say in a sentence that it's there and give the gist; don't read it out or "
               "repeat it in your reply.")
 IN_CHAT_NOTE = ("The cards are shown in the chat; Markdown isn't, so put anything else in your reply. Give the "
