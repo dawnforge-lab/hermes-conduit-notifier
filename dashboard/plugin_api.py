@@ -2846,6 +2846,7 @@ LOCAL_LIVE_VERIFIED_TTL_S = 30.0
 # Per profile as many as the one shared budget allowed before, so junk keys
 # naming one profile cost no less than they did.
 LOCAL_LIVE_KEY_CHECK_LIMIT = 60
+LOCAL_LIVE_MAX_KEY_CHARS = 512
 LOCAL_LIVE_KEY_CHECK_TOTAL_LIMIT = 300
 _local_live_key_check_limiter = _MintLimiter(LOCAL_LIVE_KEY_CHECK_LIMIT, 60.0, message="Too many Local Live key checks")
 _local_live_key_check_total_limiter = _MintLimiter(LOCAL_LIVE_KEY_CHECK_TOTAL_LIMIT, 60.0,
@@ -2871,7 +2872,7 @@ def local_live_profile_for_key(token: str) -> Optional[str]:
     bucket = _local_live_profile_key(named)
     if _local_live_is_known(token, named):
         with _local_live_key_lock:
-            _local_live_verified[token] = (named, now + LOCAL_LIVE_VERIFIED_TTL_S)
+            _local_live_remember_verified(token, named, now)
         return named
     try:
         mint = _local_live_key_check_limiter.acquire(bucket)
@@ -2895,12 +2896,17 @@ def local_live_profile_for_key(token: str) -> Optional[str]:
         after = _local_live_key_stamp(named) if before is not None else None
         with _local_live_key_lock:
             if generation == _local_live_key_generation:
-                for stale in [k for k, (_, expiry) in _local_live_verified.items() if expiry <= now]:
-                    del _local_live_verified[stale]
-                _local_live_verified[token] = (profile, now + LOCAL_LIVE_VERIFIED_TTL_S)
+                _local_live_remember_verified(token, profile, now)
                 if after is not None and after == before:
                     _local_live_known[bucket] = (_local_live_digest(token), after)
     return profile
+
+
+def _local_live_remember_verified(token: str, profile: str, now: float) -> None:
+    """Caches a verified key, dropping expired ones (under the key lock)."""
+    for stale in [k for k, (_, expiry) in _local_live_verified.items() if expiry <= now]:
+        del _local_live_verified[stale]
+    _local_live_verified[token] = (profile, now + LOCAL_LIVE_VERIFIED_TTL_S)
 
 
 def _local_live_digest(token: str) -> bytes:
@@ -2934,7 +2940,8 @@ def _local_live_is_known(token: str, profile: str) -> bool:
 
 def _local_live_key_profile(token: str) -> Optional[str]:
     """The profile a well-formed key names, without reading anything; else None."""
-    if not isinstance(token, str):
+    # A real key is well under this; longer ones are refused before any work.
+    if not isinstance(token, str) or len(token) > LOCAL_LIVE_MAX_KEY_CHARS:
         return None
     parts = token.split(".")
     if len(parts) != 3 or parts[0] != LOCAL_LIVE_KEY_PREFIX or not parts[2]:

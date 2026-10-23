@@ -120,10 +120,20 @@ def test_an_undo_whose_apply_left_the_ring_still_reaches_hermes(store, clock):
     _sync(store, results=[{"id": request["id"], "status": "undone", "note": "user tapped Undo"}])
     result = store.view()["results"][-1]
     assert result["id"] == request["id"] and result["status"] == "undone" and result["device"] == PHONE
-    assert result["note"] == "user tapped Undo" and result["key"] == ""
+    assert result["note"] == "user tapped Undo"
+    assert result["key"] == "voice.live.tone" and result["value"] == "relaxed" and result["title"] == "Tone"
     # The file it's saved to reads back with it.
     reloaded = SettingsStore(store.path.parent, clock=store.clock)
     assert reloaded.view()["results"][-1]["id"] == request["id"]
+
+
+def test_an_undo_for_a_request_never_applied_here_is_ignored(store):
+    _sync(store)
+    [request] = store.request([{"key": "voice.live.tone", "value": "relaxed"}], "Calmer.")["requests"]
+    _sync(store, installation=IPAD)
+    _sync(store, installation=IPAD, results=[{"id": request["id"], "status": "undone"},
+                                             {"id": "never-made-here1", "status": "undone"}])
+    assert store.view()["results"] == []
 
 
 def test_a_result_for_another_device_or_unknown_request_is_ignored(store):

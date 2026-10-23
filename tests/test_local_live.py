@@ -281,7 +281,8 @@ def test_two_processes_making_the_first_key_at_once_hand_out_the_same_one(tmp_pa
     assert keys == [stored, stored]
 
 
-@pytest.mark.parametrize("token", ["", "cll1", "cll1.-.", "cll2.-.abc", "cll1.!!!.abc", "Bearer x", "cll1.d29yaw.abc"])
+@pytest.mark.parametrize("token", ["", "cll1", "cll1.-.", "cll2.-.abc", "cll1.!!!.abc", "Bearer x", "cll1.d29yaw.abc",
+                                   "cll1.-." + "a" * 600])
 def test_malformed_or_unknown_keys_name_no_profile(hermes, token):
     _key(hermes, "work")
     assert api.local_live_profile_for_key(token) is None
