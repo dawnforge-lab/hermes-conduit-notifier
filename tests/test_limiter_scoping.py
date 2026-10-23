@@ -96,7 +96,7 @@ def test_a_hung_gpt_live_status_never_wedges_later_checks(client, hermes_scope, 
         assert busy.status_code == 503 and busy.headers["cache-control"] == "no-store"
     finally:
         release.set()
-    api._gpt_live_status_executor.shutdown(wait=True)
+        api._gpt_live_status_executor.shutdown(wait=True)
     recovered = ThreadPoolExecutor(max_workers=2)
     monkeypatch.setattr(api, "_gpt_live_status_executor", recovered)
     try:
@@ -117,17 +117,28 @@ def test_a_hung_local_live_key_rotation_times_out(client, hermes_scope, monkeypa
     try:
         response = client.post(f"{BASE}/local-live/key")
         assert response.status_code == 504 and response.headers["cache-control"] == "no-store"
+        release.set()
+        # An unknown profile is Hermes' own 404, not a host failure.
+        assert client.post(f"{BASE}/local-live/key?profile=ghost").status_code == 404
     finally:
         release.set()
-    # An unknown profile is Hermes' own 404, not a host failure.
-    assert client.post(f"{BASE}/local-live/key?profile=ghost").status_code == 404
-    pool.shutdown(wait=True)
+        pool.shutdown(wait=True)
 
 
 def test_made_up_local_live_key_profiles_never_fill_the_check_limiter():
     # The total budget bounds its live keys, so the key cap never turns a
     # real profile's first check away.
     assert api._local_live_key_check_limiter.max_keys > api.LOCAL_LIVE_KEY_CHECK_TOTAL_LIMIT
+
+
+def test_a_broken_scope_is_a_named_host_failure(client, monkeypatch):
+    def broken(profile):
+        raise RuntimeError("scope exploded")
+
+    monkeypatch.setattr(api, "_profile_scope", broken)
+    response = client.post(f"{BASE}/health/key?profile=coder", json={})
+    assert response.status_code == 500 and response.headers["cache-control"] == "no-store"
+    assert response.json()["detail"] == "Conduit profile check failed on the host (RuntimeError)"
 
 
 def test_voice_shared_reads_the_calling_location_device_alone():

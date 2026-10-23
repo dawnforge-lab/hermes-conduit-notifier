@@ -507,6 +507,9 @@ async def _scoped_acquire(limiter: "_MintLimiter", profile: Optional[str]) -> No
     except HTTPException as exc:
         exc.headers = {**(exc.headers or {}), "Cache-Control": "no-store"}
         raise
+    except Exception as exc:
+        # A broken scope is the host's failure, named like the routes' own.
+        raise _unexpected("profile check", exc, feature="Conduit")
 
 
 _search_executor = ThreadPoolExecutor(max_workers=SEARCH_WORKERS, thread_name_prefix="conduit-web-search")
