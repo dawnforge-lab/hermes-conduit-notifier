@@ -145,16 +145,41 @@ def test_another_restart_after_the_pull_still_finishes_the_job(tmp_path):
     assert job["step"] == "done"
 
 
-def test_status_fails_a_job_nobody_runs(tmp_path):
+def test_status_fails_a_job_nobody_runs_and_says_so(tmp_path):
     path = tmp_path / api.SELF_UPDATE_FILE
+    notified = []
     path.write_text(json.dumps({"id": "j1", "step": "restarting_gateway", "boot_id": api.BOOT_ID,
                                 "updated_at": api.time.time()}))
-    assert api.self_update_status(path)["step"] == "failed"
+    assert api.self_update_status(path, notify=notified.append)["step"] == "failed"
     path.write_text(json.dumps({"id": "j2", "step": "restarting_dashboard", "boot_id": "old", "updated_at": 0}))
-    assert api.self_update_status(path)["step"] == "failed"
+    assert api.self_update_status(path, notify=notified.append)["step"] == "failed"
     path.write_text(json.dumps({"id": "j3", "step": "restarting_dashboard", "boot_id": "old",
                                 "updated_at": api.time.time()}))
-    assert api.self_update_status(path)["step"] == "restarting_dashboard"
+    assert api.self_update_status(path, notify=notified.append)["step"] == "restarting_dashboard"
+    api.time.sleep(0.2)
+    assert [n["id"] for n in notified] == ["j1", "j2"]
+
+
+def test_a_pending_restart_isnt_stale(monkeypatch, tmp_path):
+    path = tmp_path / api.SELF_UPDATE_FILE
+    path.write_text(json.dumps({"id": "j1", "step": "restarting_dashboard", "boot_id": api.BOOT_ID, "updated_at": 0}))
+    monkeypatch.setattr(api, "_self_restart_scheduled", True)
+    assert api.self_update_status(path, notify=lambda job: None)["step"] == "restarting_dashboard"
+
+
+def test_another_process_loading_the_file_leaves_a_live_job_alone(tmp_path):
+    import subprocess as sp
+    other = sp.Popen([sys.executable, "-c", "import time; time.sleep(5)"])
+    try:
+        path = tmp_path / api.SELF_UPDATE_FILE
+        path.write_text(json.dumps({"id": "j1", "step": "downloading", "boot_id": "old", "pid": other.pid}))
+        assert api.finish_self_update_after_restart(path, lambda job: None, delay=0) is None
+        assert json.loads(path.read_text())["step"] == "downloading"
+    finally:
+        other.kill()
+        other.wait()
+    # Once that process is gone, the job is over.
+    assert api.finish_self_update_after_restart(path, lambda job: None, delay=0)["step"] == "failed"
 
 
 def test_a_dashboard_that_cant_restart_itself_refuses(monkeypatch, tmp_path):
@@ -229,7 +254,8 @@ def test_a_job_waiting_for_its_dashboard_restart_is_returned_not_replaced(monkey
     path.write_text(json.dumps({"id": "j1", "step": "restarting_dashboard", "boot_id": api.BOOT_ID,
                                 "updated_at": api.time.time()}))
     monkeypatch.setattr(api, "_self_restart_scheduled", True)
-    job = api.start_self_update(None, lambda *a: None, path=path, steps=(dict, int), homes=lambda: [tmp_path])
+    job = api.start_self_update(None, lambda *a: None, path=path, steps=(dict, int), homes=lambda: [tmp_path],
+                                notify=lambda job: None)
     assert job["id"] == "j1" and api._self_update_thread is None
 
 

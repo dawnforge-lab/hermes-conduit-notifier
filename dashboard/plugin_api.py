@@ -14739,13 +14739,16 @@ def _write_self_update(path: Path, job: Dict[str, Any]) -> None:
 def _hermes_update_steps() -> Tuple[Callable[[], Dict[str, Any]], Callable[[], int]]:
     """Hermes' own plugin pull and gateway restart, or 501 when this Hermes lacks them."""
     try:
-        from hermes_cli.plugins_cmd import dashboard_update_user_plugin
-        from hermes_cli.web_server import _spawn_gateway_restart
+        plugins_cmd = importlib.import_module("hermes_cli.plugins_cmd")
+        web_server = importlib.import_module("hermes_cli.web_server")
     except ImportError as exc:
-        # Only a Hermes without these modules or calls (a missing call names the
-        # module it was looked up in); a broken import inside Hermes is a real failure.
+        # Only a Hermes without these modules; a broken import inside Hermes is a real failure.
         if exc.name not in ("hermes_cli", "hermes_cli.plugins_cmd", "hermes_cli.web_server"):
             raise
+        raise TokenError(501, "This Hermes can't run the plugin update on its own")
+    dashboard_update_user_plugin = getattr(plugins_cmd, "dashboard_update_user_plugin", None)
+    _spawn_gateway_restart = getattr(web_server, "_spawn_gateway_restart", None)
+    if not callable(dashboard_update_user_plugin) or not callable(_spawn_gateway_restart):
         raise TokenError(501, "This Hermes can't run the plugin update on its own")
 
     def pull() -> Dict[str, Any]:
@@ -14859,13 +14862,13 @@ def start_self_update(profile: Optional[str], schedule: Callable[[float, Callabl
             return _read_self_update(path) or dict(_self_update_job or {"id": "", "step": "downloading"})
         # A job whose thread ended can still be under way: the dashboard
         # restart it handed over hasn't happened yet.
-        current = self_update_status(path)
+        current = self_update_status(path, notify=notify)
         if current is not None and current.get("step") in SELF_UPDATE_RUNNING:
             return current
         mint = _self_update_limiter.acquire("")
         job: Dict[str, Any] = {
             "id": uuid.uuid4().hex, "step": "downloading", "from_version": LOADED_VERSION,
-            "boot_id": BOOT_ID, "profile": profile or "", "started_at": time.time(),
+            "boot_id": BOOT_ID, "pid": os.getpid(), "profile": profile or "", "started_at": time.time(),
         }
         try:
             _write_self_update(path, job)
@@ -14881,11 +14884,12 @@ def start_self_update(profile: Optional[str], schedule: Callable[[float, Callabl
         return dict(job)
 
 
-def self_update_status(path: Optional[Path] = None, now: Optional[float] = None) -> Optional[Dict[str, Any]]:
+def self_update_status(path: Optional[Path] = None, now: Optional[float] = None,
+                       notify: Optional[Callable[[Dict[str, Any]], None]] = None) -> Optional[Dict[str, Any]]:
     """The latest job, with one this dashboard can no longer finish marked failed."""
     path = path or _self_update_path()
     with _self_update_lock:
-        return _self_update_status(path, now)
+        return _self_update_status(path, now, notify or _notify_self_update)
 
 
 def _job_time(value: Any) -> float:
@@ -14896,13 +14900,17 @@ def _job_time(value: Any) -> float:
         return 0.0
 
 
-def _self_update_status(path: Path, now: Optional[float]) -> Optional[Dict[str, Any]]:
+def _self_update_status(path: Path, now: Optional[float],
+                        notify: Callable[[Dict[str, Any]], None]) -> Optional[Dict[str, Any]]:
     job = _read_self_update(path)
     if job is None or job.get("step") not in SELF_UPDATE_RUNNING:
         return job
     alive = _self_update_thread is not None and _self_update_thread.is_alive()
     if alive and job.get("boot_id") == BOOT_ID:
         # Its thread is still on it, however long the chats take.
+        return job
+    if job.get("boot_id") == BOOT_ID and job["step"] == "restarting_dashboard" and _self_restart_scheduled:
+        # The restart waits for the chats; it finishes the job when it lands.
         return job
     if job.get("boot_id") == BOOT_ID and job["step"] != "restarting_dashboard" and not alive:
         _self_update_failed(job, "The update stopped on the host before it finished")
@@ -14916,7 +14924,25 @@ def _self_update_status(path: Path, now: Optional[float]) -> Optional[Dict[str, 
         return job
     with contextlib.suppress(OSError):
         _write_self_update(path, job)
+    # Conduit may be closed: the asking profile hears it ended.
+    timer = threading.Timer(0, notify, args=(dict(job),))
+    timer.daemon = True
+    timer.start()
     return job
+
+
+def _another_live_process(pid: Any) -> bool:
+    """Whether `pid` is a running process other than this one. The dashboard's
+    re-exec keeps its pid; a dashboard restarted any other way has a new one."""
+    if not isinstance(pid, int) or pid <= 0 or pid == os.getpid():
+        return False
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except OSError:
+        return True
+    return True
 
 
 def finish_self_update_after_restart(path: Optional[Path] = None,
@@ -14926,6 +14952,9 @@ def finish_self_update_after_restart(path: Optional[Path] = None,
     path = path or _self_update_path()
     job = _read_self_update(path)
     if job is None or job.get("step") not in SELF_UPDATE_RUNNING or job.get("boot_id") == BOOT_ID:
+        return None
+    if _another_live_process(job.get("pid")):
+        # Another process loading this file (a probe), while the dashboard runs the job.
         return None
     # Pulled (it has a version) and this process loaded it: done, whatever
     # restarted the dashboard (an update's own re-exec or a /self/restart).
