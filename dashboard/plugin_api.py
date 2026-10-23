@@ -11419,7 +11419,7 @@ class _GrokWatchSession(_WatchAudioSession):
             hung = asyncio.ensure_future(self._hung())
             tasks = [reader, pacing, hung]
             await _first_done(None, self.stopping.wait(), reader, hung)
-            if hung.done() and not reader.done() and not self.stopping.is_set():
+            if hung.done() and self.owed_since is not None and not reader.done() and not self.stopping.is_set():
                 logger.warning("Grok Live for the Watch: xAI left %s unanswered; ending the session", self.owed_event)
                 raise WatchAudioFailure("unreachable", "xAI stopped answering")
             if reader.done() and not self.stopping.is_set():
@@ -12433,7 +12433,7 @@ class _LocalLiveWatchSession(_WatchAudioSession):
             await _first_done(None, self.stopping.wait(), reader, hung)
             if self.read_back_failure is not None:
                 raise self.read_back_failure
-            if hung.done() and not reader.done() and not self.stopping.is_set():
+            if hung.done() and self.owed_since is not None and not reader.done() and not self.stopping.is_set():
                 logger.warning("A Watch Local Live call: the speech server left %s unanswered; ending the session",
                                self.owed_event)
                 raise WatchAudioFailure("unreachable", "The speech server stopped answering")
@@ -12540,6 +12540,7 @@ class _LocalLiveWatchSession(_WatchAudioSession):
 
     def waiting_on_hermes(self) -> bool:
         # The speech server says nothing until the call's Hermes turn answers it.
+        # Read without the runner's lock: a stale read moves the clock one check.
         runner = self.runner
         return runner is not None and runner.turn is not None
 
@@ -12973,7 +12974,9 @@ class _WatchAudioBridge:
         if sid in self.sids:
             # A stream id's keys are spent once: nothing can be sealed to it
             # again, not even a refusal. The Watch never sends one twice.
-            logger.warning("A Watch audio stream was refused (its id came twice)")
+            self.rejected += 1
+            if self.rejected <= 3:
+                logger.warning("A Watch audio stream was refused (its id came twice)")
             return
         spent = len(self.sids) >= WATCH_AUDIO_STREAMS_PER_GRANT
         if spent and len(self.sids) >= WATCH_AUDIO_STREAMS_PER_GRANT + WATCH_AUDIO_REFUSALS_PER_GRANT:
