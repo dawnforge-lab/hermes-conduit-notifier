@@ -9626,6 +9626,9 @@ class _WatchJob:
         # (None before any request has been told).
         self.outcome_told = False
         self.approval_told: Optional[str] = None
+        # An answer to the pending approval is on its way to Hermes: a
+        # second one would go to Hermes' next request when it has no id.
+        self.approval_answering = False
         self.closed = False
         # The start's own answer: pending until the start settles or is
         # answered "accepted"; its outcome isn't news meanwhile.
@@ -10417,10 +10420,20 @@ class _WatchJobs:
         params: Dict[str, Any] = {"session_id": job.session_id, "choice": choice}
         if approval["request_id"]:
             params["request_id"] = approval["request_id"]
+        with self.lock:
+            if job.approval_answering:
+                return {"ok": True, "status": "not_pending", "message": "That request is already being answered."}
+            if not job.approval or job.approval["fingerprint"] != approval["fingerprint"]:
+                return {"ok": True, "status": "changed",
+                        "message": "The request changed before the answer reached Hermes. Show the user the new one and ask again."}
+            job.approval_answering = True
         try:
             resolved = self.rpc("approval.respond", params).get("resolved")
         except WatchJobError as exc:
             return {"ok": True, "status": "failed", "message": f"Hermes didn't take the answer: {exc}"}
+        finally:
+            with self.lock:
+                job.approval_answering = False
         with self.changed:
             if job.approval and job.approval["fingerprint"] == approval["fingerprint"]:
                 self._approval_gone(job)

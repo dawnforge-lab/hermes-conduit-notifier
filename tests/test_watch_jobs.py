@@ -973,6 +973,28 @@ def test_a_request_changed_under_the_same_id_is_news_again():
     assert [item["approval"]["command"] for item in news(grant)["news"]] == ["rm -rf ~"]
 
 
+def test_a_second_answer_while_one_is_on_its_way_isnt_sent():
+    grant = make_jobs()
+    server = grant.jobs.server
+    start(grant)
+    server.emit("rt-1", "approval.request", {"command": "ls build", "description": "List"})
+    [item] = news(grant)["news"]
+    fingerprint = item["approval"]["fingerprint"]
+    seconds = []
+    rpc = grant.jobs.rpc
+
+    def answering(method, params, *rest, **kw):
+        if method == "approval.respond":
+            seconds.append(answer(grant, "once", request_id="", fingerprint=fingerprint))
+        return rpc(method, params, *rest, **kw)
+
+    grant.jobs.rpc = answering
+    assert answer(grant, "deny", request_id="", fingerprint=fingerprint)["status"] == "denied"
+    assert [second["status"] for second in seconds] == ["not_pending"]
+    assert server.methods("approval.respond") == [{"session_id": "rt-1", "choice": "deny"}]
+    assert grant.jobs.jobs["watch-1"].approval_answering is False
+
+
 def test_two_long_commands_cut_alike_have_different_fingerprints():
     grant = make_jobs()
     server = grant.jobs.server
