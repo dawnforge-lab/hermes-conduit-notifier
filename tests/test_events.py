@@ -551,3 +551,9 @@ def test_an_alert_call_says_so_and_keeps_it_through_redaction():
     assert event["call"]["origin"] == "alert"
     assert redact_event(event)["call"]["origin"] == "alert"
     assert "origin" not in sanitize_call({**CALL, "origin": "something else"})
+
+
+def test_redact_event_drops_a_hand_built_malformed_title_label():
+    event = {"event_id": "approval:1", "type": "approval.needed", "title_label": "approval.needed\nINJECTED"}
+    assert "title_label" not in redact_event(event)
+    assert "session_title" not in push_event("approval.needed", identifier="approval:1", session_title=5)

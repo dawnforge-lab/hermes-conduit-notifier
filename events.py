@@ -108,7 +108,7 @@ def push_event(
     # older apps and the relay.
     if isinstance(title_label, str) and _TITLE_LABEL.match(title_label):
         event["title_label"] = title_label
-    if session_title:
+    if isinstance(session_title, str) and session_title:
         event["session_title"] = _clean(session_title, 120)
     # `decision` carries the structured card content that lets Conduit render
     # an answerable card from the push payload alone, without the one-shot
@@ -220,6 +220,10 @@ def redact_event(event: dict[str, Any]) -> dict[str, Any]:
     if event.get("type") == "phone.changes" and event.get("mode") in PHONE_CHANGE_MODES:
         # How the relay wakes the phone: routing, not content.
         redacted["mode"] = event["mode"]
+    label = event.get("title_label")
+    if isinstance(label, str) and _TITLE_LABEL.match(label):
+        # Which title the phone writes: not content, so it stays.
+        redacted["title_label"] = label
     decision = sanitize_decision(event.get("decision")) if event.get("decision") is not None else {}
     if decision.get("kind") == "approval":
         # Unknown labels never transit; fall back to the always-valid subset
@@ -267,8 +271,7 @@ def redact_event(event: dict[str, Any]) -> dict[str, Any]:
 
 # The gateway's approval vocabulary (the relay whitelists the same set).
 _APPROVAL_CHOICES = ("once", "session", "always", "deny")
-_REDACTED_EVENT_KEYS = ("event_id", "type", "plugin_version", "plugin_capabilities", "session_id", "profile", "gateway",
-                        "title_label")
+_REDACTED_EVENT_KEYS = ("event_id", "type", "plugin_version", "plugin_capabilities", "session_id", "profile", "gateway")
 
 
 def approval_decision(*, session_key: str, description: str) -> dict[str, Any]:

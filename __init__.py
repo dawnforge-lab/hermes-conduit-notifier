@@ -206,14 +206,15 @@ def _post_llm_call(**kwargs: Any) -> None:
     pulse_turn = pulse.is_pulse_turn(session_id, kwargs.get("turn_id"))
     quiet = (is_silent_response(response) or cron_runs.quiet(session_id, kwargs.get("task_id"), response)
              or (pulse_turn and not pulse.pushes(session_id, kwargs.get("turn_id"))))
+    chat_title = "" if quiet else _session_title(session_id)
     ready = None if quiet else push_event(
         "response.ready",
         identifier=event_id("response", kwargs.get("turn_id"), session_id),
         session_id=session_id,
         profile=_profile,
-        title=_session_title(session_id),
+        title=chat_title,
         title_label="response.ready",
-        session_title=_session_title(session_id),
+        session_title=chat_title,
         body=plain_text(response),
     )
     # A quick reply in a chat Hermes Desktop has selected: the user most
