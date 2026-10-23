@@ -14620,7 +14620,8 @@ def _hermes_update_steps() -> Tuple[Callable[[], Dict[str, Any]], Callable[[], i
         from hermes_cli.plugins_cmd import dashboard_update_user_plugin
         from hermes_cli.web_server import _spawn_gateway_restart
     except ImportError as exc:
-        # Only a Hermes without these calls; a broken import inside Hermes is a real failure.
+        # Only a Hermes without these modules or calls (a missing call names the
+        # module it was looked up in); a broken import inside Hermes is a real failure.
         if exc.name not in ("hermes_cli", "hermes_cli.plugins_cmd", "hermes_cli.web_server"):
             raise
         raise TokenError(501, "This Hermes can't run the plugin update on its own")

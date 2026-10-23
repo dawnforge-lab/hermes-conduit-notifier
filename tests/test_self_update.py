@@ -147,6 +147,16 @@ def test_a_hermes_without_the_steps_refuses():
     assert raised.value.status == 501
 
 
+def test_a_hermes_with_the_modules_but_not_the_calls_refuses(monkeypatch):
+    # "cannot import name ..." names the module it looked in, so it reads as missing too.
+    monkeypatch.setitem(sys.modules, "hermes_cli", types.ModuleType("hermes_cli"))
+    monkeypatch.setitem(sys.modules, "hermes_cli.plugins_cmd", types.ModuleType("hermes_cli.plugins_cmd"))
+    monkeypatch.setitem(sys.modules, "hermes_cli.web_server", types.ModuleType("hermes_cli.web_server"))
+    with pytest.raises(api.TokenError) as raised:
+        api._hermes_update_steps()
+    assert raised.value.status == 501
+
+
 def test_start_runs_one_job_at_a_time(monkeypatch, tmp_path):
     import threading
     release = threading.Event()
