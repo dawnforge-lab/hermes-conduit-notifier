@@ -1503,6 +1503,36 @@ def test_a_hermes_without_redirect_gets_a_steer():
     assert server.methods("session.steer") == [{"session_id": "rt-1", "text": "make it Alex"}]
 
 
+def test_an_addition_is_steered_not_redirected():
+    # Conduit #1076: kind "add" keeps the job's direction.
+    grant, server = running_job()
+    answer = api.run_watch_job_call(grant, "interrupt_job", {"job_id": "watch-1", "message": "a quiet table", "kind": "add"})
+    assert answer["outcome"] == "interrupted"
+    assert server.methods("session.steer") == [{"session_id": "rt-1", "text": "a quiet table"}]
+    assert server.methods("session.redirect") == []
+
+
+def test_an_addition_hermes_wont_steer_is_redirected():
+    for refusal in ("rejected", "Method not found"):
+        grant, server = running_job()
+        server.results["session.redirect"] = {"status": "redirected"}
+        if refusal == "rejected":
+            server.results["session.steer"] = {"status": "rejected"}
+        else:
+            server.fail["session.steer"] = refusal
+        answer = api.run_watch_job_call(grant, "interrupt_job", {"job_id": next(iter(grant.jobs.jobs)), "message": "a quiet table", "kind": "ADD"})
+        assert answer["outcome"] == "interrupted", refusal
+        assert server.methods("session.redirect") == [{"session_id": "rt-1", "text": "a quiet table"}], refusal
+
+
+def test_a_change_or_unknown_kind_still_redirects():
+    for kind in ("change", "pause", ""):
+        grant, server = running_job()
+        server.results["session.redirect"] = {"status": "redirected"}
+        api.run_watch_job_call(grant, "interrupt_job", {"job_id": next(iter(grant.jobs.jobs)), "message": "hold that", "kind": kind})
+        assert server.methods("session.steer") == [] and len(server.methods("session.redirect")) == 1, kind
+
+
 def test_a_redirect_hermes_refuses_says_why():
     grant, server = running_job()
     server.fail["session.redirect"] = "session not found"
