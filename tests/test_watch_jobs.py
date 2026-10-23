@@ -963,6 +963,19 @@ def test_a_same_command_asked_again_under_a_new_server_request_is_news_again():
     assert answer(grant, request_id="", fingerprint=second["approval"]["fingerprint"])["status"] == "approved"
 
 
+def test_two_long_commands_cut_alike_have_different_fingerprints():
+    grant = make_jobs()
+    server = grant.jobs.server
+    start(grant)
+    server.emit("rt-1", "approval.request", {"command": "x" * 2_100 + "a", "description": "Run it"})
+    [first] = news(grant)["news"]
+    server.emit("rt-1", "approval.request", {"command": "x" * 2_100 + "b", "description": "Run it"})
+    [second] = news(grant)["news"]
+    assert first["approval"]["command"] == second["approval"]["command"]
+    assert first["approval"]["fingerprint"] != second["approval"]["fingerprint"]
+    assert answer(grant, "deny", request_id="", fingerprint=first["approval"]["fingerprint"])["status"] == "changed"
+
+
 def test_an_approval_with_an_id_keeps_working_without_a_fingerprint():
     grant = make_jobs()
     start(grant)

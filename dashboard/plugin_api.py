@@ -9678,10 +9678,11 @@ class _WatchJob:
                 or self.approval["fingerprint"])
 
 
-def _watch_approval_fingerprint(approval: Dict[str, Any]) -> str:
+def _watch_approval_fingerprint(approval: Dict[str, Any], command: str) -> str:
     """Names the request as the Watch shows it: its command and description,
-    and Hermes' ids for it. hermes-conduit-notifier#232 (N7-3)."""
-    shown = [approval["command"], approval["cut"], approval["description"],
+    and Hermes' ids for it. hermes-conduit-notifier#232 (N7-3). The whole
+    ``command`` counts too, so two long ones cut alike still differ."""
+    shown = [command, approval["command"], approval["cut"], approval["description"],
              approval["request_id"], approval["server_request_id"]]
     return hashlib.sha256(json.dumps(shown, ensure_ascii=False).encode()).hexdigest()[:24]
 
@@ -9922,7 +9923,7 @@ class _WatchJobs:
                 "cut": shown_command != command,
                 "description": text("description", 500) or "Approval required",
             }
-            job.approval["fingerprint"] = _watch_approval_fingerprint(job.approval)
+            job.approval["fingerprint"] = _watch_approval_fingerprint(job.approval, command)
             job.status = "needs_approval"
             self.changed.notify_all()
 
