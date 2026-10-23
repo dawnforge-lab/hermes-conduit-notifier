@@ -11,7 +11,7 @@ It uses only the Node.js standard library (Node 22.13 or later, for `node:sqlite
 ```shell
 cd mailbox/deploy
 
-# 1. Optional: a registration token and limits
+# 1. Set PUBLIC_URL; optionally a registration token and limits
 cp .env.example .env
 
 # 2. Create the data directory, owned by the image's node user (uid 1000)
@@ -24,18 +24,19 @@ docker compose up -d
 
 If you skip step 2, Docker creates `data/` owned by root on a Linux host. The mailbox runs as `node`, can't write there, and exits at startup naming the directory.
 
-The mailbox listens on port 9130. Put it behind an HTTPS reverse proxy, at the root of its own host name: owners sign the host name and the request path, so the proxy must pass both on unchanged, the `Host` header as the client sent it and the path with no prefix. The Compose file joins the external `pangolin` network and sets `TRUST_PROXY=1`; change both to match your proxy. With `TRUST_PROXY` set, the mailbox rate-limits by the address the outermost trusted proxy appended to `X-Forwarded-For`. That holds only when nothing but the proxy can reach port 9130: anything else that can picks the address it's counted as, and could get a real client turned away. So don't publish the port, and if other containers share the proxy's network, give the mailbox a network of its own that only the proxy also joins. The proxy must also append that address (Traefik, which Pangolin uses, does by default): a request without it counts against the proxy's own address, which every client then shares.
+The mailbox listens on port 9130. Put it behind an HTTPS reverse proxy, at the root of its own host name, and set `PUBLIC_URL` to that URL. Owners sign its host name and the request path, so the proxy must pass the path on unchanged, with no prefix. The Compose file joins the external `pangolin` network and sets `TRUST_PROXY=1`; change both to match your proxy. With `TRUST_PROXY` set, the mailbox rate-limits by the address the outermost trusted proxy appended to `X-Forwarded-For`. That holds only when nothing but the proxy can reach port 9130: anything else that can picks the address it's counted as, and could get a real client turned away. So don't publish the port, and if other containers share the proxy's network, give the mailbox a network of its own that only the proxy also joins. The proxy must also append that address (Traefik, which Pangolin uses, does by default): a request without it counts against the proxy's own address, which every client then shares.
 
 Without Docker, from this directory:
 
 ```shell
-DATA_PATH=./data/mailbox.sqlite npm start
+PUBLIC_URL=http://127.0.0.1:9130 DATA_PATH=./data/mailbox.sqlite npm start
 npm test
 ```
 
 | Variable | Default | Meaning |
 |---|---|---|
 | `DATA_PATH` | required | The SQLite file. Its directory must be writable, because SQLite keeps its `-wal` and `-shm` files beside it. |
+| `PUBLIC_URL` | required | The URL owners reach the mailbox at, such as `https://rooms.example.com`, with no path. Their signatures are checked against its host name. |
 | `HOST`, `PORT` | `127.0.0.1`, `9130` | Where the mailbox listens. |
 | `TRUST_PROXY` | `0` | How many reverse proxies are in front of the mailbox (0 to 10). |
 | `MAILBOX_REGISTRATION_TOKEN` | empty | Empty means open registration. When it's set (at least 16 characters, no spaces), only a registration that sends it as `Mailbox-Registration` can make an inbox. |
@@ -59,7 +60,7 @@ The signature covers these UTF-8 bytes, with each `\n` a newline:
 mailbox-v1\n<METHOD>\n<host>\n<path and query, exactly as sent>\n<ts>\n<nonce>\n<base64url SHA-256 of the body>
 ```
 
-`<host>` is the request's `Host` header in lowercase, with its port when it has one: `rooms.milim.dev`. An inbox has the same id on every mailbox, so the host keeps a request signed for one mailbox from passing at another. The timestamp must be within 300 seconds of the mailbox's clock, and each signature is accepted once. Ed25519 signs the same bytes the same way, so use a fresh random nonce for every request. Otherwise a retry, or a second poll in the same second, looks like a replay.
+`<host>` is the host of the URL the owner reaches the mailbox at, the way a URL parser gives it: lowercase, with the port only when it isn't the scheme's default (`rooms.milim.dev`). The mailbox checks it against its own `PUBLIC_URL`, never the request's `Host` header, so a request signed for one mailbox can't pass at another, though an inbox has the same id on both. The timestamp must be within 300 seconds of the mailbox's clock, and each signature is accepted once. Ed25519 signs the same bytes the same way, so use a fresh random nonce for every request. Otherwise a retry, or a second poll in the same second, looks like a replay.
 
 **Send tokens.** An owner gives each linked installation a secret send token, and registers the token's SHA-256 (unpadded base64url) under a sender id it picks (`[A-Za-z0-9_-]{1,64}`). The sender sends `Authorization: Bearer <token>`. The mailbox stores only the hash.
 

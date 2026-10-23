@@ -251,13 +251,24 @@ test('pruning drops every idle inbox at once, with its senders and envelopes, an
 
   clock.now += 86_400;
   const active = withSender(store, Buffer.alloc(32, 4));
-  assert.deepEqual(store.prune(), { envelopes: 0, inboxes: 3 });
+  assert.deepEqual(store.prune(), { envelopes: 3, inboxes: 3 });
   for (const inbox of idle) {
     assert.equal(store.inboxKey(inbox), undefined);
     assert.equal(store.senderFor(inbox, 'hash-laifu'), undefined);
   }
   assert.ok(store.inboxKey(active));
   assert.ok(store.put(active, 'laifu', Buffer.alloc(30)).seq, 'their bytes were given back');
+});
+
+test('a full disk is reported as such, and the store keeps working', () => {
+  const { store } = open();
+  const inbox = withSender(store);
+  // SQLite undoes the whole transaction itself when the file can't grow.
+  store.db.exec(`PRAGMA max_page_count = ${store.db.prepare('PRAGMA page_count').get().page_count + 2}`);
+  assert.throws(() => store.put(inbox, 'laifu', Buffer.alloc(200_000)), /database or disk is full/);
+
+  store.db.exec('PRAGMA max_page_count = 1073741823');
+  assert.ok(store.put(inbox, 'laifu', Buffer.from('fits')).seq);
 });
 
 test('deleting an inbox removes its senders and envelopes', () => {

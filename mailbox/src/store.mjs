@@ -215,8 +215,7 @@ export class MailboxStore {
     const idleSince = now - this.limits.inboxIdleDays * DAY_SECONDS;
     const idle = 'inbox IN (SELECT id FROM inboxes WHERE last_seen_at <= ?)';
     return this.#transaction(() => {
-      const envelopes = this.#drop('expires_at <= ?', now);
-      this.#drop(idle, idleSince);
+      const envelopes = this.#drop('expires_at <= ?', now) + this.#drop(idle, idleSince);
       this.#run(`DELETE FROM senders WHERE ${idle}`, idleSince);
       const inboxes = this.#run('DELETE FROM inboxes WHERE last_seen_at <= ?', idleSince).changes;
       return { envelopes, inboxes: Number(inboxes) };
@@ -262,7 +261,11 @@ export class MailboxStore {
       this.totalBytes += this.pendingBytes;
       return result;
     } catch (error) {
-      this.db.exec('ROLLBACK');
+      try {
+        this.db.exec('ROLLBACK');
+      } catch {
+        // SQLite already undid it (as it does when the disk is full): the first error says why.
+      }
       throw error;
     } finally {
       this.pendingBytes = undefined;

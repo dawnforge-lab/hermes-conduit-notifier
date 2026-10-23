@@ -16,6 +16,8 @@ import { createMailbox, readConfig } from '../src/server.mjs';
 import { MailboxStore } from '../src/store.mjs';
 
 const LAIFU_TOKEN = 'laifu-send-token-0123456789';
+// The test mailbox's PUBLIC_URL host, which owners sign whatever address they connect to.
+const PUBLIC_HOST = 'rooms.test';
 
 function base64url(bytes) {
   return Buffer.from(bytes).toString('base64url');
@@ -28,7 +30,8 @@ function sha256(bytes) {
 async function start(t, { limits = {}, registrationToken, proxyHops, replay, clientBuckets } = {}) {
   const merged = { ...DEFAULT_LIMITS, ...limits };
   const store = new MailboxStore(':memory:', merged);
-  const mailbox = createMailbox({ store, limits: merged, registrationToken, proxyHops, replay, clientBuckets, log: { error() {}, info() {} } });
+  const mailbox = createMailbox({ store, limits: merged, publicHost: PUBLIC_HOST, registrationToken, proxyHops, replay, clientBuckets,
+    log: { error() {}, info() {} } });
   mailbox.server.listen(0, '127.0.0.1');
   await once(mailbox.server, 'listening');
   t.after(() => mailbox.close());
@@ -41,7 +44,7 @@ function owner(base) {
   const { publicKey, privateKey } = generateKeyPairSync('ed25519');
   const key = Buffer.from(publicKey.export({ format: 'jwk' }).x, 'base64url');
   const inbox = sha256(key);
-  function signed(method, target, body, { host = new URL(base).host } = {}) {
+  function signed(method, target, body, { host = PUBLIC_HOST } = {}) {
     const bytes = body === undefined ? Buffer.alloc(0) : Buffer.from(JSON.stringify(body));
     const ts = Math.floor(Date.now() / 1000);
     const nonce = randomBytes(16).toString('base64url');
@@ -121,11 +124,11 @@ test('an owner\'s seqs count its own envelopes only', async (t) => {
   assert.equal(second.seq, first.seq + 1, 'no gap for the other inbox\'s envelopes');
 });
 
-test('a request signed for another mailbox is refused', async (t) => {
+test('owners sign the mailbox\'s own host name, whatever Host header arrives', async (t) => {
   const { base } = await start(t);
   const me = await ownerWithSender(base);
   const target = `/v1/inboxes/${me.inbox}`;
-  // A GET that arrives with `host` as its Host header, as a proxy passes it on.
+  // A GET that arrives with `host` as its Host header.
   async function status(host, signedFor) {
     const { authorization } = me.signed('GET', target, undefined, { host: signedFor });
     const request = httpRequest({ port: new URL(base).port, host: '127.0.0.1', path: target, headers: { host, authorization } }).end();
@@ -134,11 +137,12 @@ test('a request signed for another mailbox is refused', async (t) => {
     return answer.statusCode;
   }
 
-  assert.equal(await status('rooms.example', 'rooms.elsewhere.example'), 401, 'signed for another mailbox');
-  assert.equal(await status('rooms.example', 'rooms.example'), 200);
-  assert.equal(await status('Rooms.Example', 'rooms.example'), 200, 'a host name in any case');
-  assert.equal(await status('rooms.example', 'Rooms.Example'), 401, 'the host is signed in lowercase');
-  assert.equal(await status('rooms.example:8443', 'rooms.example'), 401, 'with its port when the request has one');
+  assert.equal(await status(PUBLIC_HOST, PUBLIC_HOST), 200);
+  assert.equal(await status('conduit-rooms:9130', PUBLIC_HOST), 200, 'through a proxy that rewrites Host');
+  assert.equal(await status('rooms.elsewhere.example', 'rooms.elsewhere.example'), 401, 'signed for another mailbox, sent straight here');
+  assert.equal(await status('', ''), 401, 'signed for no host');
+  assert.equal(await status(PUBLIC_HOST, 'Rooms.Test'), 401, 'the host is signed in lowercase');
+  assert.equal(await status(PUBLIC_HOST, `${PUBLIC_HOST}:443`), 401, 'with no port its URL leaves out');
 });
 
 test('a page holds at most `limit` envelopes and says where the next one starts', async (t) => {
@@ -514,17 +518,26 @@ test('malformed requests get 400 and unknown routes 404', async (t) => {
 });
 
 test('configuration fails at boot when it is wrong', () => {
-  assert.throws(() => readConfig({}), /DATA_PATH is required/);
-  assert.throws(() => readConfig({ DATA_PATH: '/tmp/m.sqlite', TRUST_PROXY: 'yes' }), /TRUST_PROXY must be/);
-  assert.throws(() => readConfig({ DATA_PATH: '/tmp/m.sqlite', PORT: '99999' }), /PORT must be/);
-  assert.throws(() => readConfig({ DATA_PATH: '/tmp/m.sqlite', MAILBOX_REGISTRATION_TOKEN: 'short' }), /at least 16 characters/);
-  const config = readConfig({ DATA_PATH: '/tmp/m.sqlite', PORT: '9200', TRUST_PROXY: '1', MAILBOX_TTL_SECONDS: '60', MAILBOX_REGISTRATION_TOKEN: '' });
+  const env = { DATA_PATH: '/tmp/m.sqlite', PUBLIC_URL: 'https://rooms.example' };
+  assert.throws(() => readConfig({ PUBLIC_URL: env.PUBLIC_URL }), /DATA_PATH is required/);
+  assert.throws(() => readConfig({ DATA_PATH: env.DATA_PATH }), /PUBLIC_URL is required/);
+  for (const bad of ['rooms.example', 'ftp://rooms.example', 'https://rooms.example/mailbox', 'https://rooms.example/?a=1', 'https://me@rooms.example']) {
+    assert.throws(() => readConfig({ ...env, PUBLIC_URL: bad }), /PUBLIC_URL must be/, bad);
+  }
+  assert.throws(() => readConfig({ ...env, TRUST_PROXY: 'yes' }), /TRUST_PROXY must be/);
+  assert.throws(() => readConfig({ ...env, PORT: '99999' }), /PORT must be/);
+  assert.throws(() => readConfig({ ...env, MAILBOX_REGISTRATION_TOKEN: 'short' }), /at least 16 characters/);
+  const config = readConfig({ ...env, PORT: '9200', TRUST_PROXY: '1', MAILBOX_TTL_SECONDS: '60', MAILBOX_REGISTRATION_TOKEN: '' });
   assert.equal(config.port, 9200);
   assert.equal(config.host, '127.0.0.1');
+  assert.equal(config.publicHost, 'rooms.example');
   assert.equal(config.proxyHops, 1);
   assert.equal(config.limits.ttlSeconds, 60);
   assert.equal(config.registrationToken, undefined);
-  assert.equal(readConfig({ DATA_PATH: '/tmp/m.sqlite' }).port, 9130);
+  assert.equal(readConfig(env).port, 9130);
+  // The host as owners' URLs give it: lowercase, with a port only when it isn't the scheme's.
+  assert.equal(readConfig({ ...env, PUBLIC_URL: 'https://Rooms.Example:443/' }).publicHost, 'rooms.example');
+  assert.equal(readConfig({ ...env, PUBLIC_URL: 'http://127.0.0.1:9130' }).publicHost, '127.0.0.1:9130');
 });
 
 const SERVER_PATH = fileURLToPath(new URL('../src/server.mjs', import.meta.url));
@@ -533,7 +546,7 @@ const SERVER_PATH = fileURLToPath(new URL('../src/server.mjs', import.meta.url))
 function spawnMailbox(t, env) {
   const directory = mkdtempSync(join(tmpdir(), 'rooms-mailbox-'));
   const child = spawn(process.execPath, ['--disable-warning=ExperimentalWarning', SERVER_PATH], {
-    env: { PATH: process.env.PATH, DATA_PATH: join(directory, 'mailbox.sqlite'), HOST: '127.0.0.1', ...env },
+    env: { PATH: process.env.PATH, DATA_PATH: join(directory, 'mailbox.sqlite'), PUBLIC_URL: 'http://127.0.0.1', HOST: '127.0.0.1', ...env },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
   t.after(() => {
@@ -570,6 +583,13 @@ test('the mailbox says why and exits when it can\'t listen', async (t) => {
   const { code, stderr } = await spawnMailbox(t, { PORT: String(taken.address().port) }).closed;
   assert.equal(code, 1);
   assert.match(stderr, /"message":"server error".*EADDRINUSE/);
+});
+
+test('the mailbox process checks owners\' signatures against its PUBLIC_URL', async (t) => {
+  const port = await freePort();
+  const mailbox = spawnMailbox(t, { PORT: String(port), PUBLIC_URL: `https://${PUBLIC_HOST}` });
+  await mailbox.listening;
+  assert.equal((await owner(`http://127.0.0.1:${port}`).register()).status, 201);
 });
 
 test('SIGTERM stops the mailbox cleanly', async (t) => {
