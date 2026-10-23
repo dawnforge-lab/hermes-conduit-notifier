@@ -140,6 +140,14 @@ def test_only_an_applied_request_is_undone_and_only_once(store, clock):
     clock.now += 60
     _sync(store, results=[{"id": applied["id"], "status": "undone"}])
     assert store.view()["results"][-1] == first
+    # Not even once the undo has left the results ring.
+    clock.now += store_module.HOUR_S
+    for n in range(store_module.MAX_RESULTS):
+        clock.now += store_module.HOUR_S / store_module.PER_HOUR
+        [other] = store.request([{"key": "voice.live.greeting", "value": f"hi {n}"}], "Greet.")["requests"]
+        _sync(store, results=[{"id": other["id"], "status": "applied"}])
+    _sync(store, results=[{"id": applied["id"], "status": "undone"}])
+    assert applied["id"] not in [item["id"] for item in store.view()["results"]]
 
 
 def test_an_undo_for_a_request_never_applied_here_is_ignored(store):

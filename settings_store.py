@@ -410,7 +410,7 @@ def _take_result(state: dict[str, Any], installation: str, result: Any, now: flo
         if latest is not None and latest["status"] != "applied":
             return
         earlier = latest or next((item for item in state["applied"] if item["id"] == request_id
-                                  and item["device"] == installation), None)
+                                  and item["device"] == installation and now - item["at"] <= RESULT_TTL_S), None)
         if earlier is None:
             return
         request = {**earlier, "installation_id": installation}
@@ -422,9 +422,9 @@ def _take_result(state: dict[str, Any], installation: str, result: Any, now: flo
         "note": _line(result.get("note"), MAX_NOTE_CHARS), "session_id": request.get("session_id", ""), "at": now,
     })
     state["results"] = state["results"][-MAX_RESULTS:]
+    state["applied"] = [item for item in state["applied"]
+                        if item["id"] != request_id or item["device"] != installation]
     if status == "applied":
-        state["applied"] = [item for item in state["applied"]
-                            if item["id"] != request_id or item["device"] != installation]
         state["applied"].append({key: state["results"][-1][key] for key in _APPLIED_FIELDS})
         state["applied"] = state["applied"][-MAX_APPLIED:]
 
