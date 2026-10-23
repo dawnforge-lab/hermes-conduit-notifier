@@ -14580,7 +14580,8 @@ SELF_UPDATE_NOTIFY_DELAY_S = 5.0
 # A job that hasn't moved for this long is over, however it was left.
 SELF_UPDATE_STALE_S = 3600.0
 SELF_UPDATE_RUNNING = ("downloading", "restarting_gateway", "waiting_for_chats", "restarting_dashboard")
-_self_update_lock = threading.Lock()
+# Reentrant: a start reads the status under it too.
+_self_update_lock = threading.RLock()
 _self_update_thread: Optional[threading.Thread] = None
 # The job this process started, for when its file can't be read back.
 _self_update_job: Optional[Dict[str, Any]] = None
@@ -14655,6 +14656,9 @@ def _run_self_update(job: Dict[str, Any], path: Path, pull: Callable[[], Dict[st
             _self_update_failed(job, str(result.get("error") or "Hermes didn't apply the update"), code)
             return
         job.update(step="restarting_gateway", version=_plugin_version())
+        if job["version"] is None:
+            _self_update_failed(job, "The update left a plugin.yaml without a readable version on the host")
+            return
         _write_self_update(path, job)
         try:
             exit_code = restart_gateway()
@@ -14664,7 +14668,7 @@ def _run_self_update(job: Dict[str, Any], path: Path, pull: Callable[[], Dict[st
             _self_update_failed(job, "The plugin is updated, but the gateway didn't restart. "
                                      "Run hermes gateway status on the host.")
             return
-        if job["version"] == LOADED_VERSION:
+        if LOADED_VERSION is not None and job["version"] == LOADED_VERSION:
             # Nothing new on disk for this dashboard to load.
             job.update(step="done", loaded_version=LOADED_VERSION, finished_at=time.time())
             return
@@ -14721,27 +14725,40 @@ def start_self_update(profile: Optional[str], schedule: Callable[[float, Callabl
         current = self_update_status(path)
         if current is not None and current.get("step") in SELF_UPDATE_RUNNING:
             return current
-        _self_update_limiter.acquire("")
+        mint = _self_update_limiter.acquire("")
         job: Dict[str, Any] = {
             "id": uuid.uuid4().hex, "step": "downloading", "from_version": LOADED_VERSION,
             "boot_id": BOOT_ID, "profile": profile or "", "started_at": time.time(),
         }
-        _write_self_update(path, job)
-        _self_update_job = job
-        _self_update_thread = threading.Thread(
-            target=_run_self_update, name="conduit-self-update", daemon=True,
-            args=(job, path, pull, restart_gateway, schedule, homes or _hermes_homes, notify or _notify_self_update))
-        _self_update_thread.start()
+        try:
+            _write_self_update(path, job)
+            thread = threading.Thread(
+                target=_run_self_update, name="conduit-self-update", daemon=True,
+                args=(job, path, pull, restart_gateway, schedule, homes or _hermes_homes, notify or _notify_self_update))
+            thread.start()
+        except BaseException:
+            # Nothing started: the attempt doesn't count against the limit.
+            _self_update_limiter.release("", mint)
+            raise
+        _self_update_job, _self_update_thread = job, thread
         return dict(job)
 
 
 def self_update_status(path: Optional[Path] = None, now: Optional[float] = None) -> Optional[Dict[str, Any]]:
     """The latest job, with one this dashboard can no longer finish marked failed."""
     path = path or _self_update_path()
+    with _self_update_lock:
+        return _self_update_status(path, now)
+
+
+def _self_update_status(path: Path, now: Optional[float]) -> Optional[Dict[str, Any]]:
     job = _read_self_update(path)
     if job is None or job.get("step") not in SELF_UPDATE_RUNNING:
         return job
     alive = _self_update_thread is not None and _self_update_thread.is_alive()
+    if alive and job.get("boot_id") == BOOT_ID:
+        # Its thread is still on it, however long the chats take.
+        return job
     if job.get("boot_id") == BOOT_ID and job["step"] != "restarting_dashboard" and not alive:
         _self_update_failed(job, "The update stopped on the host before it finished")
     elif job.get("boot_id") == BOOT_ID and job["step"] == "restarting_dashboard" and not _self_restart_scheduled:
@@ -14827,7 +14844,7 @@ async def post_self_update(response: Response, profile: Optional[str] = None) ->
         loop.call_soon_threadsafe(loop.call_later, delay, fn)
 
     try:
-        return {"ok": True, "job": start_self_update(profile, schedule)}
+        return {"ok": True, "job": await asyncio.to_thread(start_self_update, profile, schedule)}
     except TokenError as exc:
         raise HTTPException(status_code=exc.status, detail=str(exc), headers={"Cache-Control": "no-store"})
     except HTTPException:
