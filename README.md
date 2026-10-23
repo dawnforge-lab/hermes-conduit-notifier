@@ -2140,7 +2140,12 @@ seals the answers back. This host opens no inbound route of its own.
   user's per-call limit (default 5, at most 20, 0 for none), counting the
   jobs that started; three run at once. A grant with jobs allows 120 calls,
   since the Watch also asks for job news (finished jobs and approval
-  requests) while they run. A start Hermes takes longer than 18 s to accept
+  requests) while they run. Each approval request carries a `fingerprint` of the
+  request as shown; `answer_approval` sends it back, and is answered
+  `changed` (the new request comes as news) if the request changed since.
+  A request Hermes sent without a `request_id` can only be answered with
+  the card's `fingerprint`, since Hermes then answers its oldest pending
+  request. A start Hermes takes longer than 18 s to accept
   is answered `accepted`, inside the relay's wait, and a start that then
   fails comes as job news. News whose answer doesn't reach the relay is
   sent again with the next call. A renewal names the call's previous grant
@@ -2311,6 +2316,30 @@ gateway (`POST /api/gateway/restart`), then this dashboard:
 
 The first update to 0.24 still runs the old code, which has no restart route:
 restart the dashboard by hand once.
+
+From 0.63 the host can run the whole update itself, so Conduit can be closed
+while it runs:
+
+- `POST /api/plugins/conduit_push/self/update?profile=<name>` starts it and
+  answers `{ok, job}`: Hermes pulls the plugin, the gateway restarts, and the
+  dashboard re-executes once no chat turn runs here. A second call while one
+  runs answers the same job. 501 where `/self/restart` would, or when Hermes
+  lacks its own pull and gateway restart calls; Conduit then runs the steps
+  above itself. 429 after three starts in ten minutes.
+- `GET /api/plugins/conduit_push/self/update` answers `{ok, job, boot_id,
+  loaded_version}`. `job.step` is `downloading`, `restarting_gateway`,
+  `waiting_for_chats` (with `running_chats`), `restarting_dashboard`, `done`
+  or `failed` (with `detail`, `failed_step` naming the step it failed in,
+  and `code` for `consent_required`, `scan_blocked` or `restart_needed`).
+  Chats still running after two hours fail the job with `restart_needed`:
+  the new plugin is on disk and loads on the next dashboard restart.
+- The job is kept in `conduit-self-update.json` in the Hermes root. The
+  restarted dashboard marks it done and sends the profile that asked a
+  notification saying which version is running, or why the update didn't
+  finish.
+
+Every version is listed in [CHANGELOG.md](CHANGELOG.md), which Conduit's update
+notice reads.
 
 ## Conduit support and privacy
 
