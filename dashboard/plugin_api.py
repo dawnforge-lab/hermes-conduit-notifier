@@ -14807,7 +14807,9 @@ def finish_self_update_after_restart(path: Optional[Path] = None,
     job = _read_self_update(path)
     if job is None or job.get("step") not in SELF_UPDATE_RUNNING or job.get("boot_id") == BOOT_ID:
         return None
-    if job["step"] in ("waiting_for_chats", "restarting_dashboard") and LOADED_VERSION == job.get("version"):
+    # Pulled (it has a version) and this process loaded it: done, whatever
+    # restarted the dashboard (an update's own re-exec or a /self/restart).
+    if job.get("version") is not None and LOADED_VERSION == job["version"]:
         job.update(step="done", loaded_version=LOADED_VERSION, finished_at=time.time())
     else:
         _self_update_failed(job, "The dashboard restarted before the update finished")

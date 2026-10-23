@@ -137,6 +137,14 @@ def test_a_restart_mid_download_reads_as_failed(monkeypatch, tmp_path):
     assert job["step"] == "failed"
 
 
+def test_another_restart_after_the_pull_still_finishes_the_job(tmp_path):
+    path = tmp_path / api.SELF_UPDATE_FILE
+    path.write_text(json.dumps({"id": "j1", "step": "restarting_gateway", "boot_id": "old",
+                                "version": api.LOADED_VERSION}))
+    job = api.finish_self_update_after_restart(path, lambda job: None, delay=0)
+    assert job["step"] == "done"
+
+
 def test_status_fails_a_job_nobody_runs(tmp_path):
     path = tmp_path / api.SELF_UPDATE_FILE
     path.write_text(json.dumps({"id": "j1", "step": "restarting_gateway", "boot_id": api.BOOT_ID,
