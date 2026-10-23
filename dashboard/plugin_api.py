@@ -14575,6 +14575,8 @@ PLUGIN_NAME = "conduit_push"
 SELF_UPDATE_FILE = "conduit-self-update.json"
 SELF_UPDATE_GATEWAY_LIMIT_S = 180.0
 SELF_UPDATE_CHATS_RECHECK_S = 2.0
+# A turn marker left behind can't hold the update forever.
+SELF_UPDATE_CHATS_LIMIT_S = 7200.0
 # The restarted dashboard notifies once it has had a moment to come up.
 SELF_UPDATE_NOTIFY_DELAY_S = 5.0
 # A job that hasn't moved for this long is over, however it was left.
@@ -14675,11 +14677,17 @@ def _run_self_update(job: Dict[str, Any], path: Path, pull: Callable[[], Dict[st
             # Nothing new on disk for this dashboard to load.
             job.update(step="done", loaded_version=LOADED_VERSION, finished_at=time.time())
             return
+        waited = 0.0
         while running := _running_turns(os.getpid(), homes(), _own_start_time()):
+            if waited >= SELF_UPDATE_CHATS_LIMIT_S:
+                _self_update_failed(job, "Chats were still running after two hours. Restart the Hermes "
+                                         "dashboard on this host to finish the update", "restart_needed")
+                return
             if job.get("running_chats") != running:
                 job.update(step="waiting_for_chats", running_chats=running)
                 _write_self_update(path, job)
             sleep(SELF_UPDATE_CHATS_RECHECK_S)
+            waited += SELF_UPDATE_CHATS_RECHECK_S
         with _self_restart_lock:
             # Taken before the step is written, so a status read never sees
             # the restart step without a restart on its way.
@@ -14722,7 +14730,7 @@ def start_self_update(profile: Optional[str], schedule: Callable[[float, Callabl
     path = path or _self_update_path()
     with _self_update_lock:
         if _self_update_thread is not None and _self_update_thread.is_alive():
-            return _read_self_update(path) or dict(_self_update_job or {})
+            return _read_self_update(path) or dict(_self_update_job or {"id": "", "step": "downloading"})
         # A job whose thread ended can still be under way: the dashboard
         # restart it handed over hasn't happened yet.
         current = self_update_status(path)
@@ -14754,6 +14762,14 @@ def self_update_status(path: Optional[Path] = None, now: Optional[float] = None)
         return _self_update_status(path, now)
 
 
+def _job_time(value: Any) -> float:
+    """A job file's timestamp; an unreadable one counts as long ago."""
+    try:
+        return float(value or 0)
+    except (TypeError, ValueError):
+        return 0.0
+
+
 def _self_update_status(path: Path, now: Optional[float]) -> Optional[Dict[str, Any]]:
     job = _read_self_update(path)
     if job is None or job.get("step") not in SELF_UPDATE_RUNNING:
@@ -14768,7 +14784,7 @@ def _self_update_status(path: Path, now: Optional[float]) -> Optional[Dict[str, 
         # The re-exec failed (and was logged): the new plugin waits for a restart.
         _self_update_failed(job, "Restart the Hermes dashboard on this host to finish the update",
                             "restart_needed")
-    elif (now or time.time()) - float(job.get("updated_at") or 0) > SELF_UPDATE_STALE_S:
+    elif (now or time.time()) - _job_time(job.get("updated_at")) > SELF_UPDATE_STALE_S:
         _self_update_failed(job, "The update didn't finish on the host")
     else:
         return job

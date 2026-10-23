@@ -72,6 +72,20 @@ def test_running_chats_are_waited_for_on_the_host(monkeypatch, tmp_path):
     assert job["step"] == "restarting_dashboard" and len(scheduled) == 1
 
 
+def test_a_turn_that_never_ends_doesnt_hold_the_update_forever(monkeypatch, tmp_path):
+    monkeypatch.setattr(api, "SELF_UPDATE_CHATS_LIMIT_S", 3 * api.SELF_UPDATE_CHATS_RECHECK_S)
+    monkeypatch.setattr(api, "_running_turns", lambda *a: 1)
+    job, scheduled, notified, sleeps = _run(tmp_path, monkeypatch=monkeypatch, markers={"s1": {}})
+    assert job["step"] == "failed" and job["code"] == "restart_needed" and scheduled == []
+    assert len(sleeps) == 3 and [n["step"] for n in notified] == ["failed"]
+
+
+def test_an_unreadable_timestamp_reads_as_stale(tmp_path):
+    path = tmp_path / api.SELF_UPDATE_FILE
+    path.write_text(json.dumps({"id": "j1", "step": "restarting_dashboard", "boot_id": "old", "updated_at": "x"}))
+    assert api.self_update_status(path)["step"] == "failed"
+
+
 def test_nothing_new_on_disk_finishes_without_a_restart(monkeypatch, tmp_path):
     job, scheduled, notified, _ = _run(tmp_path, monkeypatch=monkeypatch, version=api.LOADED_VERSION)
     assert job["step"] == "done" and scheduled == []
