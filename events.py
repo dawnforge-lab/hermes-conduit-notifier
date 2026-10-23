@@ -108,8 +108,9 @@ def push_event(
     # older apps and the relay.
     if isinstance(title_label, str) and _TITLE_LABEL.match(title_label):
         event["title_label"] = title_label
-    if isinstance(session_title, str) and session_title:
-        event["session_title"] = _clean(session_title, 120)
+    chat_title = _clean(session_title, 120) if isinstance(session_title, str) else ""
+    if chat_title:
+        event["session_title"] = chat_title
     # `decision` carries the structured card content that lets Conduit render
     # an answerable card from the push payload alone, without the one-shot
     # gateway stream event (which is missed while the app is backgrounded).

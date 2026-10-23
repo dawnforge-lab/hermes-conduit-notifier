@@ -517,16 +517,20 @@ def _subagent_stop(**kwargs: Any) -> None:
             or cron_runs.quiet(parent, None)):
         return
     status = _text(kwargs.get("child_status")) or "finished"
+    # Hermes reports "completed" (else "failed", "timeout", "error"). Only a
+    # finish gets the phone's own title and generic line, in its language; any
+    # other ending keeps the host's words, which say how it ended.
+    finished = status in ("finished", "completed")
+    summary = plain_text(kwargs.get("child_summary"))
     enqueue(push_event(
         "background_task.finished",
         identifier=event_id("subagent", kwargs.get("parent_turn_id"), child, status),
         session_id=parent,
         profile=_profile,
         title=_titled("Task finished", parent),
-        title_label="background_task.finished",
+        title_label="background_task.finished" if finished else "",
         session_title=_session_title(parent),
-        # A plain finish is the phone's generic line, in its language.
-        body=plain_text(kwargs.get("child_summary")) or ("" if status == "finished" else f"A delegated task {status}."),
+        body=summary or ("" if finished else f"A delegated task {status}."),
     ))
 
 
