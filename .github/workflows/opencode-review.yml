@@ -164,7 +164,11 @@ jobs:
             - Connected features: CONTRIBUTING.md lists what changes together
               (the plugin version files, and the app-side siblings). A sibling
               the PR leaves out without saying why in its Siblings section is
-              a major finding.
+              a major finding. So is a change with siblings in the app (ones
+              its Siblings section names, or one you can name) whose Siblings
+              section names neither its entry in hermes-conduit's
+              docs/FEATURE_MAP.md nor the hermes-conduit PR that adds or
+              updates that entry.
 
             If you find no issues, say so explicitly. Do NOT summarize what you did
             or describe your process. Output only the review.
