@@ -187,8 +187,9 @@ def test_the_journal_takes_a_run_only_while_it_is_current_and_keeps_thirty_days(
     assert pulse_store.run_candidates("r1") == []  # past thirty days
     rows = pulse_store.run_candidates("r2")
     assert [r["rank"] for r in rows] == [1, None]  # the picks first
-    pulse_store.link_candidates([(rows[0]["id"], 77)])
-    assert [r["card_id"] for r in pulse_store.run_candidates("r2")] == [77, None]
+    [card] = pulse_store.add_cards([{"kind": store.NOTICED, "level": "screen", "title": "t", "created_at": DAY}],
+                                   links=[rows[0]["id"]])
+    assert [r["card_id"] for r in pulse_store.run_candidates("r2")] == [card, None]  # noted with the card
     assert pulse_store.candidate_runs(5) == ["r2"]
     with pytest.raises(ValueError):
         pulse_store.add_candidates("r3", [{**row, "decision) VALUES(1); --": 1}], now=DAY)

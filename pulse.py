@@ -417,13 +417,15 @@ def _turn_cards(pulse_store: store.PulseStore, home: Path, changed: list[dict], 
             picked = _run_picks(pulse_store, row) if turn is not None and row["kind"] == REPORT else None
             if picked is not None:
                 # Made from the candidate list: its picks are its cards, whatever the reply says.
-                ids = learning.add_noticed_cards(
-                    pulse_store, turn=turn, lines=candidates.lines(picked), chat_id=row["session_key"],
-                    chat_title=title, shown={pick["item_id"] for pick in picked if pick["item_id"] is not None},
-                    kinds=report.KINDS, item_chat_title=lambda item: followup.chat_title(home, item), now=now,
-                    attempt=str(attempt), marks=(TURN_CARDS_DONE, store.SPLIT_REPORTS),
-                    keep=TURN_CARDS_DONE_KEEP) if picked else _mark_turn_card(pulse_store, attempt)
-                pulse_store.link_candidates(list(zip((pick["id"] for pick in picked), ids or [])))
+                if picked:
+                    learning.add_noticed_cards(
+                        pulse_store, turn=turn, lines=candidates.lines(picked), chat_id=row["session_key"],
+                        chat_title=title, shown={pick["item_id"] for pick in picked if pick["item_id"] is not None},
+                        kinds=report.KINDS, item_chat_title=lambda item: followup.chat_title(home, item), now=now,
+                        attempt=str(attempt), marks=(TURN_CARDS_DONE, store.SPLIT_REPORTS),
+                        keep=TURN_CARDS_DONE_KEEP, links=[pick["id"] for pick in picked])
+                else:
+                    _mark_turn_card(pulse_store, attempt)
                 continue
             # A brief comes with a push; a report doesn't.
             if turn is not None and learning.empty_turn(row["kind"], turn.reply):
@@ -606,7 +608,9 @@ def _send_report(pulse_store: store.PulseStore, home: Path, run: dict, chat_id: 
         delivery.submit(pulse_store, _sender(pulse_store), kind=REPORT, chat_id=chat_id,
                         text=lambda tag: candidates.report_text(tag, picked, since), item_id=run["id"])
     except BaseException:
-        # Nothing recorded (the store refused the attempt): the next tick tries again.
+        # Nothing recorded (the store refused the attempt): back as it was, so
+        # a later tick sends it. Should this write fail too, the run stays sent
+        # and the next scheduled report makes a new list.
         pulse_store.swap(REPORT_RUN, sent, run)
         raise
     return True

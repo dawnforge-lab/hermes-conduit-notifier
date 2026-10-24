@@ -632,7 +632,7 @@ def _pulse_candidates(pulse_store: Any, home: Any, value: str) -> int:
     if isinstance(run, dict) and run.get("state") in RUN_STATES:
         tokens, error = run.get("tokens"), run.get("error")
         state = RUN_STATES[run["state"]]
-        if isinstance(error, str) and error:
+        if isinstance(error, str) and error and run["state"] != "dropped":
             state = f"failed ({error}), so the report {'went' if run['state'] == 'sent' else 'goes'} out as before"
         used = f", {tokens} tokens" if isinstance(tokens, int) and not isinstance(tokens, bool) and tokens else ""
         print(_printable(f"Latest list: {state}{used}"))

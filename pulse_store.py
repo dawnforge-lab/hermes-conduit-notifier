@@ -831,14 +831,16 @@ class PulseStore:
                                     tuple(row.values())).lastrowid)
 
     def add_cards(self, rows: Sequence[dict[str, Any]], *, attempt: str = "", marks: Sequence[str] = (),
-                  keep: int = 50) -> list[int]:
+                  keep: int = 50, links: Sequence[int] = ()) -> list[int]:
         """Adds these cards in one transaction, all or none. With ``attempt``,
         it's appended to each list setting in ``marks`` (the last ``keep``)
         in the same write, so the mark can't be lost apart from the cards;
         and an attempt any of them already holds adds nothing (another
         process got there first). A report split into cards (SPLIT_REPORTS in
         ``marks``) loses its typed ratings in the same write: it's rated on
-        its cards from then on, so an item counts once."""
+        its cards from then on, so an item counts once. ``links`` are the
+        journaled candidates the cards come from, one per row, noted on each
+        in the same write (pulse_candidates)."""
         for row in rows:
             _check_columns(row, CARD_COLUMNS)
         with _lock, self._connect() as conn:
@@ -850,6 +852,7 @@ class PulseStore:
                     return []
                 ids = [int(conn.execute(f"INSERT INTO cards({', '.join(row)}) VALUES({', '.join('?' * len(row))})",
                                         tuple(row.values())).lastrowid) for row in rows]
+                conn.executemany("UPDATE candidates SET card_id=? WHERE id=?", list(zip(ids, links)))
                 if SPLIT_REPORTS in lists:
                     # Its typed ratings go, and the row stays as a mark that
                     # outlasts the trimmed list, so none are read back later.
@@ -1186,14 +1189,6 @@ class PulseStore:
         """Drops the candidates journaled before ``before``; how many went."""
         with _lock, self._connect() as conn:
             return conn.execute("DELETE FROM candidates WHERE created_at < ?", (before,)).rowcount
-
-    def link_candidates(self, pairs: Sequence[tuple[int, int]]) -> None:
-        """Notes the card each (candidate, card) pick became."""
-        if not pairs:
-            return
-        with _lock, self._connect() as conn:
-            conn.executemany("UPDATE candidates SET card_id=? WHERE id=?",
-                             [(card, candidate) for candidate, card in pairs])
 
     def item_counts(self) -> dict[str, int]:
         with self._connect() as conn:

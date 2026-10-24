@@ -330,8 +330,8 @@ class Sim:
             self.store, turn=_Turn, lines=candidates.lines(picked), chat_id=SID, chat_title="Pulse",
             shown={pick["item_id"] for pick in picked if pick["item_id"] is not None}, kinds=report.KINDS,
             item_chat_title=lambda item: item["chat_id"], now=now, attempt=run["id"],
-            marks=(pulse.TURN_CARDS_DONE, store.SPLIT_REPORTS), keep=pulse.TURN_CARDS_DONE_KEEP)
-        self.store.link_candidates(list(zip((pick["id"] for pick in picked), cards)))
+            marks=(pulse.TURN_CARDS_DONE, store.SPLIT_REPORTS), keep=pulse.TURN_CARDS_DONE_KEEP,
+            links=[pick["id"] for pick in picked])
         self.check_report(run["id"], rows, now)
         self.surfaced_at.update((pick["text"].split()[0] if pick["item_id"] is None else pick["item_id"], now)
                                 for pick in picked)
