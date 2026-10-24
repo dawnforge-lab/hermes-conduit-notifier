@@ -3,6 +3,7 @@ slice 1): a model call lists what the report could bring up, code picks
 what goes in, and every candidate is journaled with what became of it."""
 
 import re
+import sqlite3
 import sys
 import threading
 import time
@@ -376,6 +377,35 @@ def test_a_list_is_sent_once_and_not_once_too_late(reporting):
     live.store.set(pulse.REPORT_RUN, old)
     pulse.tick()
     assert len(live.sent()) == 1 and live.store.get(pulse.REPORT_RUN)["state"] == pulse.RUN_DROPPED
+
+
+def test_a_report_asked_for_past_a_list_too_old_to_send_starts_a_new_one(reporting):
+    live = reporting
+    old = {"id": "abcd1234abcd1234", "state": pulse.RUN_READY, "owner": "x",
+           "started_at": time.time() - pulse.REPORT_WINDOW_S - 60}
+    live.store.set(pulse.REPORT_RUN, old)
+    fresh = listed(live)
+    assert fresh["id"] != old["id"] and fresh["state"] == pulse.RUN_READY
+
+
+def test_a_list_the_store_refuses_to_send_stays_ready(reporting):
+    live = reporting
+    run = listed(live)
+
+    def refuse(**kwargs):
+        raise sqlite3.OperationalError("database is locked")
+
+    add_attempt = live.store.add_attempt
+    live.store.add_attempt = refuse
+    with pytest.raises(sqlite3.OperationalError):
+        pulse._send_report(live.store, live.home, run, SID, time.time())
+    assert live.store.get(pulse.REPORT_RUN) == run  # the next tick tries again
+    live.store.add_attempt = add_attempt
+    assert pulse._send_report(live.store, live.home, run, SID, time.time()) and len(live.sent()) == 1
+
+
+def test_a_ref_written_as_a_whole_float_still_counts():
+    assert [candidates._ref(value) for value in (12, 12.0, "#12", 12.5, True, 1e12)] == [12, 12, 12, None, None, None]
 
 
 def test_without_model_access_the_report_goes_as_it_was(live):

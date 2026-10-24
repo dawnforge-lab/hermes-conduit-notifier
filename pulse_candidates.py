@@ -207,6 +207,8 @@ def _ref(value: Any) -> Optional[int]:
         return None
     if isinstance(value, int):
         return value
+    if isinstance(value, float):
+        return int(value) if value.is_integer() and 0 <= value < 1e9 else None
     text = str(value or "").strip().lstrip("#")
     return int(text) if text.isdecimal() and len(text) <= 9 else None
 

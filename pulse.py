@@ -518,7 +518,9 @@ def _maybe_report(pulse_store: store.PulseStore, home: Path, now: float) -> bool
     pending = run.get("state") in (RUN_WORKING, RUN_READY, RUN_FAILED)
     if pending and now - started > REPORT_WINDOW_S:
         # Too late to send, like a report long past its time.
-        pulse_store.swap(REPORT_RUN, stored, {**run, "state": RUN_DROPPED})
+        dropped = {**run, "state": RUN_DROPPED}
+        if pulse_store.swap(REPORT_RUN, stored, dropped):
+            stored = dropped  # so a run asked for now starts from it
         pending = False
     if not pending and not asked and not _report_due(pulse_store, home, now):
         return False
@@ -594,14 +596,19 @@ def _send_report(pulse_store: store.PulseStore, home: Path, run: dict, chat_id: 
         sent["error"] = run.get("error") or "left working"  # what `pulse candidates` says
     if not pulse_store.swap(REPORT_RUN, run, sent):
         return False  # another process got to it
-    if run["state"] != RUN_READY:
-        _send_turn_report(pulse_store, home, chat_id, now)
-        return True
-    picked = candidates.picks(pulse_store.run_candidates(run["id"]))
-    since = str(run.get("since") or "")
-    # The attempt's item id is the run's, so its turn finds its picks (_run_picks).
-    delivery.submit(pulse_store, _sender(pulse_store), kind=REPORT, chat_id=chat_id,
-                    text=lambda tag: candidates.report_text(tag, picked, since), item_id=run["id"])
+    try:
+        if run["state"] != RUN_READY:
+            _send_turn_report(pulse_store, home, chat_id, now)
+            return True
+        picked = candidates.picks(pulse_store.run_candidates(run["id"]))
+        since = str(run.get("since") or "")
+        # The attempt's item id is the run's, so its turn finds its picks (_run_picks).
+        delivery.submit(pulse_store, _sender(pulse_store), kind=REPORT, chat_id=chat_id,
+                        text=lambda tag: candidates.report_text(tag, picked, since), item_id=run["id"])
+    except BaseException:
+        # Nothing recorded (the store refused the attempt): the next tick tries again.
+        pulse_store.swap(REPORT_RUN, sent, run)
+        raise
     return True
 
 
