@@ -745,7 +745,7 @@ def test_the_preview_shows_the_place_without_markdown_of_its_own(home, monkeypat
     monkeypatch.setattr(maps, "client", Enqueued())
     _call({"action": "navigate", "to": "**Paris** [x](y)"})
     prompt = present.exchange({"installation_id": "phone-installation-1", "features": ["maps-navigate"]})["prompts"][0]
-    assert prompt["preview"] == "Opens Apple Maps with driving directions to **Paris x(y)** from where you are."
+    assert prompt["preview"] == "Opens Maps with driving directions to **Paris x(y)** from where you are."
     assert prompt["maps"]["to"] == "**Paris** [x](y)"
 
 
@@ -760,3 +760,196 @@ def test_a_malformed_maps_target_is_refused_and_dropped_from_disk(home):
     waiting = present.exchange({"installation_id": "phone-installation-1"})["prompts"]
     assert waiting[0]["id"] == prompt["id"] and "maps" not in waiting[0]
     assert present.has_feature("maps-navigate") is False, "the exchange without features replaced the old one"
+
+
+# --- Google's engine ---------------------------------------------------------------
+
+
+class HostGoogle:
+    """Google Maps Platform as the host sees it: answers by path."""
+
+    def __init__(self, answers):
+        self.answers = answers
+        self.calls = []
+
+    def __call__(self, method, url, headers, body):
+        self.calls.append({"method": method, "url": url, "headers": headers, "body": body})
+        path = url.split("?", 1)[0].split(".com/", 1)[1]
+        answer = self.answers[path]
+        if isinstance(answer, Exception):
+            raise answer
+        return answer
+
+
+GOOGLE_KEY = "AIzaTest_key-0123456789abcdef"
+
+
+@pytest.fixture()
+def google(home, monkeypatch):
+    fake = HostGoogle({})
+    engine_module = maps.maps_google
+    monkeypatch.setattr(engine_module, "_env_value", lambda name: GOOGLE_KEY if name == "GOOGLE_MAPS_API_KEY" else None)
+    # No relay: Google needs none.
+    monkeypatch.setattr(maps.maps_host, "configured", lambda: False)
+    original = engine_module.Engine.__init__
+
+    def engine(self, home_path, fetch=None, zone=None, clock=None):
+        original(self, home_path, fetch=fake, zone=zone or maps_host.timezone.utc, clock=lambda: NOW)
+
+    monkeypatch.setattr(engine_module.Engine, "__init__", engine)
+    return fake
+
+
+def _phone_without_maps(home, **batch):
+    """A phone that shares its location but answers no lookups (the Android app)."""
+    store = location.LocationStore(home, clock=lambda: NOW)
+    phone = MapsPhone()
+    phone.accept(store.register_key(phone.key_request()))
+    batch.setdefault("sharing", sharing())
+    batch.setdefault("fix", fix("significant"))
+    store.ingest(phone.seal(phone.batch(**batch)))
+    return store
+
+
+GOOGLE_BOOTS = {"id": "ChIJBoots", "displayName": {"text": "Boots", "languageCode": "en"},
+                "formattedAddress": "123 Oxford St, London W1D 2HG, UK",
+                "location": {"latitude": 51.5153, "longitude": -0.1418},
+                "primaryTypeDisplayName": {"text": "Pharmacy", "languageCode": "en"}}
+
+
+def test_with_a_google_key_the_host_looks_things_up_without_the_relay(home, google):
+    _phone_without_maps(home)
+    assert maps.available()
+    google.answers["v1/places:searchText"] = {"places": [GOOGLE_BOOTS]}
+    answer = _call({"action": "search", "query": "pharmacy", "near": "51.52,-0.14", "limit": 3})
+    assert answer["ok"] and answer["source"] == "Google Maps, from this Hermes host"
+    place = answer["places"][0]
+    assert place == {"name": "Boots", "address": "123 Oxford St, London W1D 2HG, UK", "category": "Pharmacy",
+                     "lat": 51.5153, "lon": -0.1418, "distance_m": 537, "place_id": "ChIJBoots"}
+    call = google.calls[0]
+    assert call["method"] == "POST" and call["headers"]["X-Goog-Api-Key"] == GOOGLE_KEY
+    assert call["headers"]["X-Goog-FieldMask"] == ("places.id,places.displayName,places.formattedAddress,"
+                                                   "places.location,places.primaryTypeDisplayName")
+    assert call["body"]["textQuery"] == "pharmacy" and call["body"]["pageSize"] == 3
+    assert call["body"]["locationBias"]["circle"]["center"] == {"latitude": 51.52, "longitude": -0.14}
+    assert GOOGLE_KEY not in call["url"]
+
+
+def test_google_routes_transit_here_with_its_rides(home, google):
+    _phone_without_maps(home)
+    google.answers["v1/places:searchText"] = {"places": [GOOGLE_BOOTS]}
+    google.answers["directions/v2:computeRoutes"] = {"routes": [{
+        "description": "", "duration": "1500s", "staticDuration": "1500s", "distanceMeters": 7000,
+        "legs": [{"steps": [
+            {"distanceMeters": 300, "navigationInstruction": {"instructions": "Walk to Old Street"}},
+            {"distanceMeters": 6500, "transitDetails": {
+                "headsign": "Morden", "stopCount": 4,
+                "stopDetails": {"departureStop": {"name": "Old Street"}, "arrivalStop": {"name": "Bank"}},
+                "transitLine": {"nameShort": "Northern", "vehicle": {"name": {"text": "Subway"}}}}},
+        ]}]}]}
+    answer = _call({"action": "directions", "from": "51.5,-0.12", "to": "Boots Oxford St", "mode": "transit",
+                    "arrive_by": "2026-10-13T08:00"})
+    assert answer["ok"] and answer["source"] == "Google Maps, from this Hermes host"
+    route = answer["routes"][0]
+    assert route["duration"] == "about 25 min" and route["name"] is None
+    assert route["steps"] == [{"text": "Walk to Old Street", "distance_m": 300},
+                              {"text": "Subway Northern towards Morden from Old Street to Bank (4 stops)",
+                               "distance_m": 6500}]
+    assert answer["leave_by"] == "2026-10-13T07:35+01:00"
+    body = google.calls[-1]["body"]
+    assert body["travelMode"] == "TRANSIT" and body["arrivalTime"] == "2026-10-13T07:00:00Z"
+    assert "routingPreference" not in body
+    assert google.calls[-1]["headers"]["X-Goog-FieldMask"].endswith(",routes.legs.steps.transitDetails")
+
+
+def test_google_drives_with_traffic_and_says_the_delay(home, google):
+    _phone_without_maps(home)
+    google.answers["directions/v2:computeRoutes"] = {"routes": [
+        {"description": "A10", "duration": "1500s", "staticDuration": "1200s", "distanceMeters": 9000,
+         "legs": [{"steps": [{"distanceMeters": 200, "navigationInstruction": {"instructions": "Turn left"}}]}]},
+        {"description": "A1", "duration": "1700s", "staticDuration": "1650s", "distanceMeters": 9500},
+    ]}
+    answer = _call({"action": "directions", "from": "51.5,-0.12", "to": "51.52,-0.08", "depart_at": "2026-10-13T06:00"})
+    first, second = answer["routes"]
+    assert first["name"] == "A10" and first["traffic_delay"] == "about 5 min"
+    assert first["steps"] == [{"text": "Turn left", "distance_m": 200}] and second["steps"] == []
+    body = google.calls[0]["body"]
+    assert body["routingPreference"] == "TRAFFIC_AWARE" and body["computeAlternativeRoutes"] is True
+    assert "departureTime" not in body, "a departure in the past leaves now"
+    assert body["origin"] == {"location": {"latLng": {"latitude": 51.5, "longitude": -0.12}}}
+
+
+def test_google_travel_times_follow_each_destination_index(home, google):
+    _phone_without_maps(home, sharing=sharing(background_precision="precise"), fix=fix("significant"))
+    google.answers["distanceMatrix/v2:computeRouteMatrix"] = [
+        {"originIndex": 0, "destinationIndex": 1, "condition": "ROUTE_NOT_FOUND"},
+        {"originIndex": 0, "condition": "ROUTE_EXISTS", "duration": "600s", "staticDuration": "540s",
+         "distanceMeters": 3000},
+    ]
+    answer = _call({"action": "travel_times", "to": ["51.52,-0.08", "48.85,2.35"], "mode": "cycling"})
+    first, second = answer["results"]
+    assert first["duration"] == "about 10 min" and first["distance_m"] == 3000
+    assert second["error"] == "no_route"
+    body = google.calls[0]["body"]
+    assert body["travelMode"] == "BICYCLE" and len(body["destinations"]) == 2
+    assert body["origins"][0]["waypoint"]["location"]["latLng"] == {"latitude": 51.532141, "longitude": -0.075512}
+
+
+def test_google_reverse_geocodes_with_its_key_in_the_query(home, google):
+    _phone_without_maps(home)
+    google.answers["maps/api/geocode/json"] = {"status": "OK", "results": [
+        {"formatted_address": "10 Downing St, London SW1A 2AA, UK", "place_id": "ChIJDowning",
+         "geometry": {"location": {"lat": 51.5034, "lng": -0.1276}}}]}
+    answer = _call({"action": "reverse_geocode", "near": "51.5034,-0.1276"})
+    assert answer["places"][0] == {"name": "10 Downing St", "address": "10 Downing St, London SW1A 2AA, UK",
+                                   "lat": 51.5034, "lon": -0.1276, "place_id": "ChIJDowning"}
+    call = google.calls[0]
+    assert "latlng=51.503400%2C-0.127600" in call["url"] and f"key={GOOGLE_KEY}" in call["url"]
+    assert "X-Goog-Api-Key" not in call["headers"]
+    google.answers["maps/api/geocode/json"] = {"status": "REQUEST_DENIED", "error_message": "API not enabled"}
+    assert _call({"action": "reverse_geocode", "near": "51.5034,-0.1276"})["error"] == "unavailable"
+
+
+def test_a_key_google_refuses_reads_plainly(home, google):
+    import urllib.error
+    _phone_without_maps(home)
+    google.answers["v1/places:searchText"] = urllib.error.HTTPError("u", 403, "Forbidden", {}, None)
+    answer = _call({"action": "lookup", "query": "Boots"})
+    assert answer["ok"] is False and answer["error"] == "unavailable" and "key" in answer["note"]
+
+
+def test_saved_places_still_need_the_phone_with_google(home, google):
+    _phone_without_maps(home)
+    assert _call({"action": "directions", "to": "Home"})["error"] == "unavailable"
+    assert google.calls == []
+
+
+def test_google_spends_the_same_daily_share(home, google, monkeypatch):
+    monkeypatch.setattr(maps_host, "DAILY_CALLS", 1)
+    _phone_without_maps(home)
+    google.answers["v1/places:searchText"] = {"places": [GOOGLE_BOOTS]}
+    assert _call({"action": "lookup", "query": "Boots"})["ok"]
+    assert _call({"action": "lookup", "query": "Boots"})["error"] == "daily_limit"
+    assert len(google.calls) == 1
+
+
+def test_navigate_to_a_google_place_goes_as_its_coordinates(home, google, monkeypatch):
+    _phone_without_maps(home)
+    present = _present(home)
+    monkeypatch.setattr(maps, "client", Enqueued())
+    google.answers["v1/places/ChIJBoots"] = GOOGLE_BOOTS
+    answer = _call({"action": "navigate", "to": "place_id:ChIJBoots", "mode": "cycling"})
+    assert answer["ok"] and answer["to"] == "Boots"
+    assert answer["link"] == ("https://www.google.com/maps/dir/?api=1&destination=51.5153%2C-0.1418"
+                              "&travelmode=bicycling")
+    prompt = present.exchange({"installation_id": "phone-installation-1", "features": ["maps-navigate"]})["prompts"][0]
+    assert prompt["maps"] == {"to": "51.515300,-0.141800", "mode": "cycling"}
+    assert prompt["title"] == "Directions to Boots?"
+    assert google.calls[0]["headers"]["X-Goog-FieldMask"] == maps.maps_google.PLACE_FIELDS
+
+
+@pytest.mark.parametrize("value", [None, "", "short", "AIza key with spaces 0123456789",
+                                   "AIza\r\nX-Evil: 1aaaaaaaaaaaaa"])
+def test_a_key_that_isnt_one_leaves_google_off(monkeypatch, value):
+    monkeypatch.setattr(maps.maps_google, "_env_value", lambda name: value)
+    assert maps.maps_google.configured() is False

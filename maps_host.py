@@ -7,6 +7,9 @@ say which host used it); this module calls ``maps-api.apple.com`` itself, so
 the relay never sees a lookup. Answers have the same shapes as the phone's
 (designs/maps-v1-contract.md sections 4 and 7).
 
+A host with its own Google Maps Platform key uses Google instead
+(maps_google); ``engine()`` picks, and both count against one daily share.
+
 The host knows no saved place's coordinates (they live on the phone) and
 the server API gives transit times but not transit routes: those lookups
 raise ``NeedsPhone``. "me" is the host's last fix, at the detail it was
@@ -75,6 +78,18 @@ def configured() -> bool:
         return False
 
 
+def available() -> bool:
+    """Whether this host can answer lookups itself: its own Google key, or Apple through the relay."""
+    from . import maps_google
+    return maps_google.configured() or configured()
+
+
+def engine(home: Path, zone: Any = timezone.utc) -> "Engine":
+    """The engine this host answers with: Google when it has a key, else Apple."""
+    from . import maps_google
+    return maps_google.Engine(home, zone=zone) if maps_google.configured() else Engine(home, zone=zone)
+
+
 def _access_token(refresh: bool = False) -> str:
     global _unavailable_until
     with _lock:
@@ -104,7 +119,8 @@ def _access_token(refresh: bool = False) -> str:
 
 
 def _spend(home: Path) -> None:
-    """One Apple call against this host's daily share of Conduit's quota.
+    """One Apple (or Google) call against this host's daily share: of
+    Conduit's Apple quota, or of what the host's own Google key may spend.
 
     The count is read and rewritten in place under a file lock, so gateway
     and dashboard processes sharing a home count together. The file is
@@ -116,7 +132,7 @@ def _spend(home: Path) -> None:
         with _usage_lock, os.fdopen(os.open(path, flags, 0o600), "r+b") as handle, client._exclusive(handle):
             _count_one(handle)
     except OSError:
-        raise HostUnavailable("unavailable", "This Hermes host can't keep count of its Apple Maps lookups.") from None
+        raise HostUnavailable("unavailable", "This Hermes host can't keep count of its maps lookups.") from None
 
 
 def _count_one(handle: Any) -> None:
@@ -136,7 +152,7 @@ def _count_one(handle: Any) -> None:
     if not isinstance(count, int) or isinstance(count, bool) or count < 0:
         count = 0
     if count >= DAILY_CALLS:
-        raise HostUnavailable("daily_limit", "Today's Apple Maps lookups from this host are used up.")
+        raise HostUnavailable("daily_limit", "Today's maps lookups from this host are used up.")
     handle.seek(0)
     handle.truncate()
     handle.write(json.dumps({"day": today, "count": count + 1}).encode())
@@ -154,6 +170,8 @@ MAX_ANSWER_BYTES = 512 * 1024
 
 
 class Engine:
+    name = "Apple Maps"
+
     def __init__(self, home: Path, fetch: Callable[[str, str], Any] | None = None, zone: Any = timezone.utc,
                  clock: Callable[[], float] = time.time) -> None:
         self.home = home

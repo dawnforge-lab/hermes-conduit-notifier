@@ -13,6 +13,15 @@ checks it). The format is fixed, because Conduit reads it:
 - One line per change, starting with `- `. Fixes say what goes wrong without
   the update. Plain words: these show on a phone.
 
+## 0.69.1 (2026-10-24)
+
+### New and improved
+- Maps lookups from your Hermes host can use Google Maps with your own key:
+  put GOOGLE_MAPS_API_KEY in Hermes' .env. It needs no relay, and it gives
+  transit directions without your phone.
+- Directions to a place from a Google answer open on any phone, and the tool
+  and health texts no longer assume an iPhone.
+
 ## 0.69.0 (2026-10-24)
 
 ### New and improved

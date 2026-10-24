@@ -2039,6 +2039,23 @@ asking for an hour. Self-hosted relays enable it with a key that has "Maps"
 enabled for a Maps ID: put it at `deploy/secrets/maps/maps.p8` and set
 `MAPS_KEY_ID` in `.env`.
 
+### Google Maps on the host (plugin 0.69.1+)
+
+A host with its own Google Maps Platform key answers its lookups with Google
+instead of Apple, and needs no relay for them: put the key in Hermes' `.env`
+as `GOOGLE_MAPS_API_KEY`. Search and places use Places API (New), directions
+and travel times the Routes API (with traffic when driving), and what's at a
+spot the Geocoding API, so the key's project needs those three enabled.
+Google routes transit too, so transit directions don't need the phone here;
+saved places still do. The key stays on this host: no phone, relay or app
+build carries it. Restrict it to those three APIs (and, if the host has a
+fixed address, to that address), and set a budget alert: Google bills the
+key's project. Calls count against the same 200 a day as Apple's.
+`navigate` to a `place_id` from a Google answer sends the place's
+coordinates, which any phone's Maps opens, and the link for a text chat is
+a Google Maps one. The Android app answers no lookups itself, so with it
+the host engine is the only one.
+
 ## Calendar, Reminders, Focus and phone status from Conduit (plugin 0.27+)
 
 Conduit can share the user's iPhone calendars (every account on the phone),
