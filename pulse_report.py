@@ -605,11 +605,14 @@ def parse_ratings(text: str, items: dict[int, str], sources: Optional[dict[int, 
     return [Rating(n, items[n], useful, (sources or {}).get(n)) for n, useful in sorted(found.items())]
 
 
-def ratings_after(home: Path, *, chat_id: str, tag: str, since: float) -> tuple[dict[int, str], list[Rating]]:
+def ratings_after(home: Path, *, chat_id: str, tag: str, since: float,
+                  shown: Optional[set[int]] = None) -> tuple[dict[int, str], list[Rating]]:
     """The delivered report's items, and the user's ratings in what they
     wrote after it in the home chat (up to the next Pulse turn). A rating
-    names a remembered item only if the report message, as Hermes keeps it,
-    showed that item (Pulse trims its own copy once delivered)."""
+    names a remembered item only if the report showed that item: ``shown``
+    when given (a report made from a candidate list, its picks), else what
+    the report message, as Hermes keeps it, listed (Pulse trims its own copy
+    once delivered)."""
     turn = hermes.find_turn(home, chat_id=chat_id, tag=tag, since=since)
     if turn is None or not turn.reply:
         return {}, []
@@ -617,7 +620,8 @@ def ratings_after(home: Path, *, chat_id: str, tag: str, since: float) -> tuple[
     if not items:
         return {}, []
     replies = hermes.user_text_after(home, session_id=turn.session_id, tag=tag)
-    return items, parse_ratings("\n".join(replies), items, report_sources(turn.reply, shown_items(turn.prompt)))
+    return items, parse_ratings("\n".join(replies), items, report_sources(
+        turn.reply, shown_items(turn.prompt) if shown is None else shown))
 
 
 def ratings_json(ratings: list[Rating]) -> str:

@@ -843,6 +843,8 @@ class PulseStore:
         in the same write (pulse_candidates)."""
         for row in rows:
             _check_columns(row, CARD_COLUMNS)
+        if links and len(links) != len(rows):
+            raise ValueError(f"{len(links)} candidate links for {len(rows)} cards")
         with _lock, self._connect() as conn:
             conn.execute("BEGIN IMMEDIATE")
             try:

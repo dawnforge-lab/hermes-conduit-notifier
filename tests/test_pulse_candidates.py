@@ -11,7 +11,7 @@ import types
 
 import pytest
 
-from test_pulse import ROOT, SID, _load, cli, pulse, pulse_store, report, store  # noqa: F401
+from test_pulse import ROOT, SID, _load, cli, host, pulse, pulse_store, report, store  # noqa: F401
 from test_pulse_followup import CHAT, commitment, live  # noqa: F401
 
 candidates = _load("conduit_push.pulse_candidates", ROOT / "pulse_candidates.py")
@@ -403,6 +403,34 @@ def test_a_list_the_store_refuses_to_send_stays_ready(reporting):
     assert live.store.get(pulse.REPORT_RUN) == run  # the next tick tries again
     live.store.add_attempt = add_attempt
     assert pulse._send_report(live.store, live.home, run, SID, time.time()) and len(live.sent()) == 1
+
+
+def test_a_list_hermes_refuses_says_so(reporting, monkeypatch):
+    live = reporting
+    run = listed(live)
+    monkeypatch.setattr(pulse, "_sender", lambda pulse_store: lambda chat_id, text: host.Sent(False, "", "chat gone"))
+    assert pulse._send_report(live.store, live.home, run, SID, time.time())
+    assert live.store.get(pulse.REPORT_RUN)["refused"] == "chat gone"
+
+
+def test_typed_ratings_of_a_list_report_still_name_its_remembered_picks(reporting, monkeypatch):
+    live = reporting
+    now = time.time()
+    item_id = commitment(live, due="2026-10-30", due_at=now + 3 * 86400)
+    live.store.set("memory", True)
+    live.llm.replies.append({"remembered": [{"ref": item_id, "bring_up": True, "value": 3, "skip": "",
+                                             "line": "Renew your passport"}], "found": []})
+    listed(live, now)
+    pulse.tick(now + 1)
+    [sent] = live.sent()
+    assert report.shown_items(sent) == set()  # the turn lists no "What Pulse remembers" of its own
+    [attempt] = live.store.attempts_since(pulse.REPORT, now - 60)
+    live.store.update_attempt(attempt["attempt_id"], state=store.DELIVERED)  # its cards never landed
+    asked = []
+    monkeypatch.setattr(report, "ratings_after", lambda home, **kwargs: asked.append(kwargs["shown"]) or ({}, []))
+    monkeypatch.setattr(pulse, "_last_ratings", 0.0)
+    pulse._collect_ratings(live.store, live.home, now + 2)
+    assert asked == [{item_id}]  # so "1 no" still names the remembered item
 
 
 def test_a_ref_written_as_a_whole_float_still_counts():

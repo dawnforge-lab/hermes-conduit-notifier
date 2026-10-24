@@ -605,14 +605,18 @@ def _send_report(pulse_store: store.PulseStore, home: Path, run: dict, chat_id: 
         picked = candidates.picks(pulse_store.run_candidates(run["id"]))
         since = str(run.get("since") or "")
         # The attempt's item id is the run's, so its turn finds its picks (_run_picks).
-        delivery.submit(pulse_store, _sender(pulse_store), kind=REPORT, chat_id=chat_id,
-                        text=lambda tag: candidates.report_text(tag, picked, since), item_id=run["id"])
+        attempt = delivery.submit(pulse_store, _sender(pulse_store), kind=REPORT, chat_id=chat_id,
+                                  text=lambda tag: candidates.report_text(tag, picked, since), item_id=run["id"])
     except BaseException:
         # Nothing recorded (the store refused the attempt): back as it was, so
         # a later tick sends it. Should this write fail too, the run stays sent
         # and the next scheduled report makes a new list.
         pulse_store.swap(REPORT_RUN, sent, run)
         raise
+    if attempt.get("state") in (store.REFUSED, store.NOT_ADMITTED):
+        # Hermes didn't take it: `pulse candidates` says so, and the report is
+        # tried again as any report is (_report_due), from a new list.
+        pulse_store.swap(REPORT_RUN, sent, {**sent, "refused": attempt.get("detail") or attempt["state"]})
     return True
 
 
@@ -878,9 +882,11 @@ def _collect_ratings(pulse_store: store.PulseStore, home: Path, now: float) -> N
     for row in pulse_store.attempts_since(REPORT, now - RATINGS_DAYS * 86400):
         if row["state"] != store.DELIVERED or str(row["attempt_id"]) in split:
             continue
+        picked = _run_picks(pulse_store, row)
+        shown = None if picked is None else {pick["item_id"] for pick in picked if pick["item_id"] is not None}
         try:
             items, ratings = report.ratings_after(home, chat_id=row["session_key"], tag=row["tag"],
-                                                  since=row["created_at"] - delivery.SINCE_SLACK_S)
+                                                  since=row["created_at"] - delivery.SINCE_SLACK_S, shown=shown)
         except hermes.HermesUnreadable:
             continue
         if items:

@@ -21,6 +21,7 @@ turn's reply.
 
 from __future__ import annotations
 
+import math
 import re
 import secrets
 from datetime import datetime, tzinfo
@@ -217,7 +218,7 @@ def _value(value: Any) -> Optional[int]:
     if isinstance(value, bool) or not isinstance(value, (int, float, str)):
         return None
     try:
-        number = round(float(value))
+        number = math.floor(float(value) + 0.5)  # half up: 2.5 is 3, as 3.5 is 4
     except (ValueError, OverflowError):
         return None
     return number if 1 <= number <= 5 else None
