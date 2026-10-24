@@ -250,6 +250,38 @@ CREATE TABLE IF NOT EXISTS backfill_marks (
     window_from REAL NOT NULL DEFAULT 0,
     PRIMARY KEY (profile, chat_id)
 );
+-- Everything a report's candidate list put in front of Pulse
+-- (pulse_candidates), what it decided about each, and why: kept 30 days, so
+-- "why didn't you tell me about X?" has an answer as well as "why that?".
+CREATE TABLE IF NOT EXISTS candidates (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    run_id TEXT NOT NULL,
+    created_at REAL NOT NULL,
+    -- "memory": a remembered item the report listed (or kept out);
+    -- "model": something else the report's model found.
+    origin TEXT NOT NULL,
+    item_id INTEGER,
+    kind TEXT NOT NULL,
+    profile TEXT NOT NULL DEFAULT '',
+    chat_id TEXT NOT NULL DEFAULT '',
+    -- Where the model found it: chat, calendar, reminders, notes, jobs or tools.
+    source TEXT NOT NULL DEFAULT '',
+    area TEXT NOT NULL DEFAULT '',
+    due_at REAL,
+    actionable INTEGER,
+    -- The model's guess at how useful it is now (1-5), its own pick under
+    -- the user's bar, and its one-word reason to leave it out.
+    value INTEGER,
+    bring_up INTEGER NOT NULL DEFAULT 0,
+    skip TEXT NOT NULL DEFAULT '',
+    -- What it would tell the user (or the remembered item's own text).
+    text TEXT NOT NULL DEFAULT '',
+    decision TEXT NOT NULL,
+    rank INTEGER,
+    card_id INTEGER
+);
+CREATE INDEX IF NOT EXISTS candidates_run ON candidates(run_id);
+CREATE INDEX IF NOT EXISTS candidates_created ON candidates(created_at);
 """
 # Where memory has read each chat to: ``watermarks`` for chats as they
 # happen, ``backfill_marks`` for a backfill of older history (same shape, plus
@@ -276,6 +308,8 @@ CARD_COLUMNS = ("kind", "item_id", "level", "title", "quote", "news", "why", "pr
 _ADDED_CARD_COLUMNS = (("topic", "TEXT NOT NULL DEFAULT ''"), ("brief", "TEXT NOT NULL DEFAULT ''"),
                        ("dismissed_at", "REAL"))
 LESSON_COLUMNS = ("kind", "what", "value", "profile", "chat_id", "card_id", "cause", "created_at")
+CANDIDATE_COLUMNS = ("origin", "item_id", "kind", "profile", "chat_id", "source", "area", "due_at", "actionable",
+                     "value", "bring_up", "skip", "text", "decision", "rank")
 
 
 def _listed(conn: Any, key: str) -> list[str]:
@@ -1094,11 +1128,84 @@ class PulseStore:
             return bool(conn.execute("UPDATE lessons SET undone_at=? WHERE id=? AND undone_at IS NULL",
                                      (now, lesson_id)).rowcount)
 
+    # The report's candidate list (pulse_candidates) ---------------------------
+
+    def add_candidates(self, run_id: str, rows: Sequence[dict[str, Any]], *, now: float) -> list[int]:
+        """Journals a run's candidates; their ids, in order."""
+        for row in rows:
+            _check_columns(row, CANDIDATE_COLUMNS)
+        with _lock, self._connect() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            try:
+                ids = _insert_candidates(conn, run_id, rows, now)
+                conn.execute("COMMIT")
+            except BaseException:
+                conn.execute("ROLLBACK")
+                raise
+        return ids
+
+    def finish_run(self, key: str, run: dict, rows: Sequence[dict[str, Any]], done: dict, *, now: float) -> bool:
+        """Journals a run's candidates and sets ``key`` to ``done``, in one
+        write and only while ``key`` still holds ``run``: a run given up on
+        meanwhile journals nothing."""
+        for row in rows:
+            _check_columns(row, CANDIDATE_COLUMNS)
+        with _lock, self._connect() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            try:
+                found = conn.execute("SELECT value_json FROM settings WHERE key=?", (key,)).fetchone()
+                try:
+                    current = json.loads(found["value_json"]) if found else None
+                except ValueError:
+                    current = None
+                if current != run:
+                    conn.execute("ROLLBACK")
+                    return False
+                _insert_candidates(conn, run["id"], rows, now)
+                conn.execute("INSERT INTO settings(key, value_json) VALUES(?, ?) "
+                             "ON CONFLICT(key) DO UPDATE SET value_json=excluded.value_json", (key, json.dumps(done)))
+                conn.execute("COMMIT")
+            except BaseException:
+                conn.execute("ROLLBACK")
+                raise
+        return True
+
+    def run_candidates(self, run_id: str) -> list[dict]:
+        """A run's candidates: its picks in their order, then the rest as listed."""
+        with self._connect() as conn:
+            return [dict(row) for row in conn.execute(
+                "SELECT * FROM candidates WHERE run_id=? ORDER BY rank IS NULL, rank, id", (run_id,))]
+
+    def candidate_runs(self, limit: int) -> list[str]:
+        """The runs with candidates journaled, newest first."""
+        with self._connect() as conn:
+            return [row["run_id"] for row in conn.execute(
+                "SELECT run_id FROM candidates GROUP BY run_id ORDER BY MAX(id) DESC LIMIT ?", (limit,))]
+
+    def prune_candidates(self, before: float) -> int:
+        """Drops the candidates journaled before ``before``; how many went."""
+        with _lock, self._connect() as conn:
+            return conn.execute("DELETE FROM candidates WHERE created_at < ?", (before,)).rowcount
+
+    def link_candidates(self, pairs: Sequence[tuple[int, int]]) -> None:
+        """Notes the card each (candidate, card) pick became."""
+        if not pairs:
+            return
+        with _lock, self._connect() as conn:
+            conn.executemany("UPDATE candidates SET card_id=? WHERE id=?",
+                             [(card, candidate) for candidate, card in pairs])
+
     def item_counts(self) -> dict[str, int]:
         with self._connect() as conn:
             rows = conn.execute("SELECT kind, COUNT(*) AS n FROM items WHERE status='open' AND superseded_at IS NULL "
                                 "GROUP BY kind").fetchall()
         return {row["kind"]: row["n"] for row in rows}
+
+
+def _insert_candidates(conn: sqlite3.Connection, run_id: str, rows: Sequence[dict[str, Any]], now: float) -> list[int]:
+    return [int(conn.execute(f"INSERT INTO candidates(run_id, created_at, {', '.join(row)}) "
+                             f"VALUES(?, ?, {', '.join('?' * len(row))})", (run_id, now, *row.values())).lastrowid)
+            for row in rows]
 
 
 def _current(conn: sqlite3.Connection, item_id: int, profile: str) -> Optional[int]:
