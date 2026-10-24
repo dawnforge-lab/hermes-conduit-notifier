@@ -17,12 +17,13 @@ entry current.
   your plan, the app's included, before writing code.
 - Follow the entry's rulings. Changing a ruling is the maintainer's call;
   record their decision in the entry.
-- In the PR, fill in Siblings: name the entry, then each sibling done, not
-  needed (and why), or a gap left open.
+- In the PR, fill in Siblings: name the entry, or the hermes-conduit PR that
+  adds or updates it, then for each sibling say done, not needed (and why),
+  or a gap left open.
 - When the change alters an entry, update it in hermes-conduit. A feature
   with siblings in the app and no entry gets one there, and a fix that brings
   a sibling in line with an earlier change it missed adds that sibling to the
-  entry. Name that hermes-conduit PR in Siblings.
+  entry.
 - Text that describes a behavior is one of its siblings: tool descriptions and
   results the models read, README.md, and the app's briefings and Settings text.
 
