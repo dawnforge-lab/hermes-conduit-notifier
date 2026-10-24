@@ -479,9 +479,9 @@ def _sender(pulse_store: store.PulseStore) -> Callable[[str, str], host.Sent]:
     return lambda chat_id, body: host.send(chat_id, body, profile=profile, model=model)
 
 
-def _send(pulse_store: store.PulseStore, *, kind: str, chat_id: str, text: Any) -> None:
-    delivery.submit(pulse_store, _sender(pulse_store), kind=kind,
-                    chat_id=chat_id, text=text)
+def _send(pulse_store: store.PulseStore, *, kind: str, chat_id: str, text: Any) -> dict:
+    return delivery.submit(pulse_store, _sender(pulse_store), kind=kind,
+                           chat_id=chat_id, text=text)
 
 
 def _maybe_probe(pulse_store: store.PulseStore, home: Path, now: float) -> bool:
@@ -576,7 +576,7 @@ def _report_run(home: Path, chat_id: str, run: dict) -> None:
         ready = {**run, "state": RUN_READY, "since": gathered.since, "tokens": tokens}
         if not pulse_store.finish_run(REPORT_RUN, run, rows, ready, now=now):
             logger.info("conduit_push: Pulse: the report's candidate list took too long; the report went without it")
-    except Exception as error:  # noqa: BLE001 — the report goes out as it used to
+    except BaseException as error:  # noqa: BLE001 — the report goes out as it used to
         logger.warning("conduit_push: Pulse couldn't list the report's candidates; it goes out as before",
                        exc_info=True)
         try:
@@ -584,6 +584,8 @@ def _report_run(home: Path, chat_id: str, run: dict) -> None:
                 pulse_store.swap(REPORT_RUN, run, {**run, "state": RUN_FAILED, "error": type(error).__name__})
         except Exception:  # noqa: BLE001 — left working, it goes out as before once stale
             logger.debug("conduit_push: Pulse couldn't mark the report's candidate list failed", exc_info=True)
+        if not isinstance(error, Exception):
+            raise  # an interpreter exit or the like: marked, and on its way
     finally:
         _wake.set()  # the next tick sends it now, not a whole TICK_S later
 
@@ -600,13 +602,14 @@ def _send_report(pulse_store: store.PulseStore, home: Path, run: dict, chat_id: 
         return False  # another process got to it
     try:
         if run["state"] != RUN_READY:
-            _send_turn_report(pulse_store, home, chat_id, now)
-            return True
-        picked = candidates.picks(pulse_store.run_candidates(run["id"]))
-        since = str(run.get("since") or "")
-        # The attempt's item id is the run's, so its turn finds its picks (_run_picks).
-        attempt = delivery.submit(pulse_store, _sender(pulse_store), kind=REPORT, chat_id=chat_id,
-                                  text=lambda tag: candidates.report_text(tag, picked, since), item_id=run["id"])
+            attempt = _send_turn_report(pulse_store, home, chat_id, now)
+        else:
+            picked = candidates.picks(pulse_store.run_candidates(run["id"]))
+            since = str(run.get("since") or "")
+            # The attempt's item id is the run's, so its turn finds its picks (_run_picks).
+            attempt = delivery.submit(pulse_store, _sender(pulse_store), kind=REPORT, chat_id=chat_id,
+                                      text=lambda tag: candidates.report_text(tag, picked, since),
+                                      item_id=run["id"])
     except BaseException:
         # Nothing recorded (the store refused the attempt): back as it was, so
         # a later tick sends it. Should this write fail too, the run stays sent
@@ -620,11 +623,11 @@ def _send_report(pulse_store: store.PulseStore, home: Path, run: dict, chat_id: 
     return True
 
 
-def _send_turn_report(pulse_store: store.PulseStore, home: Path, chat_id: str, now: float) -> None:
+def _send_turn_report(pulse_store: store.PulseStore, home: Path, chat_id: str, now: float) -> dict:
     """The report as it was before candidate lists: one turn that reads the
-    day and picks its items itself."""
+    day and picks its items itself; its attempt."""
     context, since = report.build(home, pulse_store, home_chat_id=chat_id, now=now)
-    _send(pulse_store, kind=REPORT, chat_id=chat_id, text=lambda tag: report.report_text(tag, context, since,
+    return _send(pulse_store, kind=REPORT, chat_id=chat_id, text=lambda tag: report.report_text(tag, context, since,
                                                                                     learning.nudge(pulse_store)))
 
 

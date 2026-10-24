@@ -411,6 +411,10 @@ def test_a_list_hermes_refuses_says_so(reporting, monkeypatch):
     monkeypatch.setattr(pulse, "_sender", lambda pulse_store: lambda chat_id, text: host.Sent(False, "", "chat gone"))
     assert pulse._send_report(live.store, live.home, run, SID, time.time())
     assert live.store.get(pulse.REPORT_RUN)["refused"] == "chat gone"
+    failed = {**run, "id": "f" * 16, "state": pulse.RUN_FAILED, "error": "BadReply"}  # the report as it was
+    live.store.set(pulse.REPORT_RUN, failed)
+    assert pulse._send_report(live.store, live.home, failed, SID, time.time())
+    assert live.store.get(pulse.REPORT_RUN)["refused"] == "chat gone"
 
 
 def test_typed_ratings_of_a_list_report_still_name_its_remembered_picks(reporting, monkeypatch):
