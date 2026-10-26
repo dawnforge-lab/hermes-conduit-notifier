@@ -15,7 +15,7 @@ from hermes_constants import get_hermes_home
 
 from . import (call_tool, call_watches, calls, chat_on_screen, clarify_loop, client, conduit_first, cron_runs,
                desktop_selected, health_tool, live_activity, location_tool, maps_tool, phone_tool, present_tool, pulse,
-               reply_sources, room_memory, settings_tool, show_tool, turn_surface, voice_archive)
+               reply_sources, room_memory, room_pushes, settings_tool, show_tool, turn_surface, voice_archive)
 from .session_titles import title as _session_title, titled as _titled
 from .client import enqueue
 from .events import approval_decision, clarification_text, event_id, is_silent_response, plain_text, push_event
@@ -205,8 +205,10 @@ def _post_llm_call(**kwargs: Any) -> None:
     # nothing to tell the phone. A follow-up, a brief or a report's items are
     # news for the user, so they go like any reply.
     pulse_turn = pulse.is_pulse_turn(session_id, kwargs.get("turn_id"))
+    # A group room member's reply shows in the room, not as a push (room_pushes.py).
     quiet = (is_silent_response(response) or cron_runs.quiet(session_id, kwargs.get("task_id"), response)
-             or (pulse_turn and not pulse.pushes(session_id, kwargs.get("turn_id"), response)))
+             or (pulse_turn and not pulse.pushes(session_id, kwargs.get("turn_id"), response))
+             or room_pushes.is_room(session_id, get_hermes_home()))
     chat_title = "" if quiet or pulse_turn else _session_title(session_id)
     # A Pulse push is titled by what it brings, not by Pulse's hidden chat.
     copy = (pulse.push_copy(session_id, kwargs.get("turn_id"), response) if pulse_turn and not quiet
@@ -388,6 +390,10 @@ def _on_session_end(**kwargs: Any) -> None:
         # A call the user asked for on this job (a watch) still rings.
         calls.turn_ended(session_id, "failed", profile=_profile, fallback=None)
         return
+    if room_pushes.is_room(session_id, get_hermes_home()):
+        # A group room member's failed turn shows in the room (room_pushes.py).
+        calls.turn_ended(session_id, "failed", profile=_profile, fallback=None)
+        return
     failed = push_event(
         "turn.failed",
         identifier=event_id("failure", kwargs.get("turn_id"), session_id),
@@ -421,14 +427,16 @@ def _pre_approval_request(**kwargs: Any) -> None:
     # and the plugin's delivery queue never retries, so a stable id has no
     # at-least-once role to play there.
     turn_id = kwargs.get("turn_id") or uuid.uuid4().hex
+    # A group room member's turn is titled by its room, not its hidden session (room_pushes.py).
+    room = room_pushes.label(_text(kwargs.get("session_id")) or session_id, get_hermes_home())
     enqueue(push_event(
         "approval.needed",
         identifier=event_id("approval", session_id, turn_id, kwargs.get("pattern_key"), kwargs.get("command")),
         session_id=session_id,
         profile=_profile,
-        title=_titled("Approval needed", session_id),
+        title=f"Approval needed · {room}" if room else _titled("Approval needed", session_id),
         title_label="approval.needed",
-        session_title=_session_title(session_id),
+        session_title=room or _session_title(session_id),
         # No description: the phone writes the generic line in its language.
         body=description,
         # Attach the structured card so Conduit can render an answerable

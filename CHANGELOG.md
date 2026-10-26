@@ -13,6 +13,14 @@ checks it). The format is fixed, because Conduit reads it:
 - One line per change, starting with `- `. Fixes say what goes wrong without
   the update. Plain words: these show on a phone.
 
+## 0.69.2 (2026-10-26)
+
+### Fixes
+- Bots in a group chat no longer notify each reply or pass of their turns,
+  titled with the room's hidden prompt. The room shows their replies; an
+  approval or a question one waits on still notifies, titled with the room's
+  name and the bot.
+
 ## 0.69.1 (2026-10-24)
 
 ### New and improved

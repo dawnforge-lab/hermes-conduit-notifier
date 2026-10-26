@@ -11,6 +11,8 @@ import threading
 import time
 from typing import Any
 
+from . import room_pushes
+
 logger = logging.getLogger(__name__)
 
 # A turn can raise several titled events (reply, approval, failure) in a few
@@ -46,7 +48,8 @@ def title(key: Any) -> str:
             return hit[1]
         if hit:
             del _cache[entry]
-    value = _read(home, key)
+    # A group room member's hidden session is titled by its room (room_pushes.py).
+    value = room_pushes.label(key, home) or _read(home, key)
     if value == BOT_CHAT_TITLE:
         value = _profile_of(home)
     if value:
