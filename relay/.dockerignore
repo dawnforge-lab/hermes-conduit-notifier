@@ -1,7 +1,0 @@
-.env
-*.p8
-*.key
-*.pem
-test
-deploy
-README.md

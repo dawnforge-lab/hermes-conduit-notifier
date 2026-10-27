@@ -1,6 +1,6 @@
 name: Tests
 
-# The plugin, relay and mailbox test suites, on every PR and every push to
+# The plugin test suite, on every PR and every push to
 # main. Until 2026-10-23 they ran only when a session remembered to, so a PR
 # could merge with a failing test, or with a plugin version another PR had
 # already taken on main (two PRs shipped 0.51.5, two 0.62.4).
@@ -46,43 +46,3 @@ jobs:
 
       - name: Run the plugin tests
         run: python -m pytest --rootdir=tests tests -q
-
-  relay:
-    name: Relay
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    defaults:
-      run:
-        working-directory: relay
-    steps:
-      - uses: actions/checkout@v6
-        with:
-          persist-credentials: false
-
-      - uses: actions/setup-node@v5
-        with:
-          node-version: "22"
-
-      # No dependencies to install: the relay uses Node's own modules only.
-      - name: Run the relay tests
-        run: npm test
-
-  mailbox:
-    name: Mailbox
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    defaults:
-      run:
-        working-directory: mailbox
-    steps:
-      - uses: actions/checkout@v6
-        with:
-          persist-credentials: false
-
-      - uses: actions/setup-node@v5
-        with:
-          # node:sqlite needs 22.13 or later; "22" is the newest 22.x.
-          node-version: "22"
-
-      - name: Run the mailbox tests
-        run: npm test

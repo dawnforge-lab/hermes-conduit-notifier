@@ -279,12 +279,6 @@ def test_a_stale_state_write_keeps_the_provisioned_key(monkeypatch, tmp_path):
     assert "e2e" not in json.loads(path.read_text())
 
 
-def test_ciphertext_cap_matches_the_relay():
-    # relay/src/server.mjs E2E_MAX_CT_CHARS: the relay refuses anything larger.
-    source = (ROOT / "relay" / "src" / "server.mjs").read_text()
-    assert f"E2E_MAX_CT_CHARS = {e2e.MAX_CT_CHARS:_}" in source or f"E2E_MAX_CT_CHARS = {e2e.MAX_CT_CHARS}" in source
-
-
 def test_client_and_dashboard_agree_on_the_kid_shape():
     assert api._E2E_KID.pattern == e2e.KID_PATTERN.pattern
 

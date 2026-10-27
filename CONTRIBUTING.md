@@ -1,7 +1,6 @@
 # Contributing to hermes-conduit-notifier
 
-This repo is the Conduit plugin for Hermes (`conduit_push`), the push relay
-(`relay/`) and the rooms mailbox (`mailbox/`). The iPhone app is
+This repo is the Conduit plugin for Hermes (`conduit_push`). The iPhone app is
 [hermes-conduit](https://github.com/kaishi00/hermes-conduit).
 
 ## Connected features
@@ -38,10 +37,8 @@ before merging. CI fails a PR whose version main already has.
 
 ## Tests
 
-CI (`.github/workflows/tests.yml`) runs all three suites on every PR and every
+CI (`.github/workflows/tests.yml`) runs the plugin suite on every PR and every
 push to main. To run them locally:
 
     pip install -r tests/requirements.txt
     python -m pytest --rootdir=tests tests
-    (cd relay && npm test)
-    (cd mailbox && npm test)
