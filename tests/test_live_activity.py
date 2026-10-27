@@ -281,6 +281,22 @@ def test_a_refused_credential_tells_status_to_pair_again(monkeypatch):
     assert marked == [(state, True)]
 
 
+def test_the_refusal_itself_is_recorded(monkeypatch):
+    state = {"relay_url": "https://relay.example", "credential": "c"}
+    recorded = []
+    refusal = client.RelayRejected(403, "request_rejected")
+    monkeypatch.setattr(client, "load_state", lambda: state)
+    monkeypatch.setattr(client, "record_relay_refusal", lambda sent_with, error: recorded.append((sent_with, error)))
+
+    def refuse(url, **kwargs):
+        raise refusal
+
+    monkeypatch.setattr(client, "request_json", refuse)
+    with pytest.raises(client.RelayRejected):
+        live._post_to_relay({"session_id": "s", "state": {"phase": "thinking", "tools": 0}})
+    assert recorded == [(state, refusal)]
+
+
 def test_an_end_the_relay_did_not_take_is_sent_again(reporter, relay, clock):
     reporter.turn_started("s-1")
     clock[0] += live.FIRST_DELAY_S
