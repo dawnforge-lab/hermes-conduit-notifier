@@ -52,7 +52,7 @@ WRITE_ACTIONS = CALENDAR_CHANGE_KINDS
 PHONE_ACTIONS = ("status", "alarms", "pending") + ALARM_CHANGE_KINDS
 
 FRESHNESS_NOTE = ("This is the phone's copy as of its last sync (as_of). The phone syncs when Talaria is open and "
-                  "on background wakes, so changes made since, on a Mac or by other people, can be missing. Say "
+                  "on background wakes, so changes made since, on another device or by other people, can be missing. Say "
                   "\"as of\" when it matters, and ask the user if a same-day detail is important.")
 
 # The use policy here and in skills/using-calendar/SKILL.md says the same

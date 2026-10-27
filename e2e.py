@@ -34,7 +34,6 @@ from typing import Any
 
 # Same shape events.py checks; repeated so e2e stays import-free of events.
 _LOCATE_ID = re.compile(r"^l_[A-Za-z0-9_-]{16,64}\Z")
-_MAPS_ID = re.compile(r"^m_[A-Za-z0-9_-]{16,64}\Z")
 
 VERSION = 1
 SALT = b"talaria-e2e-v1"
@@ -156,8 +155,7 @@ def _aead(key: bytes) -> Any:
 
 def _pack(inner: dict[str, Any]) -> tuple[bytes, int]:
     raw = json.dumps(inner, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
-    # Raw deflate (no zlib header) is what Apple's Compression framework
-    # reads as COMPRESSION_ZLIB.
+    # Raw deflate (no zlib header), which the app inflates with nowrap.
     compressor = zlib.compressobj(level=9, wbits=-15)
     packed = compressor.compress(raw) + compressor.flush()
     return (packed, 1) if len(packed) < len(raw) else (raw, 0)
@@ -242,7 +240,7 @@ def seal_event(
     if envelope is None:
         # Only routing survives; the phone shows the generic banner.
         inner = {key: value for key, value in inner.items() if key in ("session_id", "profile", "stored_session_id", "call",
-                                                                     "locate", "maps")}
+                                                                     "locate")}
         envelope = attempt(inner)
     if envelope is None:
         raise E2EError("the event does not fit an encrypted push")
@@ -269,11 +267,6 @@ def content_free(event: dict[str, Any], keys: Keys | None = None) -> dict[str, A
         locate_id = event["locate"].get("id")
         if isinstance(locate_id, str) and _LOCATE_ID.match(locate_id):
             outgoing["locate"] = {"id": locate_id}
-    if event.get("type") == "location.requested" and isinstance(event.get("maps"), dict):
-        # A maps lookup's id, the same way: the phone fetches the lookup.
-        maps_id = event["maps"].get("id")
-        if isinstance(maps_id, str) and _MAPS_ID.match(maps_id):
-            outgoing["maps"] = {"id": maps_id}
     return outgoing
 
 

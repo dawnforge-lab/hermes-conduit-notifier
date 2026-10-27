@@ -58,18 +58,19 @@ def test_fallback_markdown_reads_as_a_list_of_places():
     assert "**Kin Khao** · 55 Cyril Magnin St" in text
     assert "★ 4.4 (1,520) · [Google](https://g.test/r)" in text and "Open until 22:00 · Yelp" in text
     assert "_Get the \\*khao soi\\*._" in text, "Markdown in a note is escaped"
-    assert "https://maps.apple.com/?q=Kin%20Khao&ll=37.785300,-122.408900" in text
-    assert "[Directions to Orpheum Theatre (walking)](https://maps.apple.com/?saddr=37.785300,-122.408900" \
-           "&daddr=Orpheum%20Theatre&dirflg=w)" in text
+    assert "[Open in Maps](https://www.google.com/maps/search/?api=1&query=37.785300,-122.408900)" in text
+    assert "[Directions to Orpheum Theatre (walking)](https://www.google.com/maps/dir/?api=1" \
+           "&origin=37.785300,-122.408900&destination=Orpheum%20Theatre&travelmode=walking)" in text
 
 
-def test_fallback_markdown_escapes_titles_and_names_no_mode_it_cant_open():
+def test_fallback_markdown_escapes_titles_and_links_a_cycling_route():
     [card] = card_schema.normalize_cards([{
         "type": "map", "title": "[x](https://evil.test) **bold**", "places": [{"name": "A"}, {"name": "B"}],
         "route": {"from": 0, "to": 1, "mode": "cycling"}}])
     text = card_schema.fallback_markdown([card])
     assert text.startswith("### \\[x\\](https://evil.test) \\*\\*bold\\*\\*")
-    assert "[Directions to B](https://maps.apple.com/?saddr=A&daddr=B)" in text, "Apple Maps links can't cycle"
+    assert "[Directions to B (cycling)](https://www.google.com/maps/dir/?api=1&origin=A&destination=B" \
+           "&travelmode=bicycling)" in text
 
 
 def test_fallback_markdown_shows_information_cards_and_their_sources():

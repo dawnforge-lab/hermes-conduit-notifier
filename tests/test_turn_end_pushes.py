@@ -439,7 +439,7 @@ def test_plain_text(markdown, plain):
 
 @pytest.fixture
 def lock_screen(monkeypatch):
-    """A real Live Activity reporter whose posts are kept; returns the ends sent."""
+    """A real live turn reporter whose posts are kept; returns the ends sent."""
     live = sys.modules["talaria_push.live_activity"]
     posts = []
     reporter = live.LiveActivityReporter(post=lambda payload: posts.append(payload) or {"tracked": True},

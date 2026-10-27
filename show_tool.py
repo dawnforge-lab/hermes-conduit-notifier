@@ -1,9 +1,8 @@
 """Hermes puts something on the screen of the user's voice call: the
 ``talaria_show`` tool.
 
-During a spoken conversation in Talaria (Local Live, Classic voice, or a
-live call that hands work to Hermes), a table, a chart, steps or links are
-better seen than heard. The tool keeps a card (present_store) that the phone
+During a voice conversation in Talaria (one the user starts, or a call from
+Hermes), a table, a chart, steps or links are better seen than heard. The tool keeps a card (present_store) that the phone
 picks up on its next exchange, which it runs as soon as it sees the tool in
 the turn and again when the turn ends. Talaria opens the card over the call;
 Hermes says in a sentence that it's there. A card nobody picks up within ten

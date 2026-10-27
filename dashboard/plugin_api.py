@@ -650,7 +650,6 @@ PAIR_LIMIT = 10
 PAIR_WINDOW_S = 60.0
 PAIR_MAX_BODY_BYTES = 2 * 1024
 PAIR_TIMEOUT_S = 15.0
-DEFAULT_RELAY_URL = "https://push.milim.dev"
 _PAIRING_CODE = re.compile(r"^[A-HJ-NP-Z2-9]{5}-[A-HJ-NP-Z2-9]{5}$")
 _pair_limiter = _MintLimiter(PAIR_LIMIT, PAIR_WINDOW_S, message="Too many pairing requests; try again shortly")
 # The claim waits on the relay; it gets its own threads, like the other network routes.
@@ -658,7 +657,7 @@ _pair_executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="talaria-p
 
 
 def _pair_relay_url(raw: Any, state: Optional[Dict[str, Any]]) -> str:
-    """The relay to claim at: the phone's, else this profile's current one, else the default.
+    """The relay to claim at: the phone's, else this profile's current one.
 
     Only a bare http(s) origin with an optional path: no credentials, query or
     fragment, so the claim can't carry anything but the code to that host.
@@ -669,7 +668,7 @@ def _pair_relay_url(raw: Any, state: Optional[Dict[str, Any]]) -> str:
             # A stored relay gets the same check; one that fails it isn't used.
             with contextlib.suppress(TokenError):
                 return _pair_relay_url(stored, None)
-        return DEFAULT_RELAY_URL
+        raise TokenError(400, "relay_url is required")
     if not isinstance(raw, str) or len(raw) > 512 or any(not 0x21 <= ord(c) <= 0x7E for c in raw.strip()):
         raise TokenError(400, "relay_url must be an http(s) URL")
     try:

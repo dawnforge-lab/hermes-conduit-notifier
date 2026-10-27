@@ -1,23 +1,16 @@
-"""Hermes calls you (#449): this profile's call settings and job watches.
+"""Hermes calls you (#449): this profile's call settings and call watches.
 
-A watch says "call the user when this job ends". Talaria registers one as
-soon as the user asks a Live Voice call for it ("call me when it's done"),
-keyed to the job's own Hermes session ids (runtime and stored), never to the
-voice conversation. The agent's turn-end hooks fire it: the first turn end of
-any of its sessions consumes it, under the file lock, so a replayed hook finds
-nothing and the user is called at most once per watch.
+A watch says "call the user when this turn ends". Hermes sets one through
+its ``talaria_call_user`` tool, on the asking session and with the reason it
+gave: because the user asked for the call, or on its own judgment. The
+agent's turn-end hooks fire it: the first turn end of its session consumes
+it, under the file lock, so a replayed hook finds nothing and the user is
+called at most once per watch.
 
-While the call is still going the watch is held for the hold it was
-registered with. A job that ends while held is told in the call itself
-(Talaria then removes the watch), or once the hold runs out (the hooks'
-delivery calls then). So the call never depends on the phone reaching the
-host after hanging up.
-
-Hermes can also ask for a call itself (the ``talaria_call_user`` tool): a
-watch on the asking session that calls when its turn ends, with the reason
-Hermes gave. With "approval, question and failure calls" on, a request for
-the user's approval or answer that goes unanswered for a minute calls too
-(an alert: a watch that is already due), and so does a failed turn.
+With "approval, question and failure calls" on, a request for the user's
+approval or answer that goes unanswered for a minute calls too (an alert: a
+watch that comes due after its delay unless the user answers or the turn
+ends first), and so does a failed turn.
 
 A call the user declines, or that goes unanswered, comes back from Talaria
 as an outcome on the call's sessions; the next turn of one of them takes it,
@@ -90,9 +83,8 @@ INT_BOUNDS: dict[str, tuple[int, int]] = {
 OUTCOMES = ("done", "failed", "stopped")
 # What an alert calls about: Hermes waits on the user.
 ALERT_KINDS = ("approval", "question")
-# Who asked for the watch: Talaria (the user, in a call), Hermes' tool, or an
-# alert.
-ORIGINS = ("talaria", "tool", "alert")
+# Who set the watch: Hermes, through its tool, or an alert.
+ORIGINS = ("tool", "alert")
 # An approval or question the user hasn't answered in this long calls.
 ALERT_DELAY_S = 60
 MAX_REASON_CHARS = 200
@@ -100,12 +92,8 @@ WATCH_TTL_S = 24 * 3600
 MAX_WATCHES = 20
 MAX_WATCH_SESSIONS = 4
 MAX_TITLE_CHARS = 120
-# A hold covers the call a watch was registered in.
-MAX_HOLD_S = 600
-# Turn ends remembered so a watch that arrives just after its job ended still
-# calls (the user hung up as the job finished). Only kept while calls are on.
-RECENT_END_TTL_S = 30 * 60
-MAX_RECENT_ENDS = 64
+# The longest an alert may wait for the user before it calls.
+MAX_ALERT_DELAY_S = 600
 # Call times kept for the limits: no more than the highest daily limit allows.
 MAX_HISTORY = INT_BOUNDS["per_day"][1]
 HOUR_S = 3600
@@ -182,49 +170,6 @@ class CallStore:
 
     # --- Watches ------------------------------------------------------------
 
-    def add_watch(self, session_ids: Any, title: Any, hold_s: Any = 0, ended_within_s: Any = None) -> dict[str, Any]:
-        """Watches a job, held for ``hold_s`` seconds while the user's call
-        goes on. ``{"status": "watching", "id"}``, or ``{"status": "ended",
-        "outcome"}`` when one of the job's sessions ended within the last
-        ``ended_within_s`` seconds (how long ago the job's request went out,
-        on the phone's clock, so an earlier turn of the same chat never
-        counts): no watch is kept and the caller tells the user itself. An
-        interrupted turn doesn't count: during a call that is the call putting
-        a correction into the job, which goes on in a new turn. Raises ValueError("calls_off") unless calls and "call when I ask" are
-        on."""
-        ids = _session_ids(session_ids)
-        clean_title = _title(title)
-        hold = _seconds(hold_s, "hold_s", MAX_HOLD_S)
-        within = None if ended_within_s is None else _seconds(ended_within_s, "ended_within_s", RECENT_END_TTL_S)
-        with self._locked() as state:
-            settings = state["settings"]
-            if not settings["enabled"] or not settings["when_asked"]:
-                raise ValueError("calls_off")
-            now = self.clock()
-            if within is not None:
-                for end in state["ends"]:
-                    if end["session_id"] in ids and end["outcome"] != "stopped" and now - end["at"] <= within:
-                        return {"status": "ended", "outcome": end["outcome"]}
-            # A retried request (the first answer lost) gets the same watch,
-            # never a second one that would call again.
-            for watch in state["watches"]:
-                if watch["origin"] != "alert" and set(watch["session_ids"]).issubset(ids):
-                    watch["session_ids"] = ids
-                    # A watch Hermes set on its own becomes the user's: their
-                    # request calls even with "Hermes decides" off.
-                    watch["origin"] = "talaria"
-                    watch["asked"] = True
-                    if not watch["title"]:
-                        watch["title"] = clean_title
-                    if hold:
-                        watch["hold_until"] = max(watch["hold_until"], now + hold)
-                    return {"status": "watching", "id": watch["id"]}
-            if len(state["watches"]) >= MAX_WATCHES:
-                raise ValueError("too_many")
-            watch = _new_watch(ids, now, title=clean_title, hold_until=now + hold if hold else 0.0)
-            state["watches"].append(watch)
-            return {"status": "watching", "id": watch["id"]}
-
     def add_tool_watch(self, session_id: Any, reason: Any, asked: bool) -> dict[str, Any]:
         """Hermes asked to call the user when this turn of ``session_id``
         ends (``asked``: because the user asked it to). ``{"status":
@@ -239,7 +184,7 @@ class CallStore:
                 raise ValueError("calls_off")
             now = self.clock()
             for watch in state["watches"]:
-                if watch["origin"] != "alert" and ids[0] in watch["session_ids"]:
+                if watch["origin"] == "tool" and ids[0] in watch["session_ids"]:
                     if not watch["reason"]:
                         watch["reason"] = clean_reason
                     watch["asked"] = watch["asked"] or asked
@@ -263,7 +208,7 @@ class CallStore:
             raise ValueError(f"unknown alert {kind}")
         named = session_id if isinstance(session_id, list) else [session_id]
         ids = _session_ids([value for value in named if isinstance(value, str) and _session_key(value.strip())])
-        delay = _seconds(delay_s, "delay_s", MAX_HOLD_S)
+        delay = _seconds(delay_s, "delay_s", MAX_ALERT_DELAY_S)
         settings = self.settings()
         if not settings["enabled"] or not settings["alerts"]:
             return None
@@ -303,7 +248,7 @@ class CallStore:
 
     def alert_now(self, session_id: Any, kind: str, reason: Any, *, seed: str = "") -> dict[str, Any] | None:
         """A failed turn with alerts on: the result ``fire`` would give for a
-        watch on it (``call``, ``limited``, ``busy``), counted against the
+        watch on it (``call`` or ``limited``), counted against the
         limits. None when alerts are off: nothing is written then. ``seed``
         (the turn) fixes the call's id, so a replayed hook is the same call
         to the relay, which rings it once, and gets the first hook's
@@ -326,17 +271,6 @@ class CallStore:
             result = _decide(state, watch, kind, now, self.place_blocked)
             state["seeded"] = [*state["seeded"], {"id": watch["id"], "status": result["status"], "at": now}][-MAX_SEEDED:]
             return result
-
-    def remove_watch(self, watch_id: Any) -> bool:
-        if not isinstance(watch_id, str) or not watch_id:
-            return False
-        if not self.path.exists():
-            return False
-        with self._locked() as state:
-            kept = [watch for watch in state["watches"] if watch["id"] != watch_id]
-            removed = len(kept) != len(state["watches"])
-            state["watches"] = kept
-            return removed
 
     # --- Outcomes -----------------------------------------------------------
 
@@ -397,16 +331,11 @@ class CallStore:
         """A turn of ``session_id`` ended with ``outcome``.
 
         None when no watch covers the session (its waiting alerts are
-        dropped: the turn no longer waits on the user). A held watch keeps the first
-        outcome and answers ``held`` (with ``until``): the call waits for the
-        hold to end. An interrupted turn isn't kept while held: the call
-        interrupts a job to put a correction into it, and the job goes on in
-        a new turn (a job the user stops in the call has its watch removed).
-        Otherwise the watch is consumed and the result says what
-        to do: ``call`` (counted against the limits), ``limited`` (with
-        ``reason`` gap, hour or day), ``busy`` (the user is in a Live Voice
-        call) or ``off`` (calls, or this kind of call, were turned off after
-        the watch was registered).
+        dropped: the turn no longer waits on the user). Otherwise the watch
+        is consumed and the result says what to do: ``call`` (counted
+        against the limits), ``limited`` (with ``reason`` place, gap, hour or
+        day) or ``off`` (calls, or this kind of call, were turned off after
+        the watch was set).
         """
         if outcome not in OUTCOMES:
             raise ValueError(f"unknown outcome {outcome}")
@@ -415,32 +344,19 @@ class CallStore:
         session_id = session_id.strip()
         with self._locked() as state:
             now = self.clock()
-            settings = state["settings"]
-            if settings["enabled"]:
-                ends = [end for end in state["ends"] if end["session_id"] != session_id]
-                ends.append({"session_id": session_id, "outcome": outcome, "at": now})
-                state["ends"] = ends[-MAX_RECENT_ENDS:]
             # The turn moved on: nothing it waited on calls any more.
             state["watches"] = [watch for watch in state["watches"]
                                 if not (watch["origin"] == "alert" and session_id in watch["session_ids"])]
             index = next((i for i, watch in enumerate(state["watches"]) if session_id in watch["session_ids"]), None)
             if index is None:
                 return None
-            watch = state["watches"][index]
-            if watch["hold_until"] > now:
-                if watch["pending"] is None and outcome != "stopped":
-                    watch["pending"] = {"outcome": outcome, "session_id": session_id}
-                pending = watch["pending"]
-                return {"watch": dict(watch), "outcome": pending["outcome"] if pending else None, "status": "held",
-                        "until": watch["hold_until"]}
-            state["watches"].pop(index)
+            watch = state["watches"].pop(index)
             return _decide(state, watch, outcome, now, self.place_blocked)
 
     def fire_due(self) -> list[dict[str, Any]]:
-        """Watches whose job ended while held and whose hold has run out
-        (the call's phone went away without releasing them), and alerts left
-        unanswered: consumed, each with the result ``fire`` would give, plus
-        the ``session_id`` that ended."""
+        """Watches that have come due (alerts left unanswered past their
+        delay): consumed, each with the result ``fire`` would give, plus the
+        ``session_id`` the call opens."""
         if not self.path.exists():
             return []
         with self._locked() as state:
@@ -454,9 +370,10 @@ class CallStore:
                      "session_id": watch["pending"]["session_id"]} for watch in due]
 
     def next_due(self) -> float | None:
-        """When the earliest hold over an ended job runs out, if any."""
-        holds = [watch["hold_until"] for watch in self._load()["watches"] if watch["pending"] is not None]
-        return min(holds) if holds else None
+        """When the earliest watch comes due (an alert's delay runs out), if
+        any."""
+        due = [watch["hold_until"] for watch in self._load()["watches"] if watch["pending"] is not None]
+        return min(due) if due else None
 
     # --- Storage ------------------------------------------------------------
 
@@ -489,7 +406,7 @@ class CallStore:
 
     def _save(self, encoded: str) -> None:
         temporary = self.path.with_name(f".{self.path.name}.{os.getpid()}.{threading.get_ident()}.tmp")
-        # Private from the first byte: it holds job titles and session ids.
+        # Private from the first byte: it holds call reasons and session ids.
         descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
         with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
             handle.write(encoded)
@@ -502,14 +419,18 @@ def _encoded(state: dict[str, Any]) -> str:
     return json.dumps(state, separators=(",", ":")) + "\n"
 
 
-def _new_watch(ids: list[str], now: float, *, title: str = "", origin: str = "talaria", reason: str = "",
-               asked: bool = False, hold_until: float = 0.0) -> dict[str, Any]:
+def _new_watch(ids: list[str], now: float, *, origin: str, reason: str = "", asked: bool = False,
+               hold_until: float = 0.0) -> dict[str, Any]:
     return {
         "id": secrets.token_hex(12),
         "session_ids": ids,
-        "title": title,
+        # Only a watch an older plugin kept names its job, so its call still
+        # says what it was about.
+        "title": "",
         "created_at": now,
         "expires_at": now + WATCH_TTL_S,
+        # When a pending watch comes due (an alert's delay). The stored name
+        # is older than alerts: kept so older files still load.
         "hold_until": hold_until,
         "pending": None,
         "origin": origin,
@@ -524,9 +445,7 @@ def _allowed(settings: dict[str, Any], watch: dict[str, Any]) -> bool:
         return False
     if watch["origin"] == "alert":
         return settings["alerts"]
-    if watch["origin"] == "tool":
-        return settings["when_asked"] if watch["asked"] else settings["decides"]
-    return True
+    return settings["when_asked"] if watch["asked"] else settings["decides"]
 
 
 def _decide(state: dict[str, Any], watch: dict[str, Any], outcome: str, now: float,
@@ -538,9 +457,6 @@ def _decide(state: dict[str, Any], watch: dict[str, Any], outcome: str, now: flo
     result: dict[str, Any] = {"watch": watch, "outcome": outcome}
     if not _allowed(settings, watch):
         return {**result, "status": "off"}
-    if watch["origin"] != "talaria" and _in_call(state, now):
-        # The user is talking to Hermes right now: no ringing over it.
-        return {**result, "status": "busy"}
     if place_blocked is not None and (settings["avoid_places"] or settings["avoid_unknown_place"]):
         try:
             blocked = place_blocked(settings)
@@ -558,13 +474,6 @@ def _decide(state: dict[str, Any], watch: dict[str, Any], outcome: str, now: flo
         return {**result, "status": "limited", "reason": "day"}
     history.append(now)
     return {**result, "status": "call"}
-
-
-def _in_call(state: dict[str, Any], now: float) -> bool:
-    """Talaria holds a watch through the call it was asked for in. Not for a
-    held watch's own call: its siblings in that call run out moments apart
-    once the phone has gone away."""
-    return any(watch["origin"] == "talaria" and watch["hold_until"] > now for watch in state["watches"])
 
 
 def _normalized(raw: Any, now: float) -> dict[str, Any]:
@@ -586,7 +495,17 @@ def _normalized(raw: Any, now: float) -> dict[str, Any]:
     for watch in raw.get("watches") if isinstance(raw.get("watches"), list) else []:
         try:
             if watch["expires_at"] > now and _WATCH_ID.match(str(watch["id"])):
-                origin = watch.get("origin") if watch.get("origin") in ORIGINS else "talaria"
+                origin = watch.get("origin")
+                asked = watch.get("asked") is True
+                if origin not in ORIGINS:
+                    # An older plugin's watch, which the phone registered in a
+                    # Live Voice call (origin "talaria", or none before origins
+                    # were kept): the user asked for that call, so it still
+                    # rings with "call when I ask" on. Any other origin is one
+                    # this plugin doesn't know: a watch Hermes set, asked only
+                    # if it says so.
+                    asked = asked or origin in (None, "talaria")
+                    origin = "tool"
                 pending = watch.get("pending")
                 kinds = ALERT_KINDS if origin == "alert" else OUTCOMES
                 if not (isinstance(pending, dict) and pending.get("outcome") in kinds
@@ -605,7 +524,7 @@ def _normalized(raw: Any, now: float) -> dict[str, Any]:
                     "pending": {"outcome": pending["outcome"], "session_id": pending["session_id"]} if pending else None,
                     "origin": origin,
                     "reason": _reason(watch.get("reason")),
-                    "asked": watch.get("asked") is True,
+                    "asked": asked,
                 })
         except (KeyError, TypeError, ValueError):
             continue
@@ -613,11 +532,6 @@ def _normalized(raw: Any, now: float) -> dict[str, Any]:
     history = sorted(float(at) for at in stored_history
                      if isinstance(at, (int, float)) and not isinstance(at, bool) and now - at < DAY_S)
     history = history[-MAX_HISTORY:]
-    ends = []
-    for end in raw.get("ends") if isinstance(raw.get("ends"), list) else []:
-        if (isinstance(end, dict) and isinstance(end.get("session_id"), str) and end.get("outcome") in OUTCOMES
-                and isinstance(end.get("at"), (int, float)) and now - end["at"] < RECENT_END_TTL_S):
-            ends.append({"session_id": end["session_id"], "outcome": end["outcome"], "at": float(end["at"])})
     seeded = []
     for entry in raw.get("seeded") if isinstance(raw.get("seeded"), list) else []:
         if (isinstance(entry, dict) and isinstance(entry.get("id"), str) and _WATCH_ID.match(entry["id"])
@@ -647,9 +561,10 @@ def _normalized(raw: Any, now: float) -> dict[str, Any]:
                 and isinstance(entry.get("at"), (int, float)) and not isinstance(entry.get("at"), bool)
                 and now - entry["at"] < OUTCOME_TTL_S):
             told.append({"id": entry["id"], "at": float(entry["at"])})
+    # An older plugin's "ends" (recent turn ends, for watches the phone
+    # registered) isn't read: the next write drops it.
     return {"v": VERSION, "settings": settings, "watches": watches, "history": history,
-            "ends": ends[-MAX_RECENT_ENDS:], "seeded": seeded[-MAX_SEEDED:],
-            "outcomes": outcomes[-MAX_OUTCOMES:], "told": told[-MAX_TOLD:]}
+            "seeded": seeded[-MAX_SEEDED:], "outcomes": outcomes[-MAX_OUTCOMES:], "told": told[-MAX_TOLD:]}
 
 
 def _session_ids(value: Any) -> list[str]:

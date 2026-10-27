@@ -36,7 +36,6 @@ from .events import PLUGIN_VERSION, redact_event
 from .relay_urls import check_claim_base, check_request_url, is_https, paired_relay_url
 
 
-DEFAULT_RELAY_URL = "https://push.milim.dev"
 # Derived from PLUGIN_VERSION so a version bump updates the UA automatically
 # (no second hand-synchronized constant).
 USER_AGENT = f"Talaria-Plugin/{PLUGIN_VERSION}"
@@ -188,7 +187,7 @@ def remove_state() -> None:
             pass
 
 
-def claim_pairing(code: str, relay_url: str = DEFAULT_RELAY_URL, gateway_name: str = "") -> dict[str, Any]:
+def claim_pairing(code: str, relay_url: str, gateway_name: str = "") -> dict[str, Any]:
     """Claim a pairing code and save the pairing (rules in relay_urls.py).
 
     A bad relay URL raises RelayURLError (a ValueError) before the code is sent.

@@ -59,8 +59,9 @@ connection:
 | --- | --- | --- | --- |
 | POST | `/api/plugins/talaria_push/pair?profile=` | `{"pairing_code": "ABCDE-FGHJK", "relay_url": "https://relay.example.com"}` | `{ok, paired, installation_id, gateway_id, gateway_name, relay_url}` |
 
-- `relay_url` is optional. Without it, the profile's current relay is used,
-  else the plugin's built-in default. It must be a bare http(s) URL (see
+- `relay_url` may be left out when the profile is already paired: its
+  current relay is used. With neither, the route answers 400 `relay_url is
+  required`. It must be a bare http(s) URL (see
   [Running your own relay](#running-your-own-relay) for which URLs are
   accepted).
 - The claim carries only the code and the gateway name and never follows
@@ -91,8 +92,9 @@ Pairing codes expire after ten minutes and can be claimed only once.
 ## The `hermes talaria` command
 
 ```bash
-# Claim a pairing code (optional: --relay-url URL, --name "Gateway name")
-hermes talaria pair XXXXX-XXXXX
+# Claim a pairing code (--relay-url URL unless the profile is already paired;
+# optional: --name "Gateway name")
+hermes talaria pair XXXXX-XXXXX --relay-url https://relay.example.com
 
 # Show the pairing without printing the credential: gateway name, relay,
 # redaction, end-to-end encryption, and any refusal or block from the relay
@@ -409,13 +411,14 @@ to set up.
 
 - While a turn runs in the open chat, Talaria holds the chat as on screen
   with `PUT /api/plugins/talaria_push/notifications/on-screen?profile=…` and
-  `{"device": "<kind>", "session_ids": ["<runtime id>", "<stored id>"],
+  `{"device": "phone", "session_ids": ["<runtime id>", "<stored id>"],
   "hold_s": 90}`, renews the hold while the turn runs and someone used
   Talaria in the last 2 minutes, and sends `"hold_s": 0` once nobody has.
   Nothing is sent while no turn runs.
 - After the turn ends the last hold runs out on its own, so the reply's own
   hooks still see it. Leaving the chat or the app sends `"hold_s": 0`.
-- Each device kind keeps its own file in `<hermes home>/talaria-on-screen/`
+- `device` is `phone` or `tablet`. Each device kind keeps its own file in
+  `<hermes home>/talaria-on-screen/`
   (private to the user), so one device leaving never ends another's hold;
   two devices of the same kind share a file, and the later report wins.
 - A turn longer than 30 minutes notifies whatever Talaria says. A hold
@@ -1128,9 +1131,10 @@ The plugin keeps the relay URL per profile, in `talaria-push.json`, and sets
 it at pairing time. There is no separate setting:
 
 - Pairing from Talaria uses the relay the app sends. If it sends none, the
-  profile's current relay is used, else the plugin's built-in default.
-- `hermes talaria pair` uses `--relay-url`, else the built-in default. Pass
-  your relay's address when you pair by hand:
+  profile's current relay is used; there is no built-in relay.
+- `hermes talaria pair` uses `--relay-url`, else the profile's current
+  relay, and refuses to pair with neither. Pass your relay's address when you
+  pair a profile by hand for the first time:
 
   ```bash
   hermes talaria pair XXXXX-XXXXX --relay-url https://relay.example.com

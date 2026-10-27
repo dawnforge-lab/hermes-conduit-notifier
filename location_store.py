@@ -804,14 +804,6 @@ class LocationStore:
             row = db.execute("SELECT answered_at FROM locates WHERE id=?", (locate_id,)).fetchone()
             return bool(row and row[0])
 
-    def maps_host_allowed(self) -> bool:
-        """False while any device asks to keep maps lookups on the phone."""
-        with self._read() as db:
-            if db is None:
-                return True
-            return all((_decode(text, None) or {}).get("maps_host", True) is not False
-                       for (text,) in db.execute("SELECT sharing FROM devices WHERE sharing IS NOT NULL"))
-
 
 def sharing_paused(sharing: dict[str, Any], now: float) -> bool:
     """True while the user paused sharing, or has both layers off."""
@@ -945,12 +937,6 @@ def _parse_sharing(value: Any) -> dict[str, Any]:
     if zone is not None and (not isinstance(zone, str) or not _TZ.match(zone)):
         raise LocationError("malformed", "sharing.time_zone is malformed")
     sharing["time_zone"] = zone
-    # "Keep maps lookups on this phone": false keeps talaria_maps off this
-    # host's maps engine.
-    maps_host = value.get("maps_host", True)
-    if not isinstance(maps_host, bool):
-        raise LocationError("malformed", "sharing.maps_host must be true or false")
-    sharing["maps_host"] = maps_host
     # "Share with this host's other profiles": the other profiles paired
     # with the same phone read this store (location_profiles).
     other_profiles = value.get("other_profiles", False)

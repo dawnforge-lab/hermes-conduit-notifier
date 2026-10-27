@@ -6,7 +6,7 @@ description: When and how to phone the user through Talaria: calls they ask for,
 # Calling the user through Talaria
 
 Talaria can make the user's phone ring like a phone call. When they answer,
-a live voice conversation opens in the chat that called, starting with your
+a voice conversation opens in the chat that called, starting with your
 reason and that turn's final reply. Calls interrupt people, so they follow
 the user's settings in Talaria, under Calls from Hermes: "Call when I ask",
 "Hermes decides" (off unless they turn it on), their What's worth a call

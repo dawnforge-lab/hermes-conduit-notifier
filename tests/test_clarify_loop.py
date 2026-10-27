@@ -854,13 +854,13 @@ def test_set_redact_content_and_repairing_keep_the_flag(monkeypatch, tmp_path):
     assert client.set_redact_content(True) is False  # unpaired: nothing to configure
 
     monkeypatch.setattr(client, "_request", lambda url, **kwargs: {"credential": "c", "installation_id": "i"})
-    client.claim_pairing("CODE")
+    client.claim_pairing("CODE", "https://relay.example")
     assert client.set_redact_content(True) is True
     assert client.load_state()["redact_content"] is True
     key = client.load_state()["redact_key"]
     assert key and key != "c"
 
-    client.claim_pairing("CODE")  # re-pair
+    client.claim_pairing("CODE", "https://relay.example")  # re-pair
     assert client.load_state()["redact_content"] is True
     assert client.load_state()["redact_key"] == key
     client.set_redact_content(False)

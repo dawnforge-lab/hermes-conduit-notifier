@@ -168,7 +168,7 @@ def test_navigate_sends_a_go_prompt_carrying_where_to(home, monkeypatch):
     answer = _call({"action": "navigate", "to": "Heathrow Terminal 5", "mode": "transit"}, profile="work",
                    session_id="session-1")
     assert answer["ok"] is True and answer["status"] == "sent" and answer["to"] == "Heathrow Terminal 5"
-    assert answer["link"] == "https://maps.apple.com/?daddr=Heathrow+Terminal+5&dirflg=r"
+    assert answer["link"] == "https://www.google.com/maps/dir/?api=1&destination=Heathrow+Terminal+5&travelmode=transit"
     waiting = present.exchange({"installation_id": "phone-installation-1", "features": ["maps-navigate"]})["prompts"]
     assert waiting[0]["id"] == answer["prompt_id"] and waiting[0]["action_label"] == "Go"
     assert waiting[0]["maps"] == {"to": "Heathrow Terminal 5", "mode": "transit"}
@@ -220,7 +220,8 @@ def test_navigate_without_a_talaria_that_opens_maps_gives_the_link(home, monkeyp
     monkeypatch.setattr(maps, "client", queue)
     answer = _call({"action": "navigate", "to": "51.5, -0.12", "mode": "cycling"})
     assert answer["ok"] is False and answer["error"] == "not_set_up"
-    assert answer["link"] == "https://maps.apple.com/?daddr=51.5%2C-0.12" and not queue.events
+    assert answer["link"] == "https://www.google.com/maps/dir/?api=1&destination=51.5%2C-0.12&travelmode=bicycling"
+    assert not queue.events
 
 
 def test_a_subagent_cant_navigate(home):
@@ -421,11 +422,9 @@ def test_a_key_google_refuses_reads_plainly(home, google):
     assert answer["ok"] is False and answer["error"] == "unavailable" and "key" in answer["note"]
 
 
-def test_keep_maps_off_the_host_turns_google_off(home, google):
+def test_an_older_apps_keep_maps_on_the_phone_switch_is_ignored(home, google):
     _shared(home, sharing=sharing(maps_host=False), fix=fix("significant"))
-    assert maps.available() is False
-    assert _call({"action": "lookup", "query": "Heathrow"})["error"] == "unavailable"
-    assert google.calls == []
+    assert maps.available() is True, "lookups only ever run on the host now"
 
 
 def test_saved_places_still_need_the_phone_with_google(home, google):

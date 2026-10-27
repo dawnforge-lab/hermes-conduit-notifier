@@ -100,33 +100,38 @@ def test_call_rules_unreadable_on_disk_read_as_none(tmp_path):
     assert CallStore(tmp_path).settings()["rules"] == ""
 
 
-def test_a_watch_needs_calls_on_and_call_when_asked(tmp_path):
+def _watch(store, session_id, reason="Check the server", asked=True):
+    """Hermes asked to call when this turn of ``session_id`` ends."""
+    return store.add_tool_watch(session_id, reason, asked)
+
+
+def test_a_watch_the_user_asked_for_needs_calls_on_and_call_when_asked(tmp_path):
     store = _store(tmp_path)
     with pytest.raises(ValueError, match="calls_off"):
-        store.add_watch(["rt-1"], "Check the server")
+        _watch(store, "rt-1")
     store.update_settings({"enabled": True, "when_asked": False})
     with pytest.raises(ValueError, match="calls_off"):
-        store.add_watch(["rt-1"], "Check the server")
+        _watch(store, "rt-1")
 
 
-def test_a_watch_fires_exactly_once_for_any_of_its_session_ids(tmp_path):
+def test_a_watch_fires_exactly_once(tmp_path):
     store = _store(tmp_path, enabled=True)
-    added = store.add_watch(["rt-1", "st-1"], "Check the server")
+    added = _watch(store, "st-1")
     assert added["status"] == "watching"
     fired = store.fire("st-1", "done")
     assert fired["status"] == "call"
     assert fired["outcome"] == "done"
     assert fired["watch"]["id"] == added["id"]
-    assert fired["watch"]["title"] == "Check the server"
-    assert fired["watch"]["session_ids"] == ["rt-1", "st-1"]
-    # A replayed hook, or the other id, finds nothing left.
+    assert fired["watch"]["reason"] == "Check the server"
+    assert fired["watch"]["session_ids"] == ["st-1"]
+    # A replayed hook finds nothing left.
     assert store.fire("st-1", "done") is None
-    assert store.fire("rt-1", "failed") is None
+    assert store.fire("st-1", "failed") is None
 
 
 def test_an_unwatched_session_is_left_alone(tmp_path):
     store = _store(tmp_path, enabled=True)
-    store.add_watch(["rt-1"], "Check the server")
+    _watch(store, "rt-1")
     assert store.fire("rt-2", "done") is None
     assert store.watch_count() == 1
 
@@ -139,7 +144,7 @@ def test_no_file_means_nothing_to_fire(tmp_path):
 
 def test_calls_turned_off_later_consume_the_watch_without_calling(tmp_path):
     store = _store(tmp_path, enabled=True)
-    store.add_watch(["rt-1"], "Check the server")
+    _watch(store, "rt-1")
     store.update_settings({"enabled": False})
     assert store.fire("rt-1", "done")["status"] == "off"
     assert store.watch_count() == 0
@@ -148,9 +153,9 @@ def test_calls_turned_off_later_consume_the_watch_without_calling(tmp_path):
 def test_the_gap_between_calls_holds_back_a_second_call(tmp_path):
     clock = Clock()
     store = _store(tmp_path, clock=clock, enabled=True, min_gap_s=120)
-    store.add_watch(["a"], "A")
-    store.add_watch(["b"], "B")
-    store.add_watch(["c"], "C")
+    _watch(store, "a", "A")
+    _watch(store, "b", "B")
+    _watch(store, "c", "C")
     assert store.fire("a", "done")["status"] == "call"
     clock.now += 119
     limited = store.fire("b", "done")
@@ -165,7 +170,7 @@ def test_the_hourly_and_daily_limits_hold(tmp_path):
     store = _store(tmp_path, clock=clock, enabled=True, min_gap_s=30, per_hour=2, per_day=3)
     outcomes = []
     for index in range(5):
-        store.add_watch([f"s{index}"], f"Job {index}")
+        _watch(store, f"s{index}", f"Job {index}")
     for index in range(3):
         outcomes.append(store.fire(f"s{index}", "done"))
         clock.now += 31
@@ -179,144 +184,37 @@ def test_the_hourly_and_daily_limits_hold(tmp_path):
     assert day["reason"] == "day"
 
 
-def test_a_job_that_ended_just_before_its_watch_is_reported_as_ended(tmp_path):
+def test_a_due_alert_still_obeys_the_limits(tmp_path):
     clock = Clock()
-    store = _store(tmp_path, clock=clock, enabled=True)
-    assert store.fire("rt-1", "failed") is None  # the turn ended, no watch yet
-    clock.now += 60
-    # The job's request went out 5 minutes ago on the phone's clock.
-    assert store.add_watch(["st-1", "rt-1"], "Check the server", ended_within_s=300) == {"status": "ended", "outcome": "failed"}
-    assert store.watch_count() == 0
-
-
-def test_an_earlier_turn_of_the_same_chat_is_not_the_job_ending(tmp_path):
-    clock = Clock()
-    store = _store(tmp_path, clock=clock, enabled=True)
-    store.fire("chat-1", "done")  # the chat's typed turn, before the voice request
-    clock.now += 120
-    # The voice request went out 60 seconds ago: that end was before it.
-    assert store.add_watch(["chat-1"], "Check the server", ended_within_s=60)["status"] == "watching"
-
-
-def test_without_a_window_recent_ends_are_not_checked(tmp_path):
-    store = _store(tmp_path, enabled=True)
-    store.fire("rt-1", "done")
-    assert store.add_watch(["rt-1"], "Check the server")["status"] == "watching"
-
-
-def test_recent_ends_are_forgotten_after_half_an_hour(tmp_path):
-    clock = Clock()
-    store = _store(tmp_path, clock=clock, enabled=True)
-    store.fire("rt-1", "done")
-    clock.now += 31 * 60
-    assert store.add_watch(["rt-1"], "Check the server", ended_within_s=1800)["status"] == "watching"
-
-
-def test_recent_ends_are_not_recorded_while_calls_are_off(tmp_path):
-    store = _store(tmp_path)
-    store.fire("rt-1", "done")
-    store.update_settings({"enabled": True})
-    assert store.add_watch(["rt-1"], "Check the server", ended_within_s=60)["status"] == "watching"
-
-
-# --- Holds: registered during the call, called after it ---------------------
-
-
-def test_a_job_that_ends_during_the_call_waits_for_the_hold(tmp_path):
-    clock = Clock()
-    store = _store(tmp_path, clock=clock, enabled=True)
-    store.add_watch(["rt-1", "st-1"], "Check the server", hold_s=180)
-    held = store.fire("st-1", "done")
-    assert held["status"] == "held"
-    assert held["until"] == clock.now + 180
-    # A replayed hook keeps the first outcome and still doesn't call.
-    assert store.fire("rt-1", "failed")["outcome"] == "done"
-    assert store.watch_count() == 1
-    assert store.fire_due() == []
-    assert store.next_due() == clock.now + 180
-
-
-def test_a_hold_that_runs_out_calls_for_a_job_that_ended_during_it(tmp_path):
-    clock = Clock()
-    store = _store(tmp_path, clock=clock, enabled=True)
-    store.add_watch(["rt-1", "st-1"], "Check the server", hold_s=180)
-    store.fire("st-1", "done")
-    clock.now += 179
-    assert store.fire_due() == []
-    clock.now += 2  # the phone went away mid-call: no renewal, no release
-    [due] = store.fire_due()
-    assert due["status"] == "call"
-    assert due["outcome"] == "done"
-    assert due["session_id"] == "st-1"
-    assert due["watch"]["title"] == "Check the server"
-    assert store.fire_due() == []
-    assert store.next_due() is None
-
-
-def test_a_due_call_still_obeys_the_limits(tmp_path):
-    clock = Clock()
-    store = _store(tmp_path, clock=clock, enabled=True)
-    store.add_watch(["a"], "A")
-    store.add_watch(["b"], "B", hold_s=60)
+    store = _store(tmp_path, clock=clock, enabled=True, alerts=True)
+    store.add_alert("b", "approval", "Push?")
+    _watch(store, "a", "A")
     assert store.fire("a", "done")["status"] == "call"
-    store.fire("b", "done")
-    clock.now += 61
+    clock.now += calls_store.ALERT_DELAY_S + 1
     [due] = store.fire_due()
     assert due["status"] == "limited"
     assert due["reason"] == "gap"
 
 
-def test_a_correction_during_the_call_is_not_the_job_ending(tmp_path):
-    clock = Clock()
-    store = _store(tmp_path, clock=clock, enabled=True)
-    store.add_watch(["rt-1"], "Check the server", hold_s=90)
-    # The call interrupts the job to put a correction into it.
-    held = store.fire("rt-1", "stopped")
-    assert held["status"] == "held"
-    assert held["outcome"] is None
-    assert store.next_due() is None
-    # The hold runs out while the corrected turn runs: still watching.
-    clock.now += 91
-    assert store.fire("rt-1", "done")["status"] == "call"
-
-
-def test_a_correction_before_the_watch_is_not_a_recent_end(tmp_path):
-    clock = Clock()
-    store = _store(tmp_path, clock=clock, enabled=True)
-    store.fire("rt-1", "stopped")  # the call put a correction into the job
-    clock.now += 5
-    assert store.add_watch(["rt-1"], "Check the server", hold_s=90, ended_within_s=300)["status"] == "watching"
-
-
-def test_a_job_stopped_after_hang_up_still_calls(tmp_path):
+def test_a_stopped_job_still_calls(tmp_path):
     store = _store(tmp_path, enabled=True)
-    store.add_watch(["rt-1"], "Check the server")
+    _watch(store, "rt-1")
     result = store.fire("rt-1", "stopped")
     assert result["status"] == "call"
     assert result["outcome"] == "stopped"
 
 
-def test_a_removed_held_watch_never_calls(tmp_path):
-    clock = Clock()
-    store = _store(tmp_path, clock=clock, enabled=True)
-    watch_id = store.add_watch(["rt-1"], "Check the server", hold_s=60)["id"]
-    store.fire("rt-1", "done")
-    assert store.remove_watch(watch_id) is True  # Talaria told the user in the call
-    clock.now += 61
-    assert store.fire_due() == []
-
-
-@pytest.mark.parametrize("hold_s", [-1, 601, "60", True, 1.5])
-def test_a_hold_is_whole_seconds_within_bounds(tmp_path, hold_s):
-    store = _store(tmp_path, enabled=True)
-    with pytest.raises(ValueError, match="hold_s"):
-        store.add_watch(["rt-1"], "Job", hold_s=hold_s)
+@pytest.mark.parametrize("delay_s", [-1, 601, "60", True, 1.5])
+def test_an_alerts_delay_is_whole_seconds_within_bounds(tmp_path, delay_s):
+    store = _store(tmp_path, enabled=True, alerts=True)
+    with pytest.raises(ValueError, match="delay_s"):
+        store.add_alert("st-1", "approval", "Push?", delay_s=delay_s)
 
 
 def test_watches_expire_after_a_day(tmp_path):
     clock = Clock()
     store = _store(tmp_path, clock=clock, enabled=True)
-    store.add_watch(["rt-1"], "Check the server")
+    _watch(store, "rt-1")
     clock.now += 24 * 3600 + 1
     assert store.fire("rt-1", "done") is None
     assert store.watch_count() == 0
@@ -325,41 +223,32 @@ def test_watches_expire_after_a_day(tmp_path):
 def test_a_profile_holds_at_most_twenty_watches(tmp_path):
     store = _store(tmp_path, enabled=True)
     for index in range(20):
-        store.add_watch([f"s{index}"], "Job")
+        _watch(store, f"s{index}", "Job")
     with pytest.raises(ValueError, match="too_many"):
-        store.add_watch(["s20"], "Job")
+        _watch(store, "s20", "Job")
 
 
-def test_a_watch_is_bounded_and_cleaned(tmp_path):
-    store = _store(tmp_path, enabled=True)
-    added = store.add_watch(["a", "a", " b ", "c", "d", "e"], "  Check\nthe server  " + "x" * 200)
-    watch = store.fire("a", "done")["watch"]
-    assert watch["id"] == added["id"]
+def test_an_alert_watch_is_bounded_and_cleaned(tmp_path):
+    store = _store(tmp_path, enabled=True, alerts=True)
+    store.add_alert(["a", "a", " b ", "c", "d", "e"], "approval", "  Check\nthe server  " + "x" * 300)
+    [watch] = store._load()["watches"]
     assert watch["session_ids"] == ["a", "b", "c", "d"]
-    assert watch["title"].startswith("Check the server")
-    assert len(watch["title"]) == 120
+    assert watch["reason"].startswith("Check the server")
+    assert len(watch["reason"]) == 200
 
 
-@pytest.mark.parametrize("session_ids", [[], [""], ["bad\nid"], "rt-1", [3]])
-def test_a_watch_needs_a_valid_session_id(tmp_path, session_ids):
+@pytest.mark.parametrize("session_id", ["", " ", "bad\nid", 3, None, ["rt-1"], "x" * 513])
+def test_a_watch_needs_a_valid_session_id(tmp_path, session_id):
     store = _store(tmp_path, enabled=True)
     with pytest.raises(ValueError):
-        store.add_watch(session_ids, "Job")
-
-
-def test_remove_watch(tmp_path):
-    store = _store(tmp_path, enabled=True)
-    added = store.add_watch(["rt-1"], "Job")
-    assert store.remove_watch(added["id"]) is True
-    assert store.remove_watch(added["id"]) is False
-    assert store.fire("rt-1", "done") is None
+        _watch(store, session_id)
 
 
 def test_two_stores_share_one_file(tmp_path):
     clock = Clock()
     dashboard = _store(tmp_path, clock=clock, enabled=True)
     agent = CallStore(tmp_path, clock=clock)
-    dashboard.add_watch(["rt-1"], "Job")
+    _watch(dashboard, "rt-1", "Job")
     assert agent.fire("rt-1", "done")["status"] == "call"
     assert dashboard.fire("rt-1", "done") is None
 
@@ -386,8 +275,7 @@ def test_an_unknown_outcome_is_refused(tmp_path):
 
 def test_a_turn_end_that_changes_nothing_writes_nothing(tmp_path):
     store = _store(tmp_path, enabled=True)
-    store.add_watch(["rt-1"], "Check the server")
-    store.update_settings({"enabled": False})  # no recent ends while off
+    _watch(store, "rt-1")
     before = store.path.stat()
     assert store.fire("other", "done") is None
     assert store.fire_due() == []
@@ -395,21 +283,16 @@ def test_a_turn_end_that_changes_nothing_writes_nothing(tmp_path):
     assert (after.st_ino, after.st_mtime_ns) == (before.st_ino, before.st_mtime_ns)  # saving replaces the file
 
 
-def test_a_retried_watch_for_the_same_job_is_the_same_watch(tmp_path):
-    clock = Clock()
-    store = _store(tmp_path, clock=clock, enabled=True)
-    first = store.add_watch(["rt-1", "st-1"], "Check the server", hold_s=90)["id"]
-    clock.now += 30
-    # The first answer was lost; the phone asks again.
-    assert store.add_watch(["st-1", "rt-1"], "Check the server", hold_s=90) == {"status": "watching", "id": first}
+def test_hermes_asking_again_for_the_same_turn_is_the_same_watch(tmp_path):
+    store = _store(tmp_path, enabled=True)
+    first = _watch(store, "st-1")["id"]
+    assert _watch(store, "st-1") == {"status": "watching", "id": first}
     assert store.watch_count() == 1
-    store.fire("rt-1", "done")
-    assert store.next_due() == clock.now + 90
 
 
 def test_a_watch_with_a_malformed_id_is_dropped(tmp_path):
     store = _store(tmp_path, enabled=True)
-    store.add_watch(["rt-1"], "Check the server")
+    _watch(store, "rt-1")
     state = json.loads(store.path.read_text())
     state["watches"][0]["id"] = "bad id!"
     store.path.write_text(json.dumps(state))
@@ -420,7 +303,6 @@ def test_a_watch_with_a_malformed_id_is_dropped(tmp_path):
 def test_call_history_on_disk_is_capped_to_the_newest_calls(tmp_path):
     clock = Clock()
     store = _store(tmp_path, clock=clock, enabled=True)
-    store.add_watch(["rt-1"], "Check the server")
     state = json.loads(store.path.read_text())
     state["history"] = [clock.now - 10 - at for at in range(500)]
     normalized = calls_store._normalized(state, clock.now)
@@ -444,25 +326,26 @@ def test_hermes_can_ask_for_a_call_only_as_the_settings_allow(tmp_path):
     assert len(store._load()["watches"][1]["reason"]) == 200
 
 
-def test_a_session_already_watched_keeps_its_watch_when_hermes_asks_too(tmp_path):
+def test_a_session_already_watched_keeps_its_watch_and_takes_a_reason(tmp_path):
     store = _store(tmp_path, enabled=True)
-    watch_id = store.add_watch(["rt-1", "st-1"], "Check the server")["id"]
-    assert store.add_tool_watch("st-1", "The server is back.", asked=True) == {"status": "watching", "id": watch_id}
+    watch_id = _watch(store, "st-1", "")["id"]
+    assert _watch(store, "st-1", "The server is back.") == {"status": "watching", "id": watch_id}
+    assert _watch(store, "st-1", "Something else.") == {"status": "watching", "id": watch_id}
     [watch] = store._load()["watches"]
-    assert (watch["origin"], watch["reason"], watch["title"]) == ("talaria", "The server is back.", "Check the server")
-    result = store.fire("rt-1", "done")
+    assert (watch["origin"], watch["reason"]) == ("tool", "The server is back.")
+    result = store.fire("st-1", "done")
     assert result["status"] == "call" and result["watch"]["reason"] == "The server is back."
 
 
 def test_the_users_request_wins_over_a_watch_hermes_set_on_its_own(tmp_path):
     store = _store(tmp_path, enabled=True, decides=True)
-    watch_id = store.add_tool_watch("st-1", "Heads up.", asked=False)["id"]
-    assert store.add_watch(["rt-1", "st-1"], "Check the server") == {"status": "watching", "id": watch_id}
+    watch_id = _watch(store, "st-1", "Heads up.", asked=False)["id"]
+    assert _watch(store, "st-1", "You asked.", asked=True) == {"status": "watching", "id": watch_id}
     [watch] = store._load()["watches"]
-    assert (watch["origin"], watch["asked"], watch["title"]) == ("talaria", True, "Check the server")
+    assert (watch["asked"], watch["reason"]) == (True, "Heads up.")
     # "Hermes decides" off never refuses what the user asked for.
     store.update_settings({"decides": False})
-    assert store.fire("rt-1", "done")["status"] == "call"
+    assert store.fire("st-1", "done")["status"] == "call"
 
 
 def test_a_tool_watch_turned_off_before_its_turn_ends_does_not_call(tmp_path):
@@ -489,6 +372,7 @@ def test_an_unanswered_approval_calls_after_a_minute(tmp_path):
     assert (due["status"], due["outcome"], due["session_id"]) == ("call", "approval", "sk-1")
     assert (due["watch"]["id"], due["watch"]["reason"]) == (alert_id, "Run rm -rf build?")
     assert store.watch_count() == 0
+    assert store.next_due() is None
 
 
 def test_an_answered_question_or_a_finished_turn_calls_no_more(tmp_path):
@@ -543,34 +427,60 @@ def test_a_failed_turn_alert_counts_against_the_limits(tmp_path):
     assert store.watch_count() == 0
 
 
-def test_a_watch_held_through_a_call_keeps_hermes_calls_from_ringing_over_it(tmp_path):
-    clock = Clock()
-    store = _store(tmp_path, clock=clock, enabled=True, alerts=True)
-    # The app holds the watch it registered in the call.
-    store.add_watch(["st-1"], "Check the server", hold_s=180)
-    store.add_watch(["st-2"], "Check the logs", hold_s=185)
-    assert store.alert_now("st-3", "failed", "")["status"] == "busy"
-    store.add_tool_watch("st-4", "The deploy finished.", True)
-    assert store.fire("st-4", "done")["status"] == "busy"
-    # Both jobs end in the call, then the phone goes away: the first hold
-    # to run out still calls, although its sibling's hold has seconds left.
-    assert store.fire("st-1", "done")["status"] == "held"
-    assert store.fire("st-2", "done")["status"] == "held"
-    clock.now += 181
-    assert [result["status"] for result in store.fire_due()] == ["call"]
+# --- Files an older plugin wrote ---------------------------------------------
 
 
-def test_watches_from_an_older_plugin_read_as_talaria_watches(tmp_path):
+def _older_watch(watch_id, session_ids, **fields):
+    """A watch as an older plugin stored it, before the store dropped the
+    watches the phone registered in a Live Voice call."""
+    return {"id": watch_id, "session_ids": session_ids, "title": "Check the server", "created_at": 1_000_000.0,
+            "expires_at": 1_000_000.0 + 3600, "hold_until": 0.0, "pending": None, **fields}
+
+
+def test_watches_the_phone_registered_read_as_calls_the_user_asked_for(tmp_path):
     clock = Clock()
-    store = _store(tmp_path, clock=clock, enabled=True)
-    store.add_watch(["rt-1"], "Check the server")
-    state = json.loads(store.path.read_text())
-    for key in ("origin", "reason", "asked"):
-        del state["watches"][0][key]
-    state["watches"].append({**state["watches"][0], "id": "b" * 24, "origin": "alert", "pending": None})
-    store.path.write_text(json.dumps(state))
-    [watch] = store._load()["watches"]
-    assert (watch["origin"], watch["reason"], watch["asked"]) == ("talaria", "", False)
+    (tmp_path / "talaria-calls.json").write_text(json.dumps({"v": 1, "settings": {"enabled": True}, "watches": [
+        _older_watch("a" * 24, ["rt-1", "st-1"], origin="talaria", reason="", asked=False),
+        # Before origins were kept.
+        _older_watch("b" * 24, ["rt-2"]),
+        # An origin this plugin doesn't know keeps its own asked flag.
+        _older_watch("c" * 24, ["rt-3"], origin="someday", reason="Heads up.", asked=False),
+        # An alert with nothing to call about.
+        _older_watch("d" * 24, ["rt-4"], origin="alert"),
+    ]}))
+    store = CallStore(tmp_path, clock=clock)
+    watches = store._load()["watches"]
+    assert [(watch["origin"], watch["asked"]) for watch in watches] == [("tool", True), ("tool", True), ("tool", False)]
+    # They ring with "call when I ask" on, "Hermes decides" off, and still
+    # name the job.
+    fired = store.fire("st-1", "done")
+    assert (fired["status"], fired["watch"]["title"]) == ("call", "Check the server")
+    assert store.fire("rt-3", "done")["status"] == "off"
+
+
+def test_a_watch_whose_job_ended_in_a_call_still_calls_when_due(tmp_path):
+    clock = Clock()
+    (tmp_path / "talaria-calls.json").write_text(json.dumps({"v": 1, "settings": {"enabled": True}, "watches": [
+        _older_watch("a" * 24, ["rt-1"], origin="talaria", hold_until=clock.now + 30,
+                     pending={"outcome": "done", "session_id": "rt-1"}),
+    ]}))
+    store = CallStore(tmp_path, clock=clock)
+    assert store.next_due() == clock.now + 30
+    clock.now += 31
+    [due] = store.fire_due()
+    assert (due["status"], due["outcome"], due["session_id"]) == ("call", "done", "rt-1")
+
+
+def test_recent_turn_ends_an_older_plugin_kept_load_and_are_dropped_on_the_next_write(tmp_path):
+    clock = Clock()
+    path = tmp_path / "talaria-calls.json"
+    path.write_text(json.dumps({"v": 1, "settings": {"enabled": True}, "watches": [],
+                                "ends": [{"session_id": "rt-1", "outcome": "done", "at": clock.now - 60}]}))
+    store = CallStore(tmp_path, clock=clock)
+    assert "ends" not in store._load()
+    _watch(store, "rt-1")
+    assert "ends" not in json.loads(path.read_text())
+    assert store.fire("rt-1", "done")["status"] == "call"
 
 
 # --- Outcomes: calls the user declined or missed ---------------------------

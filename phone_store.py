@@ -3,7 +3,7 @@ Talaria: the store, its encryption, its queries and the changes Hermes asks
 the phone to make.
 
 Talaria can share the user's calendars, reminders, which Focus is on and a
-snapshot of the phone's state (battery, CarPlay, audio route, motion) with
+snapshot of the phone's state (battery, car mode, audio route, motion) with
 this profile so Hermes can use them. Each kind is off until the user turns
 it on. The phone sends them straight to this host over the dashboard
 connection, never through the push relay.
@@ -1887,7 +1887,7 @@ def _parse_status(value: Any, now: int) -> dict[str, Any]:
         "battery": _number(status.get("battery"), "status.battery", 0, 1),
         "charging": _bool(status.get("charging"), "status.charging"),
         "low_power": _bool(status.get("low_power"), "status.low_power"),
-        "carplay": _bool(status.get("carplay"), "status.carplay"),
+        "car_mode": _bool(status.get("car_mode"), "status.car_mode"),
         "audio_route": _enum(status.get("audio_route"), "status.audio_route", AUDIO_ROUTES),
         "network": _enum(status.get("network"), "status.network", NETWORKS),
         "activity": _enum(status.get("activity"), "status.activity", ACTIVITIES),
@@ -1910,7 +1910,7 @@ def _parse_focus(value: Any, now: int) -> dict[str, Any]:
 
 def _parse_alarms(value: Any) -> list[dict[str, Any]]:
     """The alarms and timers Talaria set for Hermes that are still on the
-    phone (not the user's own: AlarmKit shows an app only its own)."""
+    phone (not the user's own, which Android doesn't show to other apps)."""
     alarms = _list(value, "alarms")
     if len(alarms) > MAX_ALARMS_LISTED:
         raise PhoneError("too_large", f"At most {MAX_ALARMS_LISTED} alarms", status=413)

@@ -1,32 +1,30 @@
 """Chats Talaria has on screen while their reply runs, for the reply-ready
 push: what desktop_selected.py (#87) does for Hermes Desktop.
 
-A reply that lands in a chat the user is looking at in Talaria sends no
-"reply ready" push: they watched it arrive. Talaria on the iPhone already
-hides a banner while it's in front, but the push still goes to the paired
-iPhone (and from there to the Apple Watch) when the user is chatting in
-Talaria on a Mac or an iPad, or in the moments the phone locks around the
-reply. Desktop's selected chat (desktop_selected.py) never covered Talaria:
-its socket stays open for a while off screen, so the host can't tell from it
-whether Talaria is in front. Talaria can, so it says so.
+A reply that lands in a chat the user is looking at in Talaria needs no
+"reply ready" push: they watched it arrive. The app can hide a notification
+while it's in front, but the push still goes out, and it reaches the phone
+when the user is chatting in Talaria on a tablet, or in the moments the phone
+locks around the reply. Desktop's selected chat (desktop_selected.py) never
+covered Talaria: its socket stays open for a while off screen, so the host
+can't tell from it whether Talaria is in front. Talaria can, so it says so.
 
-While a chat is open in Talaria, its scene active and a turn running there,
-Talaria puts ``PUT /notifications/on-screen`` with the chat's ids and a hold:
-the chat counts as on screen for that many seconds. Talaria renews the hold
-while the turn runs (its interval stretched by Low Power and Low Data Mode
-like its other polls, with the hold three renewals long) and lets the last
-one run out after the turn ends, so the reply's own hooks still see it. It
-sends a hold of 0 when the user leaves the chat or the app, and when nobody
-has touched or typed in Talaria for 2 minutes of a long turn: a Mac or an
-iPad that never locks is likely being left, and its reply should push, as
-with Desktop's 2-minute rule. Nothing is sent while no turn runs, so an idle
-chat left open costs no requests.
+While a chat is open in Talaria and a turn runs there, Talaria puts
+``PUT /notifications/on-screen`` with the chat's ids and a hold: the chat
+counts as on screen for that many seconds. Talaria renews the hold while the
+turn runs (three renewals long) and lets the last one run out after the turn
+ends, so the reply's own hooks still see it. It sends a hold of 0 when the
+user leaves the chat or the app, and when nobody has touched or typed in
+Talaria for 2 minutes of a long turn: a tablet that never locks is likely
+being left, and its reply should push, as with Desktop's 2-minute rule.
+Nothing is sent while no turn runs, so an idle chat left open costs no
+requests.
 
-One small file per device kind (iPhone, iPad, Mac…) in
+One small file per device kind (phone, tablet) in
 ``talaria-on-screen/`` under the profile's home, each written whole through a
 private temp file: two devices never write the same file, so no lock is
 needed, and one leaving doesn't end another's hold. Two devices of the same
-kind (two iPhones) share a file, so the later one's report replaces the
+kind (two phones) share a file, so the later one's report replaces the
 other's; that can only let a push through. The dashboard writes; the
 turn's hooks (agent process) only read. A file that can't be read, has the
 wrong shape or claims a hold longer than MAX_HOLD_S from now counts as
@@ -54,8 +52,8 @@ from pathlib import Path
 from typing import Any, Iterable
 
 DIRECTORY = "talaria-on-screen"
-# Talaria's TurnSurface places a chat can be on screen on.
-DEVICES = ("iphone", "ipad", "mac", "vision", "watch")
+# The kinds of device a chat can be on screen on.
+DEVICES = ("phone", "tablet")
 MAX_HOLD_S = 600
 # A turn longer than this pushes even while held (see attended).
 MAX_TURN_S = 1800.0

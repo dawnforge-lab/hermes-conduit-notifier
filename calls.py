@@ -1,23 +1,20 @@
 """Hermes calls you (#449): turning a watched job's end into a call request.
 
-The turn-end hooks hand every top-level turn end here. A turn of a session
-Talaria watches consumes the watch (calls_store) and, within the user's
-limits, sends a ``call.requested`` event in place of the push the hook would
-have sent. Delivery retries a transport or relay failure with the same event
-id, which the relay dedupes; a rejection (an older relay, the relay's daily
-ceiling), a relay that took the event but couldn't reach Google, or a final
-failure sends that ordinary push instead, so the user still hears about the
-job.
+Hermes asks for a call through the ``talaria_call_user`` tool: a watch on the
+asking session (calls_store, see ``tool_watch``). The turn-end hooks hand
+every top-level turn end here. A turn of a watched session consumes the
+watch and, within the user's limits, sends a ``call.requested`` event in
+place of the push the hook would have sent. Delivery retries a transport or
+relay failure with the same event id, which the relay dedupes; a rejection
+(an older relay, the relay's daily ceiling), a relay that took the event but
+couldn't reach Google, or a final failure sends that ordinary push instead,
+so the user still hears about the job.
 
-A job that ends while its watch is held (the user's call is still going)
-gets its ordinary push; the call waits. A waiter thread calls once the hold
-runs out unreleased (the phone went away mid-call), and every turn end
-sweeps for such calls too, so a gateway restart doesn't lose one.
-
-Hermes asks for a call itself through the ``talaria_call_user`` tool (a watch
-on the asking session, see ``tool_watch``). With alert calls on, an approval
-or question left unanswered calls through the same waiter (``alert``), and a
-failed turn calls in place of its push (``failed_turn``).
+With alert calls on, a failed turn calls in place of its push
+(``failed_turn``), and an approval or question left unanswered calls beside
+its notification (``alert``): a waiter thread calls once the alert comes
+due, and every turn end sweeps for due calls too, so a gateway restart
+doesn't lose one.
 
 A call the user declined or didn't answer comes back from Talaria (the
 dashboard's outcome route), and the next turn of its chat tells Hermes so
@@ -55,8 +52,8 @@ def _spawn(work: Callable[[], None]) -> None:
     threading.Thread(target=contextvars.copy_context().run, args=(work,), name="talaria-call", daemon=True).start()
 
 
-# Homes with a waiter thread running, so a burst of held turn ends starts one,
-# and what wakes each early.
+# Homes with a waiter thread running, so a burst of alerts starts one, and
+# what wakes each early.
 _waiting: set[str] = set()
 _wakes: dict[str, threading.Event] = {}
 _waiting_lock = threading.Lock()
@@ -72,8 +69,8 @@ def start() -> None:
 
 
 def stop() -> None:
-    """The plugin is being unloaded: held calls stay in the store (the next
-    load's resume() waits on them again) but nothing here sends them."""
+    """The plugin is being unloaded: waiting alerts stay in the store (the
+    next load's resume() waits on them again) but nothing here sends them."""
     global _generation
     with _waiting_lock:
         _stopped.set()
@@ -134,21 +131,13 @@ def turn_ended(session_id: str, outcome: str, *, profile: str, fallback: dict[st
         # Watches consumed here are sent even if this turn's own check fails.
         _send_due(store.fire_due(), profile)
     except Exception:  # noqa: BLE001
-        logger.warning("Talaria could not sweep held calls", exc_info=True)
+        logger.warning("Talaria could not sweep due calls", exc_info=True)
     try:
         result = store.fire(session_id, outcome)
     except Exception:  # noqa: BLE001
         logger.warning("Talaria could not check call watches for this turn", exc_info=True)
         return False
     if result is None:
-        return False
-    if result["status"] == "held":
-        # The call waits for the user's call to end; this turn's own push
-        # goes out as usual.
-        try:
-            _wait_for_holds(home, profile)
-        except Exception:  # noqa: BLE001 — the next turn end sweeps again
-            logger.warning("Talaria could not wait on a held call", exc_info=True)
         return False
     if result["status"] != "call":
         logger.info("Talaria call for a finished job held back: %s", result.get("reason") or result["status"])
@@ -163,41 +152,42 @@ def turn_ended(session_id: str, outcome: str, *, profile: str, fallback: dict[st
 
 
 def _send_due(results: list[dict[str, Any]], profile: str) -> None:
-    """Calls for jobs that ended during a hold that ran out. Their ordinary
-    push went out when they ended, so there is nothing to fall back to."""
+    """Calls for watches that came due (alerts left unanswered). Their
+    notification went out when they were set, so there is nothing to fall
+    back to."""
     for result in results:
         if result["status"] != "call":
-            logger.info("Talaria call for a finished job held back: %s", result.get("reason") or result["status"])
+            logger.info("Talaria call for a waiting alert held back: %s", result.get("reason") or result["status"])
             continue
         # One that can't go out never stops the rest: they're consumed too.
         try:
             event = call_event(result["watch"], result["outcome"], session_id=result["session_id"], profile=profile)
             _spawn(lambda event=event: deliver(event, None))
         except Exception:  # noqa: BLE001
-            logger.warning("Talaria could not send a held call", exc_info=True)
+            logger.warning("Talaria could not send a due call", exc_info=True)
 
 
 def resume(profile: str) -> None:
-    """At start-up: a hold over an ended job that was waiting when the
-    agent stopped gets its waiter back, so it doesn't wait for a turn."""
+    """At start-up: an alert that was waiting when the agent stopped gets
+    its waiter back, so it doesn't wait for a turn."""
     try:
         home = get_hermes_home()
         if _store(home).next_due() is not None:
-            _wait_for_holds(home, profile)
+            _wait_for_due(home, profile)
     except Exception:  # noqa: BLE001 — the next turn end sweeps again
-        logger.warning("Talaria could not resume held calls", exc_info=True)
+        logger.warning("Talaria could not resume waiting calls", exc_info=True)
 
 
-def _wait_for_holds(home: Any, profile: str) -> None:
-    """Sleeps until each hold over an ended job runs out, then calls for it
-    unless Talaria released or removed the watch meanwhile."""
+def _wait_for_due(home: Any, profile: str) -> None:
+    """Sleeps until each waiting alert comes due, then calls for it unless
+    the user answered it (or its turn ended) meanwhile."""
     key = str(home)
     with _waiting_lock:
         if _stopped.is_set():
             return
         if key in _waiting:
-            # It may now be due sooner than the waiter wakes (an alert's
-            # minute beside a long hold): the waiter looks again.
+            # It may now be due sooner than the waiter wakes (an alert with
+            # a shorter delay): the waiter looks again.
             if key in _wakes:
                 _wakes[key].set()
             return
@@ -214,11 +204,11 @@ def _waiter(home: Any, profile: str, key: str, generation: int = 0) -> Callable[
     def wait() -> None:
         try:
             # Inside the try: a store that can't open must still let go of
-            # the key, or no later hold for this home starts a waiter.
+            # the key, or no later alert for this home starts a waiter.
             store = _store(home)
             while True:
-                # Under the lock: a hold that starts now either shows up here
-                # or wakes this waiter, or starts its own.
+                # Under the lock: an alert set now either shows up here or
+                # wakes this waiter, or starts its own.
                 with _waiting_lock:
                     if generation != _generation:  # stop() already let go of its key
                         return
@@ -234,7 +224,7 @@ def _waiter(home: Any, profile: str, key: str, generation: int = 0) -> Callable[
                     return
                 _send_due(store.fire_due(), profile)
         except Exception:  # noqa: BLE001 — the next turn end sweeps again
-            logger.warning("Talaria stopped waiting on a held call", exc_info=True)
+            logger.warning("Talaria stopped waiting on an alert call", exc_info=True)
             with _waiting_lock:
                 if generation == _generation:
                     _waiting.discard(key)
@@ -265,7 +255,7 @@ def alert(session_id: str, kind: str, reason: str, *, profile: str, turn_session
     try:
         home = get_hermes_home()
         if _store(home).add_alert(ids, kind, reason) is not None:
-            _wait_for_holds(home, profile)
+            _wait_for_due(home, profile)
     except Exception:  # noqa: BLE001
         logger.warning("Talaria could not set up an alert call", exc_info=True)
 

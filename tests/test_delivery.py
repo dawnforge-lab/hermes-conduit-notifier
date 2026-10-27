@@ -417,9 +417,34 @@ def test_cli_pair_names_a_block_in_front_of_the_relay(monkeypatch, capsys):
         raise client.RelayRejected(403, "request_rejected", from_relay=False)
 
     monkeypatch.setattr(cli, "claim_pairing", blocked)
-    args = types.SimpleNamespace(talaria_push_action="pair", code="ABCD", relay_url=client.DEFAULT_RELAY_URL, name="")
+    args = types.SimpleNamespace(talaria_push_action="pair", code="ABCD", relay_url="https://relay.example", name="")
     assert cli.dispatch(args) == 1
-    assert "support@milim.dev" in capsys.readouterr().out
+    assert "ask whoever runs the relay" in capsys.readouterr().out
+
+
+def test_cli_pair_without_a_relay_url_asks_for_one(monkeypatch, capsys):
+    claims = []
+    monkeypatch.setattr(cli, "claim_pairing", lambda *args: claims.append(args))
+    monkeypatch.setattr(cli, "load_state", lambda: None)
+    args = types.SimpleNamespace(talaria_push_action="pair", code="ABCD", relay_url="", name="")
+    assert cli.dispatch(args) == 1
+    assert "--relay-url" in capsys.readouterr().out
+    assert claims == []
+
+
+def test_cli_pair_without_a_relay_url_uses_the_current_relay(monkeypatch, capsys):
+    claims = []
+
+    def claim(code, relay_url, name):
+        claims.append(relay_url)
+        return {"gateway_name": "box Hermes"}
+
+    monkeypatch.setattr(cli, "claim_pairing", claim)
+    monkeypatch.setattr(cli, "load_state", lambda: {"relay_url": "https://own.relay"})
+    monkeypatch.setattr(cli, "send_now", lambda *args, **kwargs: None)
+    args = types.SimpleNamespace(talaria_push_action="pair", code="ABCD", relay_url="", name="")
+    assert cli.dispatch(args) == 0
+    assert claims == ["https://own.relay"]
 
 
 def test_one_write_swaps_the_refusal_marks(paired):

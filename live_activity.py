@@ -45,13 +45,13 @@ FIRST_DELAY_S = 2.0
 # The relay refused one turn's update (rate limit, outage): that turn waits
 # this long before it is tried again. Other turns carry on.
 BACKOFF_S = 60.0
-# An end the relay didn't take is tried again this soon: the Lock Screen
-# should stop saying "running" quickly.
+# An end the relay didn't take is tried again this soon: the phone's ongoing
+# notification should stop saying "running" quickly.
 END_RETRY_S = 10.0
 # An end that still hasn't gone out after this long is given up on: the
 # activity's stale date has taken over by then.
 END_GIVE_UP_S = 15 * 60.0
-# The relay has no Live Activity route: try again after this long.
+# The relay has no live turn route: try again after this long.
 UNSUPPORTED_S = 30 * 60.0
 # The relay (or a filter in front of it) refused the credential or the
 # caller: every turn waits this long. Retrying an end every 10 s instead kept
@@ -70,7 +70,7 @@ PHASES = {"thinking", "tool", "approval", "input"}
 _UNSET: Any = object()
 ENDS = {"done", "failed", "stopped"}
 
-# Tool name -> category Talaria names on the Lock Screen. Exact names first,
+# Tool name -> category Talaria names in the ongoing notification. Exact names first,
 # then prefixes; anything else is just "tool".
 _TOOL_CATEGORIES = {
     "terminal": "terminal",
@@ -108,7 +108,7 @@ _TOOL_PREFIXES = (
 
 
 def tool_category(name: Any) -> str:
-    """The Lock Screen category for a tool name (never the name itself)."""
+    """The category Talaria shows for a tool name (never the name itself)."""
     value = str(name or "").strip().lower()
     if value in _TOOL_CATEGORIES:
         return _TOOL_CATEGORIES[value]
@@ -163,7 +163,7 @@ class LiveActivityReporter:
         self._ended: dict[str, float] = {}
         self._lock = threading.Lock()
         self._wake = threading.Condition(self._lock)
-        # The relay has no Live Activity route: nothing is sent until then.
+        # The relay has no live turn route: nothing is sent until then.
         self._paused_until = 0.0
         self._thread: threading.Thread | None = None
         # stop() (the plugin was unloaded) ends the thread and keeps a new
@@ -327,12 +327,12 @@ class LiveActivityReporter:
                         turn.dirty = True
                         self._changed()
             if status == 400:
-                logger.info("Talaria Live Activity report refused: %s", error)
+                logger.info("Talaria live turn report refused: %s", error)
             elif paused_for:
-                logger.warning("Talaria Live Activity paused for %d minutes: the relay answered %s",
+                logger.warning("Talaria live turn reports paused for %d minutes: the relay answered %s",
                                paused_for // 60, status)
             else:
-                logger.info("Talaria Live Activity update not delivered: %s", error)
+                logger.info("Talaria live turn update not delivered: %s", error)
             return
         tracked = bool(isinstance(answer, dict) and answer.get("tracked"))
         with self._lock:
@@ -410,7 +410,7 @@ class LiveActivityReporter:
             try:
                 next_in = self.flush()
             except Exception:  # noqa: BLE001
-                logger.debug("Talaria Live Activity flush failed", exc_info=True)
+                logger.debug("Talaria live turn flush failed", exc_info=True)
                 next_in = BACKOFF_S
             with self._lock:
                 if generation != self._generation:
@@ -450,7 +450,7 @@ def _post_to_relay(payload: dict[str, Any]) -> dict[str, Any]:
         )
     except client.RelayRejected as error:
         # The same "pair again" / "blocked" signals notifications raise (and
-        # clear), for a host whose only relay traffic is Live Activities.
+        # clear), for a host whose only relay traffic is live turns.
         _mark_refused(client.record_relay_refusal, state, error)
         raise
     # Also ends a notification pause: the relay takes this pairing again.

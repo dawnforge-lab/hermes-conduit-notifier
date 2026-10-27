@@ -55,13 +55,13 @@ VERSION = 1
 STATES = ("waiting", "confirmed", "declined", "edit", "expired", "cancelled")
 # What a phone reports for a prompt the user answered, and how.
 OUTCOMES = ("confirmed", "declined", "edit")
-# "auto": Talaria opened Apple Maps for a navigate prompt itself, because the
+# "auto": Talaria opened Maps for a navigate prompt itself, because the
 # user was in that chat with Talaria open.
 VIAS = ("tap", "voice", "auto")
 # What a navigate prompt (talaria_maps navigate) carries: where to and how.
-# Talaria opens Apple Maps with these when the user says go.
+# Talaria opens Maps with these when the user says go.
 MAPS_MODES = ("driving", "walking", "transit", "cycling")
-# What a Talaria that opens Apple Maps for a navigate prompt says it can do.
+# What a Talaria that opens Maps for a navigate prompt says it can do.
 # Only such a Talaria gets one, and only its answer counts: another would show
 # it as a plain confirm, and its yes would never open Maps.
 NAVIGATE_FEATURE = "maps-navigate"

@@ -211,7 +211,7 @@ def test_cards_go_to_the_call_screen_and_come_back_normalized(tool_home):
     assert answer["ok"] is True and answer["cards"] == [CLEAN_MAP], "the answer keeps them in the chat's history"
     [card] = _exchange(PresentStore(tool_home))["cards"]
     assert card["cards"] == [CLEAN_MAP]
-    assert "**Kin Khao**" in card["markdown"] and "maps.apple.com" in card["markdown"], \
+    assert "**Kin Khao**" in card["markdown"] and "google.com/maps" in card["markdown"], \
         "a screen that doesn't draw cards shows their Markdown"
     assert "4.4" not in card["markdown"], "an unsourced rating is shown nowhere"
     assert card["fallback"] is True, "a phone that draws the cards leaves their Markdown out"

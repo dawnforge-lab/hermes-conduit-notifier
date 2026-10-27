@@ -184,7 +184,7 @@ def test_a_held_calls_waiter_ends_without_calling(unloaded_plugin, monkeypatch):
     store = types.SimpleNamespace(next_due=lambda: time.time() + 60, clock=time.time,
                                   fire_due=lambda: fired.append(True) or [])
     monkeypatch.setattr(calls, "_store", lambda home: store)
-    calls._wait_for_holds("home-1", "default")
+    calls._wait_for_due("home-1", "default")
     [waiter] = [thread for thread in threading.enumerate() if thread.name == "talaria-call"]
 
     unloaded_plugin()
@@ -194,7 +194,7 @@ def test_a_held_calls_waiter_ends_without_calling(unloaded_plugin, monkeypatch):
     assert fired == [], "a held call went out after the unload"
     assert calls._waiting == set()
     # Nothing new waits until the plugin is loaded again.
-    calls._wait_for_holds("home-1", "default")
+    calls._wait_for_due("home-1", "default")
     assert calls._waiting == set()
 
 

@@ -34,7 +34,7 @@ SCHEMA: dict[str, Any] = {
     "name": TOOL_NAME,
     "description": (
         "Phone the user through the Talaria app: their phone rings like a call, and when they answer, "
-        "a live voice conversation opens in this chat. The call goes out when this turn ends, so finish "
+        "a voice conversation opens in this chat. The call goes out when this turn ends, so finish "
         "the work first and end the turn with the result as your final reply; the call opens with your "
         "reason and that reply. Use it when the user asked to be called, phoned or rung (\"call me when "
         "it's done\"), with asked_by_user true. Without such a request, only for news the user would want "

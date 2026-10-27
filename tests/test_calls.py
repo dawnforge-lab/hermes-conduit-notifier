@@ -101,17 +101,18 @@ def fake(monkeypatch):
     return fake
 
 
-def _watch(home, *session_ids, title="Check the server", **settings):
+def _watch(home, session_id, reason="", **settings):
+    """Hermes asked (for the user) to call when this turn of ``session_id`` ends."""
     store = CallStore(home)
     store.update_settings({"enabled": True, **settings})
-    return store.add_watch(list(session_ids), title)["id"]
+    return store.add_tool_watch(session_id, reason, True)["id"]
 
 
 READY = {"event_id": "response:1", "type": "response.ready"}
 
 
 def test_a_watched_job_that_finishes_sends_a_call_request_instead(home, fake):
-    watch_id = _watch(home, "rt-1", "st-1")
+    watch_id = _watch(home, "st-1")
     assert calls.turn_ended("st-1", "done", profile="default", fallback=READY) is True
     assert fake.enqueued == []
     [event] = fake.sent
@@ -119,17 +120,15 @@ def test_a_watched_job_that_finishes_sends_a_call_request_instead(home, fake):
     assert event["event_id"] == f"call:{watch_id}"
     assert event["session_id"] == "st-1"
     assert event["title"] == "Hermes wants to talk"
-    assert event["body"] == "“Check the server” finished."
-    assert event["call"] == {"id": watch_id, "kind": "done", "title": "Check the server", "session_ids": ["rt-1", "st-1"]}
+    assert event["body"] == "Your job finished."
+    assert event["call"] == {"id": watch_id, "kind": "done", "session_ids": ["st-1"]}
 
 
 def test_failed_and_stopped_jobs_say_so(home, fake):
-    _watch(home, "a", title="")
-    _watch(home, "b", min_gap_s=30)
+    _watch(home, "a")
     calls.turn_ended("a", "failed", profile="default", fallback=None)
     assert fake.sent[-1]["body"] == "Your job failed."
-    CallStore(home).update_settings({"min_gap_s": 30})
-    # The gap holds the second one back; the outcome copy is what matters.
+    # A watch an older plugin kept still names its job.
     event = calls.call_event({"id": "0123456789abcdef", "title": "B", "session_ids": ["b"]}, "stopped",
                              session_id="b", profile="default")
     assert event["body"] == "“B” stopped before finishing."
@@ -342,7 +341,7 @@ def test_a_subagent_turn_never_fires_a_watch(home, fake):
     assert CallStore(home).watch_count() == 1
 
 
-# --- Held watches: registered during the call ------------------------------
+# --- Waiting calls: alerts that come due later -----------------------------
 
 
 @pytest.fixture
@@ -352,61 +351,26 @@ def clock(monkeypatch):
     return now
 
 
-def _held_watch(home, *session_ids, hold_s=180, title="Check the server"):
+def _waiting_alert(home, session_id="sk-1", delay_s=60):
+    """An approval Hermes waits on: it calls in ``delay_s`` unless answered."""
     store = calls._store(home)
-    store.update_settings({"enabled": True})
-    return store.add_watch(list(session_ids), title, hold_s=hold_s)["id"]
-
-
-def test_a_job_ending_during_the_call_gets_its_usual_push(home, fake, clock, monkeypatch):
-    monkeypatch.setattr(calls, "_wait_for_holds", lambda home, profile: None)
-    _held_watch(home, "rt-1")
-    assert calls.turn_ended("rt-1", "done", profile="default", fallback=READY) is False
-    assert fake.sent == []
-
-
-def test_a_hold_that_runs_out_calls_without_a_second_push(home, fake, clock, monkeypatch):
-    # The phone went away mid-call: nobody renews or releases the hold.
-    def sleep(seconds, wake=None):
-        clock[0] += seconds
-    monkeypatch.setattr(calls, "_sleep", sleep)
-    watch_id = _held_watch(home, "rt-1", "st-1")
-    assert calls.turn_ended("st-1", "done", profile="default", fallback=READY) is False
-    [event] = fake.sent
-    assert event["type"] == "call.requested"
-    assert event["event_id"] == f"call:{watch_id}"
-    assert event["session_id"] == "st-1"
-    assert event["body"] == "“Check the server” finished."
-    assert fake.enqueued == []
-
-
-def test_a_watch_removed_during_the_call_never_calls(home, fake, clock, monkeypatch):
-    watch_id = _held_watch(home, "rt-1")
-
-    def sleep(seconds, wake=None):
-        # Talaria told the user in the call and removed the watch.
-        calls._store(home).remove_watch(watch_id)
-        clock[0] += seconds
-    monkeypatch.setattr(calls, "_sleep", sleep)
-    calls.turn_ended("rt-1", "done", profile="default", fallback=READY)
-    assert fake.sent == []
+    store.update_settings({"enabled": True, "alerts": True})
+    return store.add_alert(session_id, "approval", "Run the migration", delay_s=delay_s)
 
 
 def test_the_next_turn_end_sweeps_a_call_a_restart_dropped(home, fake, clock, monkeypatch):
-    monkeypatch.setattr(calls, "_wait_for_holds", lambda home, profile: None)
-    _held_watch(home, "rt-1", hold_s=60)
-    calls.turn_ended("rt-1", "done", profile="default", fallback=READY)
+    monkeypatch.setattr(calls, "_wait_for_due", lambda home, profile: None)
+    _waiting_alert(home)
     clock[0] += 61
     # Any other session's turn end finds the overdue call.
     assert calls.turn_ended("other", "done", profile="default", fallback=READY) is False
     assert [event["type"] for event in fake.sent] == ["call.requested"]
-    assert fake.sent[0]["session_id"] == "rt-1"
+    assert fake.sent[0]["session_id"] == "sk-1"
 
 
 def test_a_sweep_still_sends_when_this_turns_check_fails(home, fake, clock, monkeypatch):
-    monkeypatch.setattr(calls, "_wait_for_holds", lambda home, profile: None)
-    _held_watch(home, "rt-1", hold_s=60)
-    calls.turn_ended("rt-1", "done", profile="default", fallback=READY)
+    monkeypatch.setattr(calls, "_wait_for_due", lambda home, profile: None)
+    _waiting_alert(home)
     clock[0] += 61
 
     def broken(self, session_id, outcome):
@@ -416,13 +380,14 @@ def test_a_sweep_still_sends_when_this_turns_check_fails(home, fake, clock, monk
     assert [event["type"] for event in fake.sent] == ["call.requested"]
 
 
-def test_a_waiter_that_cannot_start_lets_the_next_turn_try(home, fake, clock, monkeypatch):
+def test_a_waiter_that_cannot_start_lets_a_later_alert_try(home, fake, clock, monkeypatch):
     def no_threads(work):
         raise RuntimeError("can't start new thread")
     monkeypatch.setattr(calls, "_spawn", no_threads)
-    _held_watch(home, "rt-1")
-    # The turn goes on, and the home isn't left marked as waiting.
-    assert calls.turn_ended("rt-1", "done", profile="default", fallback=READY) is False
+    calls._store(home).update_settings({"enabled": True, "alerts": True})
+    # The hook goes on, and the home isn't left marked as waiting.
+    calls.alert("sk-1", "approval", "Run the migration", profile="default")
+    assert calls._store(home).watch_count() == 1
     assert str(home) not in calls._waiting
 
 
@@ -434,26 +399,26 @@ def test_a_call_that_cannot_be_spawned_leaves_the_usual_push(home, fake, monkeyp
     assert calls.turn_ended("rt-1", "done", profile="default", fallback=READY) is False
 
 
-def test_a_held_call_waiting_at_start_up_gets_its_waiter_back(home, fake, clock, monkeypatch):
+def test_an_alert_waiting_at_start_up_gets_its_waiter_back(home, fake, clock, monkeypatch):
     def sleep(seconds, wake=None):
         clock[0] += seconds
     monkeypatch.setattr(calls, "_sleep", sleep)
-    _held_watch(home, "rt-1", hold_s=60)
-    # The job ended during the call; then the agent restarted.
-    assert calls._store(home).fire("rt-1", "done")["status"] == "held"
+    # The approval was waiting; then the agent restarted.
+    _waiting_alert(home)
     calls.resume("default")
     assert [event["type"] for event in fake.sent] == ["call.requested"]
 
 
-def test_start_up_with_nothing_held_starts_nothing(home, fake, monkeypatch):
+def test_start_up_with_nothing_waiting_starts_nothing(home, fake, monkeypatch):
     started = []
     monkeypatch.setattr(calls, "_spawn", started.append)
     calls.resume("default")
     assert started == []
 
 
-def test_one_held_call_that_cannot_go_out_never_stops_the_rest(home, fake):
-    good = {"status": "call", "outcome": "done", "session_id": "b", "watch": {"id": "1" * 24, "title": "B", "session_ids": ["b"]}}
+def test_one_due_call_that_cannot_go_out_never_stops_the_rest(home, fake):
+    good = {"status": "call", "outcome": "approval", "session_id": "b",
+            "watch": {"id": "1" * 24, "reason": "Run the migration", "session_ids": ["b"]}}
     broken = {**good, "session_id": "a", "watch": None}  # building its event raises
     calls._send_due([broken, good], "default")
     assert [event["session_id"] for event in fake.sent] == ["b"]
@@ -688,25 +653,25 @@ def test_an_unanswered_approval_call_names_the_turns_session_too(home, fake, clo
     assert (event["session_id"], event["call"]["session_ids"]) == ("sk-1", ["sk-1", "st-1"])
 
 
-def test_an_alert_due_before_a_held_call_is_not_kept_waiting(home, fake, clock, monkeypatch):
+def test_an_alert_due_before_a_later_one_is_not_kept_waiting(home, fake, clock, monkeypatch):
     naps = []
 
     def sleep(seconds, wake=None):
         naps.append(seconds)
         if len(naps) == 1:
-            # The waiter sleeps on a long hold; an approval comes in meanwhile.
+            # The waiter sleeps on a long delay; an approval comes in meanwhile.
             plugin._pre_approval_request(session_key="sk-1", description="Run the migration", turn_id="t1")
             assert wake is not None and wake.is_set()
             return
         clock[0] += seconds
     monkeypatch.setattr(calls, "_sleep", sleep)
-    _held_watch(home, "rt-1", hold_s=300)
     _settings(home, alerts=True)
-    calls.turn_ended("rt-1", "done", profile="default", fallback=READY)
-    # Woken, the waiter takes the approval at its minute, not the hold's end:
-    # busy then (the user is still in the call), so only its notification.
-    assert naps[:2] == [301.0, 61.0]
-    assert [event["call"]["kind"] for event in fake.sent] == ["done"]
+    calls._store(home).add_alert("sk-0", "question", "Which branch?", delay_s=300)
+    calls._wait_for_due(home, "default")
+    # Woken, the waiter takes the approval at its minute, then the question
+    # at its own time.
+    assert naps == [301.0, 61.0, 240.0]
+    assert [event["call"]["kind"] for event in fake.sent] == ["approval", "question"]
 
 
 def test_an_answered_approval_does_not_call(home, fake, clock, monkeypatch):
@@ -722,7 +687,7 @@ def test_an_answered_approval_does_not_call(home, fake, clock, monkeypatch):
 
 def test_approvals_do_not_call_with_alerts_off(home, fake, monkeypatch):
     started = []
-    monkeypatch.setattr(calls, "_wait_for_holds", lambda home, profile: started.append(home))
+    monkeypatch.setattr(calls, "_wait_for_due", lambda home, profile: started.append(home))
     _settings(home)
     plugin._pre_approval_request(session_key="sk-1", description="Run the migration", turn_id="t1")
     assert started == [] and calls._store(home).watch_count() == 0
@@ -771,7 +736,7 @@ def test_a_question_left_unanswered_calls_and_an_answer_stops_it(home, fake, clo
     loop = sys.modules["talaria_push.clarify_loop"]
     _settings(home, alerts=True)
     scheduled = []
-    monkeypatch.setattr(calls, "_wait_for_holds", lambda home, profile: scheduled.append(home))
+    monkeypatch.setattr(calls, "_wait_for_due", lambda home, profile: scheduled.append(home))
     monkeypatch.setattr(loop.client, "enqueue", lambda event: True)
     monkeypatch.setattr(loop, "_first_answer_wins", lambda **kwargs: (
         scheduled.append(calls._store(home).next_due()) or "answered"))
@@ -786,7 +751,7 @@ def test_a_batch_of_questions_says_how_many_wait(home, fake, monkeypatch, paired
     loop = sys.modules["talaria_push.clarify_loop"]
     _settings(home, alerts=True)
     reasons = []
-    monkeypatch.setattr(calls, "_wait_for_holds", lambda home, profile: None)
+    monkeypatch.setattr(calls, "_wait_for_due", lambda home, profile: None)
     monkeypatch.setattr(loop.client, "enqueue", lambda event: True)
     monkeypatch.setattr(loop, "_first_answer_wins", lambda **kwargs: (
         reasons.extend(watch["reason"] for watch in calls._store(home)._load()["watches"]) or "answered"))
@@ -840,13 +805,13 @@ def test_the_hook_takes_the_note_with_the_kwargs_hermes_passes(home, clock):
     assert result["context"].startswith("[Talaria: the user declined the phone call you placed just now.")
 
 
-def test_a_voice_turn_after_a_missed_call_gets_both_notes(home, clock):
+def test_a_voice_turn_after_a_missed_call_gets_only_the_missed_call_note(home, clock):
     calls._store(home).record_outcome(CALL_ID, ["rt-1"], "missed", age_s=0)
     voice = "[Note: this message is a delegation from a live spoken conversation ...]\n\nhi"
-    context = plugin._pre_llm_call(session_id="rt-1", conversation_history=[{"role": "user", "content": voice}])["context"]
-    first, second = context.split("\n\n")
-    assert first.startswith("[Talaria: the phone call you placed just now went unanswered.")
-    assert second == plugin.PERSONA_VOICE_NOTE
+    context = plugin._pre_llm_call(session_id="rt-1", user_message=voice,
+                                   conversation_history=[{"role": "user", "content": voice}])["context"]
+    assert context.startswith("[Talaria: the phone call you placed just now went unanswered.")
+    assert "\n\n" not in context, "no second note for the voice turn"
 
 
 def test_a_subagent_turn_does_not_take_the_note(home, clock):
