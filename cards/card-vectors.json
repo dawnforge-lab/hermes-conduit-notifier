@@ -1,6 +1,6 @@
 {
   "version": 3,
-  "about": "Shared examples for card-schema.json: normalize_cards(input) must equal output, in the plugin (tests/test_cards.py) and in Conduit (RichCardSchemaTests). Regenerate only when the schema changes, and copy both files to Conduit together.",
+  "about": "Shared examples for card-schema.json: normalize_cards(input) must equal output, in the plugin (tests/test_cards.py) and in the Talaria app. Regenerate only when the schema changes, and copy both files to the app together.",
   "cases": [
     {
       "name": "A map with a route keeps everything valid",

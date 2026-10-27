@@ -7,7 +7,7 @@ owned run keeps the task id but has a ``local-…`` session id, so the task id
 comes first.
 
 A run stays quiet when:
-- the user turned the job's notifications off in Conduit (cron_store), or
+- the user turned the job's notifications off in Talaria (cron_store), or
 - its output is Hermes' silence marker by the cron rule: ``[SILENT]`` (or
   SILENT / NO_REPLY) as the whole reply, on its own first or last line, or
   opening the reply (``[SILENT] No changes``). Hermes doesn't deliver such a
@@ -50,7 +50,7 @@ def is_silent(response: Any) -> bool:
     try:
         return bool(is_autonomous_silence_response(response))
     except Exception:  # noqa: BLE001 — a Hermes change must not cost the push
-        logger.warning("conduit_push: Hermes silence check failed; using the plugin's copy", exc_info=True)
+        logger.warning("talaria_push: Hermes silence check failed; using the plugin's copy", exc_info=True)
         return _fallback_silent(response)
 
 
@@ -70,7 +70,7 @@ def muted(job: str) -> bool:
     try:
         return CronStore(get_hermes_home()).is_muted(job)
     except Exception:  # noqa: BLE001 — unreadable: the push goes out
-        logger.debug("conduit_push: cron notification setting unreadable", exc_info=True)
+        logger.debug("talaria_push: cron notification setting unreadable", exc_info=True)
         return False
 
 

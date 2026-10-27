@@ -1,15 +1,15 @@
 ---
 name: using-location
-description: How to use the location Conduit shares (conduit_location) as a building block - which action answers what, freshness and detail, place rules, scheduled jobs and skills that use location, and keeping it private.
+description: How to use the location Talaria shares (talaria_location) as a building block - which action answers what, freshness and detail, place rules, scheduled jobs and skills that use location, and keeping it private.
 ---
 
 # Using the user's location
 
-Conduit can share where the user is with this Hermes profile. They chose
+Talaria can share where the user is with this Hermes profile. They chose
 two things on their phone, each its own opt-in:
 
 - **While talking to Hermes**: a fix taken when they send a message or start
-  a voice call from Conduit, and as they move during a call.
+  a voice call from Talaria, and as they move during a call.
 - **In the background**: when they arrive at or leave one of their saved
   places (Home, Work…), and after moves of about 500 m.
 
@@ -31,9 +31,9 @@ pieces below rather than saying it isn't a feature. Pick by what starts it:
   (`set_rule`). It can watch one saved place or any of them, arrivals,
   departures or either, once a day or every time.
 - **A time starts it** (before an appointment, every evening, every hour
-  while travelling): a scheduled job whose task calls `conduit_location`
+  while travelling): a scheduled job whose task calls `talaria_location`
   (`now`, `distance_to`, or `locate` when it must be fresh) and decides
-  what to do. The job needs the `conduit` toolset; Hermes jobs have it unless
+  what to do. The job needs the `talaria` toolset; Hermes jobs have it unless
   they were limited to other toolsets.
 - **A standing preference** ("keep replies short when I'm driving", "at
   work, don't bring up personal stuff"): remember it as the user asked
@@ -80,7 +80,7 @@ A place rule runs a task when the user arrives at or leaves a saved place
 optionally only on some days and within a time window. It runs at most once
 a day, or with `"repeat": "every"` each time, at least 30 minutes apart.
 The task can be anything a scheduled job can do: a message, a note, a
-check, a call. It's a scheduled job named "Place rule: …" that Conduit
+check, a call. It's a scheduled job named "Place rule: …" that Talaria
 starts, and its run is told which place and which move; set it up with
 `set_rule`:
 
@@ -94,8 +94,8 @@ starts, and its run is told which place and which move; set it up with
 
 - `task` is everything the run needs, in full: the run has no other context.
 - `call: true` phones the user with the result (it needs Calls from Hermes
-  on in Conduit). Without it the result goes wherever scheduled jobs report.
-- The place must already be saved in Conduit. If it isn't, ask the user to
+  on in Talaria). Without it the result goes wherever scheduled jobs report.
+- The place must already be saved in Talaria. If it isn't, ask the user to
   add it in Location settings first.
 - Rules only run while the user shares location in the background, and only
   if the phone reports the move within 15 minutes.
@@ -109,7 +109,7 @@ starts, and its run is told which place and which move; set it up with
 
 `distance_to` is a straight line. For anything about time ("how long to
 get home", "when should I leave", "will I make it") or finding a place
-("pharmacy near me"), use `conduit_maps` when it's offered: Google Maps,
+("pharmacy near me"), use `talaria_maps` when it's offered: Google Maps,
 looked up from this host, with real routes and traffic.
 
 - `directions` with `to` (and `arrive_by` when there's a time to make):
@@ -117,39 +117,38 @@ looked up from this host, with real routes and traffic.
 - `travel_times` for "which is quickest" (up to 10 destinations).
 - `search` / `lookup` for places, `reverse_geocode` for "what's here".
 - `navigate` with `to` (and `mode`) when the user wants to go there
-  ("take me there", "open it in Maps"): Conduit opens Apple Maps with
-  directions on their iPhone, at once when they're in the chat, otherwise
+  ("take me there", "open it in Maps"): Talaria opens the phone's maps app
+  with directions, at once when they're in the chat, otherwise
   behind a Go button. Only when they ask; never from a scheduled job.
 - Places can be `"me"`, a saved place's name, an address or a name,
   `place_id:<id>` from an earlier answer, or `lat,lon`.
 - Say "about" and the mode, mention traffic when it adds a delay, and
   say when an answer is a rough guess (the tool labels it).
-- Each lookup wakes the phone (30 an hour, 120 a day; repeats within 2
-  minutes are free): one lookup per question, not a loop.
+- Lookups count against this host's daily share (200 a day): one lookup
+  per question, not a loop.
 - To show places rather than list them ("where should we eat", "show me
-  the route"), use `conduit_show` with `cards` when it's offered, in a
+  the route"), use `talaria_show` with `cards` when it's offered, in a
   typed chat or on a call: a `map` (pins, and a route from the user or
   between two pins), a `place` in detail, or `places` to swipe through.
-  Pass the coordinates or `place_id` your lookup returned. Conduit adds
-  address, phone, website and travel time from Apple Maps itself; add a
-  rating, hours, price or photo only when you found it, with its source.
+  Pass the coordinates or `place_id` your lookup returned; add a rating,
+  hours, price or photo only when you found it, with its source.
   Don't build a map of your own as an HTML page (Leaflet and the like):
-  free web map tiles need keys and show blank or watermarked in Conduit.
-  Without `conduit_show`, give the place and an Apple Maps link.
+  free web map tiles need keys and show blank or watermarked in Talaria.
+  Without `talaria_show`, give the place and a maps link.
 
 ## Appointment check, as an example of a job
 
 "Make sure I'm on my way to my appointments": a scheduled job a while
 before each one (or one that looks at the calendar every morning and plans
-the checks) whose task asks `conduit_maps` `directions` from `"me"` to the
+the checks) whose task asks `talaria_maps` `directions` from `"me"` to the
 appointment's address with `arrive_by`, and calls or messages the user only
 when `leave_by` has passed and they haven't moved (or they look late).
-Without `conduit_maps`, read `now` or `locate` and compare `distance_to`.
-Nothing needed from Conduit beyond sharing in the background.
+Without `talaria_maps`, read `now` or `locate` and compare `distance_to`.
+Nothing needed from Talaria beyond sharing in the background.
 
 ## Calls and places
 
-The user can tell Conduit not to ring them at certain places ("never call me
+The user can tell Talaria not to ring them at certain places ("never call me
 at work") in Calls from Hermes settings. That's enforced by the plugin: a
 call then arrives as a notification. You don't need to check it yourself.
 

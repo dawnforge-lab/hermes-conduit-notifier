@@ -112,7 +112,7 @@ def test_push_event_binds_decision_kind_to_event_type():
     # Approval rides approval.needed; clarify (relay-loop, plugin-minted id)
     # rides input.needed. Cross-pairings are dropped so the two contracts can
     # never disagree.
-    clarify_payload = {"kind": "clarify", "request_id": "conduit-push-r1", "question": "Which?", "choices": ["a"]}
+    clarify_payload = {"kind": "clarify", "request_id": "talaria-push-r1", "question": "Which?", "choices": ["a"]}
     approval_payload = {"kind": "approval", "session_key": "s", "description": "d", "choices": ["once"]}
 
     event = push_event(
@@ -135,7 +135,7 @@ def test_push_event_binds_decision_kind_to_event_type():
 def test_push_event_attaches_clarify_decision_on_input_events():
     from events import clarify_decision as build_clarify_decision
 
-    decision = build_clarify_decision(request_id="conduit-push-abc", question="Which?", choices=["Red", "Blue"])
+    decision = build_clarify_decision(request_id="talaria-push-abc", question="Which?", choices=["Red", "Blue"])
     event = push_event(
         "input.needed",
         identifier="input:12345678",
@@ -144,13 +144,13 @@ def test_push_event_attaches_clarify_decision_on_input_events():
     )
     assert event["decision"] == {
         "kind": "clarify",
-        "request_id": "conduit-push-abc",
+        "request_id": "talaria-push-abc",
         "question": "Which?",
         "choices": ["Red", "Blue"],
     }
 
     # Open-ended clarifies (no choices) are valid too.
-    open_ended = build_clarify_decision(request_id="conduit-push-def", question="What next?")
+    open_ended = build_clarify_decision(request_id="talaria-push-def", question="What next?")
     event = push_event("input.needed", identifier="input:12345678", session_id="s", decision=open_ended)
     assert event["decision"]["question"] == "What next?"
     assert "choices" not in event["decision"]
@@ -256,7 +256,7 @@ def test_normalize_clarify_questions_unparseable_yields_no_question():
 
 def test_clarify_decision_carries_batch_and_collapsed_summary():
     decision = clarify_decision(
-        request_id="conduit-push-x",
+        request_id="talaria-push-x",
         question="Which environment?",
         choices=["staging", "prod"],
         questions=[
@@ -272,7 +272,7 @@ def test_clarify_decision_carries_batch_and_collapsed_summary():
 def test_sanitize_decision_bounds_batch_questions():
     sanitized = sanitize_decision({
         "kind": "clarify",
-        "request_id": "conduit-push-x",
+        "request_id": "talaria-push-x",
         "question": "summary",
         "questions": [
             {"qid": "q0", "question": "x" * 900, "choices": [f"choice-{i}-" + "y" * 70 for i in range(20)], "multi_select": True},
@@ -280,7 +280,7 @@ def test_sanitize_decision_bounds_batch_questions():
             {"qid": "q1", "question": "kept", "multi_select": "truthy-coerced"},
         ],
     })
-    assert sanitized["request_id"] == "conduit-push-x"
+    assert sanitized["request_id"] == "talaria-push-x"
     assert len(sanitized["questions"]) == 2
     first = sanitized["questions"][0]
     assert first["question"] == "x" * 500
@@ -297,7 +297,7 @@ def test_sanitize_decision_qid_contract_mirrors_the_relay():
     # this plugin emits must never be silently shrunk by the relay.
     sanitized = sanitize_decision({
         "kind": "clarify",
-        "request_id": "conduit-push-sym",
+        "request_id": "talaria-push-sym",
         "question": "summary",
         "questions": [
             {"qid": "q0", "question": "Kept", "choices": ["a", "a", "b"]},
@@ -369,7 +369,7 @@ def test_redact_event_strips_text_but_keeps_approval_routing():
 
 def test_redact_event_keeps_clarify_qids_and_choices_but_not_question_text():
     decision = clarify_decision(
-        request_id="conduit-push-abc123",
+        request_id="talaria-push-abc123",
         question="Deploy to prod?",
         choices=["Yes", "No"],
         questions=[
@@ -379,7 +379,7 @@ def test_redact_event_keeps_clarify_qids_and_choices_but_not_question_text():
     )
     event = push_event("input.needed", identifier="input:12345678", body="Deploy to prod?", decision=decision)
     redacted = redact_event(event)["decision"]
-    assert redacted["request_id"] == "conduit-push-abc123"
+    assert redacted["request_id"] == "talaria-push-abc123"
     assert redacted["question"] == REDACTED_QUESTION_TEXT
     assert redacted["choices"] == ["Yes", "No"]
     assert [q["qid"] for q in redacted["questions"]] == ["q1", "q2"]
@@ -502,7 +502,7 @@ def test_a_call_carries_why_hermes_calls_and_redaction_drops_it():
 
 
 def test_push_event_names_its_title_and_sends_the_chat_title_on_its_own():
-    # Conduit writes the title in its own language (#1144).
+    # Talaria writes the title in its own language (#1144).
     event = push_event(
         "approval.needed",
         identifier="approval:1",

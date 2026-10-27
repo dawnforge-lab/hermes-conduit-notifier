@@ -1,4 +1,4 @@
-"""conduit_maps' engine: Google Maps Platform, called from this host.
+"""talaria_maps' engine: Google Maps Platform, called from this host.
 
 With the host's own Google Maps Platform key (``GOOGLE_MAPS_API_KEY`` in
 Hermes' .env), lookups go to Google: Places API (New) for search and places,
@@ -30,7 +30,7 @@ from typing import Any, Callable
 
 from . import client
 
-logger = logging.getLogger("hermes.plugins.conduit_push")
+logger = logging.getLogger("hermes.plugins.talaria_push")
 
 KEY_ENV = "GOOGLE_MAPS_API_KEY"
 NAME = "Google Maps"
@@ -52,7 +52,7 @@ MAX_PAGE = 20
 _KEY = re.compile(r"[A-Za-z0-9_-]{20,200}")
 _DURATION = re.compile(r"^(\d+(?:\.\d+)?)s$")
 DAILY_CALLS = 200
-USAGE_FILE = "conduit-maps-usage.json"
+USAGE_FILE = "talaria-maps-usage.json"
 TIMEOUT_S = 10.0
 MAX_LOOKUP = 5
 MAX_ANSWER_BYTES = 512 * 1024
@@ -146,7 +146,7 @@ _OPENER = urllib.request.build_opener(_NoRedirect)
 
 
 class Engine:
-    """conduit_maps' lookups, answered by Google. ``fetch(method, url,
+    """talaria_maps' lookups, answered by Google. ``fetch(method, url,
     headers, body)`` is the HTTP call, replaced in tests."""
 
     name = NAME

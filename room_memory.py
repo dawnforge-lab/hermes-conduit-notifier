@@ -41,9 +41,9 @@ READ_TIMEOUT = 5.0
 READ_RETRIES, READ_RETRY_PAUSE = 3, 0.05
 # Set on a MemoryManager while its session is a room's; a compaction that
 # moves the session to a new id keeps it.
-MARK = "_conduit_room_session"
-HOME = "_conduit_room_home"
-_GUARD_FLAG = "__conduit_room_guard__"
+MARK = "_talaria_room_session"
+HOME = "_talaria_room_home"
+_GUARD_FLAG = "__talaria_room_guard__"
 
 _lock = threading.Lock()
 # The MemoryManager this load guards, and each method name -> (Hermes' own method, this load's guard)
@@ -67,7 +67,7 @@ def is_room_session(session_id: Any, home: Any = None) -> bool:
         # Hermes may have changed how it names remote room sessions; then only
         # the stored source below still finds them.
         _odd_id_logged = True
-        logger.warning("conduit_push: session %s looks like a group room's but isn't named like one", value)
+        logger.warning("talaria_push: session %s looks like a group room's but isn't named like one", value)
     if home is None:
         return False
     for attempt in range(READ_RETRIES + 1):
@@ -88,11 +88,11 @@ def _store_unread(session_id: str) -> None:
     global _unread_count
     _unread_count += 1
     if _unread_count % 100 == 1:
-        logger.warning("conduit_push: couldn't read the session store to tell whether session %s is a group "
+        logger.warning("talaria_push: couldn't read the session store to tell whether session %s is a group "
                        "room (%d times so far); if it is, its turns are saved into the memory provider",
                        session_id, _unread_count, exc_info=True)
     else:
-        logger.debug("conduit_push: couldn't tell whether session %s is a group room", session_id, exc_info=True)
+        logger.debug("talaria_push: couldn't tell whether session %s is a group room", session_id, exc_info=True)
 
 
 def _stored_room(path: Path, session_id: str) -> bool:
@@ -214,7 +214,7 @@ def install() -> bool:
         try:
             from agent.memory_manager import MemoryManager
         except Exception:  # noqa: BLE001 - no Hermes memory here (tests, the dashboard)
-            logger.debug("conduit_push: no Hermes memory manager to guard", exc_info=True)
+            logger.debug("talaria_push: no Hermes memory manager to guard", exc_info=True)
             return False
         found = {}
         for name in _WRAPPERS:
@@ -226,7 +226,7 @@ def install() -> bool:
                 found[name] = method
         missing = sorted(set(_WRAPPERS) - set(found))
         if missing:
-            logger.warning("conduit_push: Hermes' memory manager has no %s, so group room turns may be saved "
+            logger.warning("talaria_push: Hermes' memory manager has no %s, so group room turns may be saved "
                            "into the memory provider the way Hermes sends them", ", ".join(missing))
         if not found:
             return False

@@ -18,7 +18,7 @@ def _load(name, path):
     return module
 
 
-calls_store = _load("conduit_calls_store_test", ROOT / "calls_store.py")
+calls_store = _load("talaria_calls_store_test", ROOT / "calls_store.py")
 CallStore = calls_store.CallStore
 
 
@@ -94,9 +94,9 @@ def test_call_rules_that_arent_short_text_are_refused(tmp_path, rules):
 
 
 def test_call_rules_unreadable_on_disk_read_as_none(tmp_path):
-    (tmp_path / "conduit-calls.json").write_text(json.dumps({"version": 1, "settings": {"enabled": True, "rules": 3}}))
+    (tmp_path / "talaria-calls.json").write_text(json.dumps({"version": 1, "settings": {"enabled": True, "rules": 3}}))
     assert CallStore(tmp_path).settings()["rules"] == ""
-    (tmp_path / "conduit-calls.json").write_text(json.dumps({"version": 1, "settings": {"rules": "y" * 501}}))
+    (tmp_path / "talaria-calls.json").write_text(json.dumps({"version": 1, "settings": {"rules": "y" * 501}}))
     assert CallStore(tmp_path).settings()["rules"] == ""
 
 
@@ -134,7 +134,7 @@ def test_an_unwatched_session_is_left_alone(tmp_path):
 def test_no_file_means_nothing_to_fire(tmp_path):
     store = _store(tmp_path)
     assert store.fire("rt-1", "done") is None
-    assert not (tmp_path / "conduit-calls.json").exists()
+    assert not (tmp_path / "talaria-calls.json").exists()
 
 
 def test_calls_turned_off_later_consume_the_watch_without_calling(tmp_path):
@@ -301,7 +301,7 @@ def test_a_removed_held_watch_never_calls(tmp_path):
     store = _store(tmp_path, clock=clock, enabled=True)
     watch_id = store.add_watch(["rt-1"], "Check the server", hold_s=60)["id"]
     store.fire("rt-1", "done")
-    assert store.remove_watch(watch_id) is True  # Conduit told the user in the call
+    assert store.remove_watch(watch_id) is True  # Talaria told the user in the call
     clock.now += 61
     assert store.fire_due() == []
 
@@ -366,13 +366,13 @@ def test_two_stores_share_one_file(tmp_path):
 
 def test_the_file_is_private(tmp_path):
     _store(tmp_path, enabled=True)
-    path = tmp_path / "conduit-calls.json"
+    path = tmp_path / "talaria-calls.json"
     assert path.stat().st_mode & 0o777 == 0o600
     assert json.loads(path.read_text())["v"] == 1
 
 
 def test_a_corrupt_file_reads_as_defaults(tmp_path):
-    (tmp_path / "conduit-calls.json").write_text("{not json")
+    (tmp_path / "talaria-calls.json").write_text("{not json")
     store = CallStore(tmp_path)
     assert store.settings()["enabled"] is False
     assert store.fire("rt-1", "done") is None
@@ -449,7 +449,7 @@ def test_a_session_already_watched_keeps_its_watch_when_hermes_asks_too(tmp_path
     watch_id = store.add_watch(["rt-1", "st-1"], "Check the server")["id"]
     assert store.add_tool_watch("st-1", "The server is back.", asked=True) == {"status": "watching", "id": watch_id}
     [watch] = store._load()["watches"]
-    assert (watch["origin"], watch["reason"], watch["title"]) == ("conduit", "The server is back.", "Check the server")
+    assert (watch["origin"], watch["reason"], watch["title"]) == ("talaria", "The server is back.", "Check the server")
     result = store.fire("rt-1", "done")
     assert result["status"] == "call" and result["watch"]["reason"] == "The server is back."
 
@@ -459,7 +459,7 @@ def test_the_users_request_wins_over_a_watch_hermes_set_on_its_own(tmp_path):
     watch_id = store.add_tool_watch("st-1", "Heads up.", asked=False)["id"]
     assert store.add_watch(["rt-1", "st-1"], "Check the server") == {"status": "watching", "id": watch_id}
     [watch] = store._load()["watches"]
-    assert (watch["origin"], watch["asked"], watch["title"]) == ("conduit", True, "Check the server")
+    assert (watch["origin"], watch["asked"], watch["title"]) == ("talaria", True, "Check the server")
     # "Hermes decides" off never refuses what the user asked for.
     store.update_settings({"decides": False})
     assert store.fire("rt-1", "done")["status"] == "call"
@@ -560,7 +560,7 @@ def test_a_watch_held_through_a_call_keeps_hermes_calls_from_ringing_over_it(tmp
     assert [result["status"] for result in store.fire_due()] == ["call"]
 
 
-def test_watches_from_an_older_plugin_read_as_conduit_watches(tmp_path):
+def test_watches_from_an_older_plugin_read_as_talaria_watches(tmp_path):
     clock = Clock()
     store = _store(tmp_path, clock=clock, enabled=True)
     store.add_watch(["rt-1"], "Check the server")
@@ -570,7 +570,7 @@ def test_watches_from_an_older_plugin_read_as_conduit_watches(tmp_path):
     state["watches"].append({**state["watches"][0], "id": "b" * 24, "origin": "alert", "pending": None})
     store.path.write_text(json.dumps(state))
     [watch] = store._load()["watches"]
-    assert (watch["origin"], watch["reason"], watch["asked"]) == ("conduit", "", False)
+    assert (watch["origin"], watch["reason"], watch["asked"]) == ("talaria", "", False)
 
 
 # --- Outcomes: calls the user declined or missed ---------------------------

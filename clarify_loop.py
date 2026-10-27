@@ -1,4 +1,4 @@
-"""Answerable clarify cards for backgrounded Conduit devices.
+"""Answerable clarify cards for backgrounded Talaria devices.
 
 Hermes mints its clarify request id inside the gateway's blocking prompt,
 where no plugin hook can observe it, so a push alone can never produce an
@@ -36,9 +36,9 @@ from .events import (
     push_event,
 )
 
-logger = logging.getLogger("hermes.plugins.conduit_push")
+logger = logging.getLogger("hermes.plugins.talaria_push")
 
-REQUEST_ID_PREFIX = "conduit-push-"
+REQUEST_ID_PREFIX = "talaria-push-"
 POLL_INTERVAL_SECONDS = 2.0
 # Consecutive unproductive polls (unknown status or transport errors) tolerated
 # while the event POST and the first poll race (enqueue is async, delivery can
@@ -92,7 +92,7 @@ def middleware(is_child_session: Callable[[str], bool] | None = None, **kwargs: 
     # questions[] and legacy scalar calls become a one-question batch.
     # Reducing the payload to its first question would silently drop
     # questions 2..N from the background path. `question` stays the
-    # notification body / collapsed summary for pre-batch Conduit builds.
+    # notification body / collapsed summary for pre-batch Talaria builds.
     #
     # Protocol provenance comes from the ORIGINAL invocation — a one-entry
     # questions[] call is batch protocol and must produce the batch result
@@ -147,7 +147,7 @@ def middleware(is_child_session: Callable[[str], bool] | None = None, **kwargs: 
         # the tool call — use the native path immediately. Only the enqueue
         # boundary is guarded; next_call's own exceptions propagate.
         logger.warning(
-            "Conduit clarify notification enqueue failed; using native clarify path: %s",
+            "Talaria clarify notification enqueue failed; using native clarify path: %s",
             error,
         )
         return kwargs["next_call"](args)
@@ -214,7 +214,7 @@ def _first_answer_wins(
     threading.Thread(
         target=contextvars.copy_context().run,
         args=(_run_original,),
-        name="conduit-push-clarify",
+        name="talaria-push-clarify",
         daemon=True,
     ).start()
 
@@ -341,10 +341,10 @@ def _release_decision(request_id: str, relay_won: bool) -> None:
         try:
             client.cancel_decision(request_id)
         except Exception as error:  # pragma: no cover - defensive
-            logger.warning("Conduit decision release failed for %s: %s", request_id, error)
+            logger.warning("Talaria decision release failed for %s: %s", request_id, error)
 
     # Under the profile that parked the decision (see the native-race worker).
-    threading.Thread(target=contextvars.copy_context().run, args=(_cancel,), name="conduit-push-release",
+    threading.Thread(target=contextvars.copy_context().run, args=(_cancel,), name="talaria-push-release",
                      daemon=True).start()
 
 

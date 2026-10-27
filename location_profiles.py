@@ -1,9 +1,9 @@
 """Location shared with the other profiles on this host (#287).
 
-Conduit sends the user's location to one profile: the one sharing is bound
+Talaria sends the user's location to one profile: the one sharing is bound
 to, which keeps the store, the agreed key and the place rules. With "Share
-with this host's other profiles" on in Conduit (``sharing.other_profiles``),
-every other profile on the same host that is paired with the same iPhone
+with this host's other profiles" on in Talaria (``sharing.other_profiles``),
+every other profile on the same host that is paired with the same phone
 (the same relay installation) reads that store as its own: ``now``,
 ``places``, ``history``, ``distance_to``, ``locate`` and maps lookups. A
 locate goes through the asking profile's own pairing, naming the sharing
@@ -24,7 +24,7 @@ from typing import Any, Callable
 
 from .location_store import LocationStore
 
-PAIRING_FILE = "conduit-push.json"
+PAIRING_FILE = "talaria-push.json"
 # A folder name goes into notes the agent reads and into the access log, and
 # is sent to the phone as is, so one that would need cleaning isn't used.
 _UNUSABLE_NAME = re.compile("[\x00-\x1f\x7f-\x9f\u200b-\u200f\u2028-\u202e\u2060-\u206f\ufeff]")
@@ -91,7 +91,7 @@ def _on(sharing: dict[str, Any]) -> bool:
 
 
 def _installation(home: Path) -> str:
-    """The relay installation (the iPhone) this profile is paired with, or ""."""
+    """The relay installation (the phone) this profile is paired with, or ""."""
     try:
         value = json.loads((home / PAIRING_FILE).read_text(encoding="utf-8"))
     except (OSError, ValueError):

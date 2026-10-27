@@ -1,9 +1,9 @@
-"""Hermes reaches for what Conduit shares before other routes to the same data.
+"""Hermes reaches for what Talaria shares before other routes to the same data.
 
 A user who set up a calendar CLI (such as gog) or another skill before turning
-on Conduit's sharing has two ways to the same answer, and Hermes takes
+on Talaria's sharing has two ways to the same answer, and Hermes takes
 whichever its skills or memory mention first: often the slower one, a CLI that
-asks Google over the network, where Conduit's copy is already on this host
+asks Google over the network, where Talaria's copy is already on this host
 and covers every account on the phone. So each shared tool's description says
 to use it first, and each turn of a main conversation gets one line naming
 what the phone shares here. Hermes treats ``pre_llm_call`` context as part of
@@ -19,7 +19,7 @@ from typing import Callable
 
 from hermes_constants import get_hermes_home
 
-logger = logging.getLogger("hermes.plugins.conduit_push")
+logger = logging.getLogger("hermes.plugins.talaria_push")
 
 # The last sentence of each shared tool's description. Not sent to the live
 # voice models, which have no other route.
@@ -52,11 +52,11 @@ def _shared() -> list[str]:
     from . import health_tool, location_tool, phone_tool
 
     checks: tuple[tuple[Callable[[], bool], str], ...] = (
-        (phone_tool.calendar_available, "their calendar and reminders (conduit_calendar)"),
-        (health_tool.available, "their health data (conduit_health)"),
-        (location_tool.available, "their location (conduit_location)"),
-        (phone_tool.phone_available, "the phone's status and Focus (conduit_phone)"),
-        (phone_tool.contacts_available, "the people they picked (conduit_contacts)"),
+        (phone_tool.calendar_available, "their calendar and reminders (talaria_calendar)"),
+        (health_tool.available, "their health data (talaria_health)"),
+        (location_tool.available, "their location (talaria_location)"),
+        (phone_tool.phone_available, "the phone's status and Focus (talaria_phone)"),
+        (phone_tool.contacts_available, "the people they picked (talaria_contacts)"),
     )
     shared = []
     for available, what in checks:
@@ -65,7 +65,7 @@ def _shared() -> list[str]:
             if available():
                 shared.append(what)
         except Exception:  # noqa: BLE001
-            logger.warning("Conduit could not check whether %s is shared", what, exc_info=True)
+            logger.warning("Talaria could not check whether %s is shared", what, exc_info=True)
     return shared
 
 
@@ -87,9 +87,9 @@ def note(clock: Callable[[], float] = time.monotonic) -> str | None:
             if cached is not None and clock() - cached[0] < CACHE_S:
                 return cached[1]
         shared = _shared()
-        text = (f"[Conduit: the user's iPhone shares {_join(shared)} with you. For these, use the Conduit tool "
+        text = (f"[Talaria: the user's phone shares {_join(shared)} with you. For these, use the Talaria tool "
                 "first, before other tools, skills or command-line tools for the same data (such as gog): it's "
-                "on this host and fastest. Use another only if the user asks for it or the Conduit tool doesn't "
+                "on this host and fastest. Use another only if the user asks for it or the Talaria tool doesn't "
                 "have what's needed.]") if shared else None
         with _cache_lock:
             # Two turns that missed together both look; either answer is current.
@@ -99,5 +99,5 @@ def note(clock: Callable[[], float] = time.monotonic) -> str | None:
                 _cache.pop(next(iter(_cache)))
         return text
     except Exception:  # noqa: BLE001
-        logger.warning("Conduit could not check what the phone shares for this turn", exc_info=True)
+        logger.warning("Talaria could not check what the phone shares for this turn", exc_info=True)
         return None

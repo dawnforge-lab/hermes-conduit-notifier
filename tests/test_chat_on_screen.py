@@ -1,4 +1,4 @@
-"""A reply that lands in a chat Conduit has on screen sends no push (chat_on_screen.py)."""
+"""A reply that lands in a chat Talaria has on screen sends no push (chat_on_screen.py)."""
 import importlib.util
 import pathlib
 import sys
@@ -11,7 +11,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
-BASE = "/api/plugins/conduit_push"
+BASE = "/api/plugins/talaria_push"
 
 if "hermes_constants" not in sys.modules:
     _hermes_constants = types.ModuleType("hermes_constants")
@@ -32,10 +32,10 @@ if "tools.clarify_tool" not in sys.modules:
 
     _clarify_tool.strip_recommended = _strip_recommended
     sys.modules["tools.clarify_tool"] = _clarify_tool
-if "conduit_push" not in sys.modules:
-    _pkg = types.ModuleType("conduit_push")
+if "talaria_push" not in sys.modules:
+    _pkg = types.ModuleType("talaria_push")
     _pkg.__path__ = [str(ROOT)]
-    sys.modules["conduit_push"] = _pkg
+    sys.modules["talaria_push"] = _pkg
 
 
 def _load(name, path):
@@ -48,9 +48,9 @@ def _load(name, path):
     return module
 
 
-on_screen = _load("conduit_push.chat_on_screen", ROOT / "chat_on_screen.py")
-plugin = _load("conduit_push.__init__", ROOT / "__init__.py")
-api = _load("conduit_plugin_api_chat_on_screen", ROOT / "dashboard" / "plugin_api.py")
+on_screen = _load("talaria_push.chat_on_screen", ROOT / "chat_on_screen.py")
+plugin = _load("talaria_push.__init__", ROOT / "__init__.py")
+api = _load("talaria_plugin_api_chat_on_screen", ROOT / "dashboard" / "plugin_api.py")
 
 
 # --- The store ---------------------------------------------------------------
@@ -183,7 +183,7 @@ def turn(tmp_path, monkeypatch):
     return run
 
 
-def test_a_reply_in_a_chat_conduit_has_on_screen_sends_no_push(turn):
+def test_a_reply_in_a_chat_talaria_has_on_screen_sends_no_push(turn):
     assert turn() == ["response.ready"]
     on_screen.hold(turn.home, "mac", ["runtime-1", "s-1"], 90)
     assert turn() == []

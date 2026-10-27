@@ -1,6 +1,6 @@
-"""Lock Screen progress for a running turn (Conduit #605).
+"""Lock Screen progress for a running turn (Talaria #605).
 
-Conduit starts a Live Activity when the user sends a turn and registers its
+Talaria starts a Live Activity when the user sends a turn and registers its
 push token with the relay under the chat's session ids. While the turn runs,
 these hooks tell the relay what the agent is doing (thinking, which kind of
 tool, waiting on the user), how many tools it ran and how full its context
@@ -16,7 +16,7 @@ Sends are coalesced per session on one background thread: at most one every
 ``MIN_INTERVAL_S`` while the phone is watching, and the end of a turn at
 once. The relay answers whether the phone registered an activity for the
 session; one that didn't (yet) is asked again only every
-``UNTRACKED_RETRY_S`` (Conduit registers a moment after the turn starts), so a
+``UNTRACKED_RETRY_S`` (Talaria registers a moment after the turn starts), so a
 turn nobody watches costs a request or two. A relay without the route, or
 one that refuses the caller (401/403), turns the whole thing off for a while.
 """
@@ -33,13 +33,13 @@ from typing import Any, Callable
 from . import client
 
 
-logger = logging.getLogger("hermes.plugins.conduit_push")
+logger = logging.getLogger("hermes.plugins.talaria_push")
 
 # Seconds between updates of one watched turn; the relay holds the same line.
 MIN_INTERVAL_S = 5.0
 # A turn the phone isn't watching (yet) is asked about again this often.
 UNTRACKED_RETRY_S = 15.0
-# The first update of a turn waits this long, so the activity Conduit starts
+# The first update of a turn waits this long, so the activity Talaria starts
 # as it sends the turn is registered by the time the relay is asked.
 FIRST_DELAY_S = 2.0
 # The relay refused one turn's update (rate limit, outage): that turn waits
@@ -70,7 +70,7 @@ PHASES = {"thinking", "tool", "approval", "input"}
 _UNSET: Any = object()
 ENDS = {"done", "failed", "stopped"}
 
-# Tool name -> category Conduit names on the Lock Screen. Exact names first,
+# Tool name -> category Talaria names on the Lock Screen. Exact names first,
 # then prefixes; anything else is just "tool".
 _TOOL_CATEGORIES = {
     "terminal": "terminal",
@@ -100,7 +100,7 @@ _TOOL_CATEGORIES = {
 _TOOL_PREFIXES = (
     ("browser_", "browser"),
     ("mcp_", "connector"),
-    ("conduit_", "phone"),
+    ("talaria_", "phone"),
     ("ha_", "home"),
     ("web_", "web"),
     ("skill", "skills"),
@@ -327,12 +327,12 @@ class LiveActivityReporter:
                         turn.dirty = True
                         self._changed()
             if status == 400:
-                logger.info("Conduit Live Activity report refused: %s", error)
+                logger.info("Talaria Live Activity report refused: %s", error)
             elif paused_for:
-                logger.warning("Conduit Live Activity paused for %d minutes: the relay answered %s",
+                logger.warning("Talaria Live Activity paused for %d minutes: the relay answered %s",
                                paused_for // 60, status)
             else:
-                logger.info("Conduit Live Activity update not delivered: %s", error)
+                logger.info("Talaria Live Activity update not delivered: %s", error)
             return
         tracked = bool(isinstance(answer, dict) and answer.get("tracked"))
         with self._lock:
@@ -401,7 +401,7 @@ class LiveActivityReporter:
             # Under the profile whose turn started it (see client.enqueue):
             # each profile's plugin has its own reporter.
             self._thread = threading.Thread(target=contextvars.copy_context().run, args=(self._run, self._generation),
-                                            name="conduit-live-activity", daemon=True)
+                                            name="talaria-live-activity", daemon=True)
             self._thread.start()
         self._wake.notify()
 
@@ -410,7 +410,7 @@ class LiveActivityReporter:
             try:
                 next_in = self.flush()
             except Exception:  # noqa: BLE001
-                logger.debug("Conduit Live Activity flush failed", exc_info=True)
+                logger.debug("Talaria Live Activity flush failed", exc_info=True)
                 next_in = BACKOFF_S
             with self._lock:
                 if generation != self._generation:
@@ -466,7 +466,7 @@ def _mark_refused(mark: Any, *args: Any) -> None:
     try:
         mark(*args)
     except Exception:  # noqa: BLE001
-        logger.warning("Conduit could not record the relay's refusal", exc_info=True)
+        logger.warning("Talaria could not record the relay's refusal", exc_info=True)
 
 
 reporter = LiveActivityReporter()

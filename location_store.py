@@ -1,6 +1,6 @@
-"""Location from Conduit: the store, its encryption and its queries.
+"""Location from Talaria: the store, its encryption and its queries.
 
-Conduit can share where the user is with this profile so Hermes can use it
+Talaria can share where the user is with this profile so Hermes can use it
 (off until the user turns it on). Two layers, each its own opt-in on the
 phone: "while I'm talking to Hermes" (a fix taken as a message is sent or a
 voice call starts) and "in the background" (arriving at and leaving the
@@ -17,14 +17,14 @@ id alone, and the agent hears only "at a private place".
 
 What's kept: the latest fix per device, arrivals and departures for the
 user's chosen history (latest only, a day, 7 days, 30 days or a year), a log
-of every time the agent read any of it (shown in Conduit), place rules (run
+of every time the agent read any of it (shown in Talaria), place rules (run
 a scheduled job when the user arrives somewhere or leaves) and on-demand
 locate requests. Every ingest body is sealed end to end as in health_store:
 each device agrees its own key with this profile (``/location/key``,
 X25519), HKDF-SHA256 and ChaCha20-Poly1305, with location's own labels.
 
-State lives in the profile's ``conduit-location.sqlite3`` (owner-only). The
-dashboard routes (dashboard process) write it and the ``conduit_location``
+State lives in the profile's ``talaria-location.sqlite3`` (owner-only). The
+dashboard routes (dashboard process) write it and the ``talaria_location``
 tool and the call limits (agent process) read it: the dashboard loads this
 file by path, so it imports nothing from the plugin package.
 """
@@ -55,7 +55,7 @@ try:
 except ImportError:  # everything but Windows
     msvcrt = None  # type: ignore[assignment]
 
-FILE_NAME = "conduit-location.sqlite3"
+FILE_NAME = "talaria-location.sqlite3"
 SCHEMA_VERSION = 3
 # Versions _migrate brings up to SCHEMA_VERSION.
 OLDER_SCHEMAS = ("1", "2")
@@ -64,10 +64,10 @@ OLDER_SCHEMAS = ("1", "2")
 # older plugin still opens the file.
 _PENDING_JOB = "rule_job_pending:"
 
-SALT = b"conduit-location-v1"
-INFO_INGEST = b"conduit-location-v1 ingest device-to-host"
-AAD_TAG = "conduit-location/1"
-KID_TAG = b"conduit-location-kid\n"
+SALT = b"talaria-location-v1"
+INFO_INGEST = b"talaria-location-v1 ingest device-to-host"
+AAD_TAG = "talaria-location/1"
+KID_TAG = b"talaria-location-kid\n"
 NONCE_BYTES = 12
 KEY_BYTES = 32
 
@@ -99,7 +99,7 @@ MAX_DEVICE_NAME_CHARS = 60
 MAX_AREA_CHARS = 80
 MAX_TASK_CHARS = 600
 MAX_WHAT_CHARS = 60
-# Reads the user can look through in Conduit.
+# Reads the user can look through in Talaria.
 READS_KEPT_S = 30 * 24 * 3600
 MAX_READS = 2000
 # An arrival or departure that reaches the host later than this doesn't run
@@ -454,7 +454,7 @@ class LocationStore:
         device_id = body.get("device_id")
         if not isinstance(device_id, str) or not _DEVICE_ID.match(device_id):
             raise LocationError("malformed", "device_id must be 8-64 letters, digits, - or _")
-        name = clean_text(body.get("device_name"), "device_name", MAX_DEVICE_NAME_CHARS) or "iPhone"
+        name = clean_text(body.get("device_name"), "device_name", MAX_DEVICE_NAME_CHARS) or "Phone"
         device_public = unb64u(body.get("public_key"))
         if len(device_public) != 32:
             raise LocationError("malformed", "public_key must be a 32-byte X25519 key")
@@ -471,7 +471,7 @@ class LocationStore:
             if not known and count >= MAX_DEVICES:
                 raise LocationError("too_many_devices",
                                     f"This profile already keeps location from {MAX_DEVICES} devices; delete one "
-                                    "from Conduit first", status=409)
+                                    "from Talaria first", status=409)
             db.execute(
                 "INSERT INTO devices(id, name, device_public, host_private, host_public, kid, created_at)"
                 " VALUES(?,?,?,?,?,?,?)"
@@ -711,7 +711,7 @@ class LocationStore:
     def put_rule(self, rule: dict[str, Any], *, replacing: bool = False) -> dict[str, Any]:
         """Adds or replaces a rule (by id). The caller made its job first.
         ``replacing``: the caller is changing a rule it found, which must
-        still be there (the user may have just deleted it in Conduit)."""
+        still be there (the user may have just deleted it in Talaria)."""
         now = self.clock()
         with self._write() as db:
             exists = db.execute("SELECT 1 FROM rules WHERE id=?", (rule["id"],)).fetchone()
@@ -945,14 +945,14 @@ def _parse_sharing(value: Any) -> dict[str, Any]:
     if zone is not None and (not isinstance(zone, str) or not _TZ.match(zone)):
         raise LocationError("malformed", "sharing.time_zone is malformed")
     sharing["time_zone"] = zone
-    # "Keep maps lookups on this iPhone": false keeps conduit_maps off this
-    # host's Apple Maps engine.
+    # "Keep maps lookups on this phone": false keeps talaria_maps off this
+    # host's maps engine.
     maps_host = value.get("maps_host", True)
     if not isinstance(maps_host, bool):
         raise LocationError("malformed", "sharing.maps_host must be true or false")
     sharing["maps_host"] = maps_host
     # "Share with this host's other profiles": the other profiles paired
-    # with the same iPhone read this store (location_profiles).
+    # with the same phone read this store (location_profiles).
     other_profiles = value.get("other_profiles", False)
     if not isinstance(other_profiles, bool):
         raise LocationError("malformed", "sharing.other_profiles must be true or false")
@@ -1221,7 +1221,7 @@ def _fire_rules(db: sqlite3.Connection, event: dict[str, Any], place: dict[str, 
         verb = "arrived at" if event["kind"] == "arrive" else "left"
         where = "a private place" if place["private"] else place["name"]
         fired.append({"rule_id": rule["id"], "job_id": rule["job_id"], "what": rule["what"],
-                      "prompt": f"[Conduit place event: the user {verb} {where} at "
+                      "prompt": f"[Talaria place event: the user {verb} {where} at "
                                 f"{local.hour:02d}:{local.minute:02d} ({_DAY_NAMES[local.weekday()]} {local.day:02d} "
                                 f"{_MONTH_NAMES[local.month - 1]}, their local time).]"})
     return fired

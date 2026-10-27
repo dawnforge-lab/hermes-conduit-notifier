@@ -19,10 +19,10 @@ if "hermes_constants" not in sys.modules:
     _hermes_constants = types.ModuleType("hermes_constants")
     _hermes_constants.get_hermes_home = lambda: pathlib.Path(tempfile.gettempdir())
     sys.modules["hermes_constants"] = _hermes_constants
-if "conduit_push" not in sys.modules:
-    _pkg = types.ModuleType("conduit_push")
+if "talaria_push" not in sys.modules:
+    _pkg = types.ModuleType("talaria_push")
     _pkg.__path__ = [str(ROOT)]
-    sys.modules["conduit_push"] = _pkg
+    sys.modules["talaria_push"] = _pkg
 
 
 def _private_copy(name, path):
@@ -33,9 +33,9 @@ def _private_copy(name, path):
     return module
 
 
-client = _private_copy("conduit_push._client_delivery_under_test", ROOT / "client.py")
-cli = _private_copy("conduit_push._cli_delivery_under_test", ROOT / "cli.py")
-api = _private_copy("conduit_plugin_api_delivery", ROOT / "dashboard" / "plugin_api.py")
+client = _private_copy("talaria_push._client_delivery_under_test", ROOT / "client.py")
+cli = _private_copy("talaria_push._cli_delivery_under_test", ROOT / "cli.py")
+api = _private_copy("talaria_plugin_api_delivery", ROOT / "dashboard" / "plugin_api.py")
 e2e = client.e2e
 
 KID = "0123456789abcdef0123456789abcdef"
@@ -83,7 +83,7 @@ class _Relay:
 
 @pytest.fixture()
 def paired(tmp_path, monkeypatch):
-    path = tmp_path / "conduit-push.json"
+    path = tmp_path / "talaria-push.json"
     monkeypatch.setattr(client, "state_path", lambda: path)
     monkeypatch.setattr(cli, "load_state", client.load_state)
     monkeypatch.setattr(api, "_pairing_state_path", lambda: path)
@@ -176,7 +176,7 @@ def test_a_relay_401_is_recorded_for_status_and_keeps_the_pairing(paired, capsys
     assert state["relay_rejected_at"]
     assert state["credential"] == "inst.gw.secret" and state["redact_key"] == "k" * 64
     assert api.e2e_status()["relay_rejected"] is True
-    assert cli.dispatch(types.SimpleNamespace(conduit_push_action="status")) == 0
+    assert cli.dispatch(types.SimpleNamespace(talaria_push_action="status")) == 0
     assert "relay refused this pairing's credential" in capsys.readouterr().out
 
     # The relay knows the gateway again (restored data): the mark goes once
@@ -186,7 +186,7 @@ def test_a_relay_401_is_recorded_for_status_and_keeps_the_pairing(paired, capsys
 
     assert "relay_rejected_at" not in client.load_state()
     assert api.e2e_status()["relay_rejected"] is False
-    assert cli.dispatch(types.SimpleNamespace(conduit_push_action="status")) == 0
+    assert cli.dispatch(types.SimpleNamespace(talaria_push_action="status")) == 0
     assert "relay refused" not in capsys.readouterr().out
 
 
@@ -294,17 +294,17 @@ def test_a_bare_403_says_the_host_is_blocked_not_to_pair_again(paired, capsys):
     state = client.load_state()
     assert state["relay_blocked_at"] and "relay_rejected_at" not in state
     assert api.e2e_status()["relay_blocked"] is True and api.e2e_status()["relay_rejected"] is False
-    assert cli.dispatch(types.SimpleNamespace(conduit_push_action="status")) == 0
+    assert cli.dispatch(types.SimpleNamespace(talaria_push_action="status")) == 0
     out = capsys.readouterr().out
     assert "empty 403" in out and "Pairing again won't help" in out and "ask whoever runs the relay" in out
-    assert "pair again from Conduit" not in out
+    assert "pair again from Talaria" not in out
 
     client._refusals[CREDENTIAL]["until"] = 0.0
     _deliver(_event())
 
     assert "relay_blocked_at" not in client.load_state()
     assert api.e2e_status()["relay_blocked"] is False
-    assert cli.dispatch(types.SimpleNamespace(conduit_push_action="status")) == 0
+    assert cli.dispatch(types.SimpleNamespace(talaria_push_action="status")) == 0
     assert "empty 403" not in capsys.readouterr().out
 
 
@@ -321,7 +321,7 @@ def test_the_test_command_names_a_block_in_front_of_the_relay(paired, capsys, mo
     paired([BARE_403])
     monkeypatch.setattr(cli, "send_now", client.send_now)
 
-    assert cli.dispatch(types.SimpleNamespace(conduit_push_action="test", corrupt=False)) == 1
+    assert cli.dispatch(types.SimpleNamespace(talaria_push_action="test", corrupt=False)) == 1
 
     out = capsys.readouterr().out
     assert "in front of the relay" in out and "ask whoever runs the relay" in out
@@ -385,9 +385,9 @@ def test_the_test_command_records_what_it_saw(paired, monkeypatch):
     paired([401, 200])
     monkeypatch.setattr(cli, "send_now", client.send_now)
 
-    assert cli.dispatch(types.SimpleNamespace(conduit_push_action="test", corrupt=False)) == 1
+    assert cli.dispatch(types.SimpleNamespace(talaria_push_action="test", corrupt=False)) == 1
     assert client.load_state()["relay_rejected_at"]
-    assert cli.dispatch(types.SimpleNamespace(conduit_push_action="test", corrupt=False)) == 0
+    assert cli.dispatch(types.SimpleNamespace(talaria_push_action="test", corrupt=False)) == 0
     assert "relay_rejected_at" not in client.load_state()
 
 
@@ -405,8 +405,8 @@ def test_the_newest_kind_of_refusal_replaces_the_other(paired, capsys):
     client._deliver(_event(), clock=lambda: 10_000.0)
     state = client.load_state()
     assert state["relay_blocked_at"] and "relay_rejected_at" not in state
-    assert cli.dispatch(types.SimpleNamespace(conduit_push_action="status")) == 0
-    assert "pair again from Conduit" not in capsys.readouterr().out
+    assert cli.dispatch(types.SimpleNamespace(talaria_push_action="status")) == 0
+    assert "pair again from Talaria" not in capsys.readouterr().out
     client._deliver(_event(), clock=lambda: 20_000.0)
     state = client.load_state()
     assert state["relay_rejected_at"] and "relay_blocked_at" not in state
@@ -417,7 +417,7 @@ def test_cli_pair_names_a_block_in_front_of_the_relay(monkeypatch, capsys):
         raise client.RelayRejected(403, "request_rejected", from_relay=False)
 
     monkeypatch.setattr(cli, "claim_pairing", blocked)
-    args = types.SimpleNamespace(conduit_push_action="pair", code="ABCD", relay_url=client.DEFAULT_RELAY_URL, name="")
+    args = types.SimpleNamespace(talaria_push_action="pair", code="ABCD", relay_url=client.DEFAULT_RELAY_URL, name="")
     assert cli.dispatch(args) == 1
     assert "support@milim.dev" in capsys.readouterr().out
 
@@ -457,7 +457,7 @@ def test_an_accepted_test_ends_the_pause(paired):
 
 
 def test_an_edge_block_says_so_in_its_message():
-    assert "in front of the Conduit relay" in str(client.RelayRejected(403, "", from_relay=False))
+    assert "in front of the Talaria relay" in str(client.RelayRejected(403, "", from_relay=False))
     assert "relay rejected the request: nope (403)" in str(client.RelayRejected(403, "nope"))
 
 

@@ -1,8 +1,8 @@
-name: conduit_push
+name: talaria_push
 manifest_version: 1
 version: 0.69.2
-description: "Send Hermes lifecycle notifications to Conduit devices."
-author: Hermes Conduit
+description: "Send Hermes lifecycle notifications to Talaria devices."
+author: Hermes Talaria
 kind: standalone
 platforms:
   - linux
@@ -20,17 +20,17 @@ provides_hooks:
   - pre_api_request
   - post_api_request
 provides_tools:
-  - conduit_call_user
-  - conduit_call_watch
-  - conduit_watch_report
-  - conduit_settings
-  - conduit_present
-  - conduit_show
-  - conduit_health
-  - conduit_location
-  - conduit_maps
-  - conduit_calendar
-  - conduit_phone
-  - conduit_contacts
+  - talaria_call_user
+  - talaria_call_watch
+  - talaria_watch_report
+  - talaria_settings
+  - talaria_present
+  - talaria_show
+  - talaria_health
+  - talaria_location
+  - talaria_maps
+  - talaria_calendar
+  - talaria_phone
+  - talaria_contacts
 provides_middleware:
   - tool_execution

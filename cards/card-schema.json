@@ -1,6 +1,6 @@
 {
   "version": 3,
-  "about": "Conduit's rich cards: the one definition both the conduit_push plugin and Conduit read. Conduit ships a byte-identical copy (Conduit/Cards/card-schema.json) and its CI fails when the copy differs from this file on main. 'card' is a JSON Schema subset (type, enum, properties, required, items, minItems, maxItems, maxLength, minimum, maximum, format uri) that goes into the tool definitions as is. Normalizing is the same on both sides: unknown keys are dropped, text is cleaned and cut to maxLength, an invalid optional value is dropped, an invalid list item is dropped, and an invalid required value makes its object invalid. Then the rules in 'rules' apply. cards/card-vectors.json holds the shared examples both test suites run.",
+  "about": "Talaria's rich cards: the one definition both the talaria_push plugin and Talaria read. The Talaria app ships a byte-identical copy of this file. 'card' is a JSON Schema subset (type, enum, properties, required, items, minItems, maxItems, maxLength, minimum, maximum, format uri) that goes into the tool definitions as is. Normalizing is the same on both sides: unknown keys are dropped, text is cleaned and cut to maxLength, an invalid optional value is dropped, an invalid list item is dropped, and an invalid required value makes its object invalid. Then the rules in 'rules' apply. cards/card-vectors.json holds the shared examples both test suites run.",
   "max_cards": 4,
   "rules": [
     "A card keeps only its own type's field (places for map, place and places; people for contact; stats, chart, weather, options, steps, media or status for the others), plus title and live, source on every type but map, place and places, and needs on steps; a card without its type's field is dropped.",
@@ -17,7 +17,7 @@
   ],
   "card": {
     "type": "object",
-    "description": "One card Conduit draws natively. map: a map with a pin per place, and a route when you give one. place: one place in detail. places: several places to swipe through. stats: a few big numbers. chart: a line, bar or pie chart. weather: a forecast. comparison: two to four options side by side. steps: instructions to follow, with timers. media: photos, videos or audio to look at or play. contact: a few people to call, message or email, or someone to text with a message you wrote for the user to send. status: how something in progress is going, like a delivery, a flight, a match or a job.",
+    "description": "One card Talaria draws natively. map: a map with a pin per place, and a route when you give one. place: one place in detail. places: several places to swipe through. stats: a few big numbers. chart: a line, bar or pie chart. weather: a forecast. comparison: two to four options side by side. steps: instructions to follow, with timers. media: photos, videos or audio to look at or play. contact: a few people to call, message or email, or someone to text with a message you wrote for the user to send. status: how something in progress is going, like a delivery, a flight, a match or a job.",
     "properties": {
       "type": {
         "type": "string",
@@ -43,7 +43,7 @@
         "type": "array",
         "minItems": 1,
         "maxItems": 10,
-        "description": "The places, best first. The phone finds each one in Apple Maps itself and shows Apple Maps' address, category, phone, website, travel time and Look Around: don't fill those in. Give coordinates or the place_id from conduit_maps when you have them; otherwise a name and address precise enough to find it.",
+        "description": "The places, best first. Give coordinates or the place_id from talaria_maps when you have them; otherwise a name and address precise enough to find it.",
         "items": {
           "type": "object",
           "properties": {
@@ -51,7 +51,7 @@
             "address": {"type": "string", "maxLength": 200, "description": "Its address or area, to find it."},
             "lat": {"type": "number", "minimum": -90, "maximum": 90, "description": "Latitude, if known."},
             "lon": {"type": "number", "minimum": -180, "maximum": 180, "description": "Longitude, if known."},
-            "place_id": {"type": "string", "maxLength": 200, "description": "The Apple Maps place id conduit_maps gave, if any."},
+            "place_id": {"type": "string", "maxLength": 200, "description": "The place id talaria_maps gave, if any."},
             "note": {"type": "string", "maxLength": 300, "description": "Your own short note on it, shown as yours: why it fits, what to order."},
             "rating": {
               "type": "object",
@@ -304,7 +304,7 @@
             "url": {"type": "string", "format": "uri", "maxLength": 500, "description": "Their website or profile page."},
             "address": {"type": "string", "maxLength": 200, "description": "Their address, when it matters."},
             "note": {"type": "string", "maxLength": 300, "description": "Your own short note: why you're showing them."},
-            "message": {"type": "string", "maxLength": 1000, "description": "A text message you wrote for the user to send them, only when the user asked you to text or message this person. Conduit shows it with a Send text button that opens Messages with it filled in, and the user taps Send there. Needs their phone. It isn't sent until the user taps Send, so never say it was sent."},
+            "message": {"type": "string", "maxLength": 1000, "description": "A text message you wrote for the user to send them, only when the user asked you to text or message this person. Talaria shows it with a Send text button that opens the messaging app with it filled in, and the user taps Send there. Needs their phone. It isn't sent until the user taps Send, so never say it was sent."},
             "photo": {
               "type": "object",
               "description": "A photo of them you actually found: a direct image URL, with where it's from. Left out without a source; the phone uses the contact's own photo when it has one.",

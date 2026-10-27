@@ -1,24 +1,24 @@
-"""Hermes configures Conduit: the phone's settings as Conduit last showed them,
+"""Hermes configures Talaria: the phone's settings as Talaria last showed them,
 and the changes Hermes asked for.
 
-Conduit stays the owner of its own settings. Each Conduit (one per iPhone or
-iPad, by its installation id) uploads the settings it lets Hermes see: each
+Talaria stays the owner of its own settings. Each Talaria (one per phone or
+tablet, by its installation id) uploads the settings it lets Hermes see: each
 one's key, plain-language title and description, kind and choices, its tier
-and its value, plus the user's "Let Hermes change settings" mode. Conduit
-declares the list, so a newer Conduit can offer more without a plugin update,
+and its value, plus the user's "Let Hermes change settings" mode. Talaria
+declares the list, so a newer Talaria can offer more without a plugin update,
 and anything it doesn't list is out of Hermes' reach.
 
-The ``conduit_settings`` tool reads that snapshot and asks for changes. A
-change is only a request kept here: Conduit picks it up the next time it
+The ``talaria_settings`` tool reads that snapshot and asks for changes. A
+change is only a request kept here: Talaria picks it up the next time it
 syncs, checks it against its own list and tier again, applies a small one
 (with Undo) or asks the user, and reports what happened. The phone is the
 gate, not this file: the agent can edit any file on the host.
 
 A request carries the value Hermes saw (``from``). When the user changed the
-setting on the phone since, Conduit keeps the user's value and reports a
+setting on the phone since, Talaria keeps the user's value and reports a
 conflict.
 
-State lives in the profile's ``conduit-settings.json`` beside the pairing
+State lives in the profile's ``talaria-settings.json`` beside the pairing
 state. The tool (agent process) and the dashboard route (dashboard process)
 both use this module: the dashboard loads it by path, so it imports nothing
 from the plugin package.
@@ -45,7 +45,7 @@ try:
 except ImportError:  # everything but Windows
     msvcrt = None  # type: ignore[assignment]
 
-FILE_NAME = "conduit-settings.json"
+FILE_NAME = "talaria-settings.json"
 VERSION = 1
 
 MODES = ("off", "ask", "small")
@@ -126,7 +126,7 @@ class SettingsStore:
         if not isinstance(results, list) or len(results) > MAX_PENDING * 2:
             raise SettingsError("invalid", "results must be a short list")
         device = {
-            "name": _line(body.get("device"), MAX_DEVICE_NAME_CHARS) or "Conduit",
+            "name": _line(body.get("device"), MAX_DEVICE_NAME_CHARS) or "Talaria",
             "app_version": _line(body.get("app_version"), 40),
             "mode": mode,
             "settings": settings,
@@ -145,7 +145,7 @@ class SettingsStore:
     # --- Hermes' side --------------------------------------------------------
 
     def view(self) -> dict[str, Any]:
-        """Every device Conduit reported, most recently seen first, with the
+        """Every device Talaria reported, most recently seen first, with the
         requests waiting and the recent results."""
         state = self._load()
         devices = sorted(state["devices"].items(), key=lambda item: -item[1]["seen_at"])
@@ -174,7 +174,7 @@ class SettingsStore:
             installation = _pick_device(state, device)
             target = state["devices"][installation]
             if target["mode"] == "off":
-                raise SettingsError("off", "The user hasn't let Hermes change Conduit settings on this device.")
+                raise SettingsError("off", "The user hasn't let Hermes change Talaria settings on this device.")
             by_key = {setting["key"]: setting for setting in target["settings"]}
             prepared: list[dict[str, Any]] = []
             for change in changes:
@@ -183,7 +183,7 @@ class SettingsStore:
                 key = change.get("key")
                 setting = by_key.get(key) if isinstance(key, str) else None
                 if setting is None:
-                    raise SettingsError("unknown_key", f"Conduit doesn't let Hermes change {key!r}.")
+                    raise SettingsError("unknown_key", f"Talaria doesn't let Hermes change {key!r}.")
                 value = _valid_value(setting, change.get("value"))
                 if value is None:
                     raise SettingsError("invalid_value", _value_hint(setting))
@@ -368,7 +368,7 @@ def _value_hint(setting: dict[str, Any]) -> str:
 def _pick_device(state: dict[str, Any], device: Any) -> str:
     devices = state["devices"]
     if not devices:
-        raise SettingsError("no_device", "No Conduit has shared its settings with this Hermes profile yet.")
+        raise SettingsError("no_device", "No Talaria has shared its settings with this Hermes profile yet.")
     if device is None or device == "":
         return max(devices, key=lambda installation: devices[installation]["seen_at"])
     if isinstance(device, str):
@@ -460,7 +460,7 @@ def _normalized(raw: Any, now: float) -> dict[str, Any]:
             settings = _settings(device.get("settings"))
         except SettingsError:
             continue
-        state["devices"][installation] = {"name": _line(device.get("name"), MAX_DEVICE_NAME_CHARS) or "Conduit",
+        state["devices"][installation] = {"name": _line(device.get("name"), MAX_DEVICE_NAME_CHARS) or "Talaria",
                                           "app_version": _line(device.get("app_version"), 40),
                                           "mode": device["mode"], "settings": settings, "seen_at": float(seen)}
     pending = raw.get("pending")

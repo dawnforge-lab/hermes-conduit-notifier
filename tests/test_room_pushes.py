@@ -32,10 +32,10 @@ if "tools.clarify_tool" not in sys.modules:
 
     _clarify_tool.strip_recommended = _strip_recommended
     sys.modules["tools.clarify_tool"] = _clarify_tool
-if "conduit_push" not in sys.modules:
-    _pkg = types.ModuleType("conduit_push")
+if "talaria_push" not in sys.modules:
+    _pkg = types.ModuleType("talaria_push")
     _pkg.__path__ = [str(ROOT)]
-    sys.modules["conduit_push"] = _pkg
+    sys.modules["talaria_push"] = _pkg
 
 
 def _load(name, path):
@@ -48,10 +48,10 @@ def _load(name, path):
     return module
 
 
-plugin = _load("conduit_push.__init__", ROOT / "__init__.py")
-rooms = sys.modules["conduit_push.room_pushes"]
+plugin = _load("talaria_push.__init__", ROOT / "__init__.py")
+rooms = sys.modules["talaria_push.room_pushes"]
 
-ROOM = "conduit-c2a8078d-9a73-47ce-9c4f-fe73c9d2e1ef"
+ROOM = "talaria-c2a8078d-9a73-47ce-9c4f-fe73c9d2e1ef"
 
 
 def _hermes(root, sessions, rooms_named=(), running=()):

@@ -1,6 +1,6 @@
 """Which relay URLs this host will send a pairing code or credential to.
 
-Shared by `hermes conduit-push pair` (client.py) and the dashboard's pairing
+Shared by `hermes talaria pair` (client.py) and the dashboard's pairing
 route, so both pairing paths apply the same rules:
 
 - Every request that carries a credential goes to an HTTPS relay. Plain HTTP

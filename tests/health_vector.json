@@ -5,10 +5,10 @@
   "device_public": "NYBy1jZYgNGu6jKa35EhODhR7SGijjt16WXQ0s0WYlQ",
   "device_id": "device-vector-1",
   "batch_id": "batch-vector-1",
-  "kid": "568703226d4ca837141b5eebba642b64",
-  "key": "b5b0006ac3d4b1ff1c5bc4d29245fbe723ea03ffdd9ee3a38b8458bef47c2332",
-  "aad": "conduit-health/1\ningest\nkid=568703226d4ca837141b5eebba642b64\ndev=device-vector-1\nbatch=batch-vector-1",
+  "kid": "33a9c42948c167bd049d625877b1f76d",
+  "key": "9f7569477328e98c1799b20a5b9d77f868115b9a71359bdad1c75d0e05cbff50",
+  "aad": "talaria-health/1\ningest\nkid=33a9c42948c167bd049d625877b1f76d\ndev=device-vector-1\nbatch=batch-vector-1",
   "nonce": "AAAAAAAAAAAAAAAA",
   "plaintext": "{\"batch_id\":\"batch-vector-1\"}",
-  "ct": "TcrUbI4YW2m833vWYhvn-tbMWAmZ4-XCdXzRzWT4wxEnlx8N7Z45UyvsHAt6"
+  "ct": "kIzVA3rfzq2KjBnvUtH6WUxT2SYdS34D1dKaFC4YrvCoJgXRqwYtr1CSdboR"
 }

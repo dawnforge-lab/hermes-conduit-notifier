@@ -1,5 +1,5 @@
-"""The dashboard lets go of Conduit's claim on a chat once it sits idle, so
-Hermes Desktop can open it again (hermes-conduit#1123)."""
+"""The dashboard lets go of Talaria's claim on a chat once it sits idle, so
+Hermes Desktop can open it again."""
 import importlib
 import importlib.util
 import pathlib
@@ -11,12 +11,12 @@ import types
 import pytest
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
-if "conduit_push" not in sys.modules:
-    _pkg = types.ModuleType("conduit_push")
+if "talaria_push" not in sys.modules:
+    _pkg = types.ModuleType("talaria_push")
     _pkg.__path__ = [str(ROOT)]
-    sys.modules["conduit_push"] = _pkg
+    sys.modules["talaria_push"] = _pkg
 
-claims = importlib.import_module("conduit_push.conduit_claims")
+claims = importlib.import_module("talaria_push.talaria_claims")
 
 NOW = 10_000.0
 IDLE = NOW - claims.IDLE_S - 1
@@ -51,8 +51,8 @@ class FanoutTransport:
         return list(self.peers)
 
 
-def conduit(closed=False):
-    return WSTransport({"X-Conduit-Client": "conduit", "User-Agent": "Conduit/2.0"}, closed=closed)
+def talaria(closed=False):
+    return WSTransport({"X-Talaria-Client": "talaria", "User-Agent": "Talaria/2.0"}, closed=closed)
 
 
 def desktop(closed=False):
@@ -87,7 +87,7 @@ def chat(server, sid="live-1", transport=None, **fields):
     ready.set()
     session = {"active_session_lease": Lease(), "running": False, "last_active": IDLE, "agent_ready": ready,
                "history_lock": threading.Lock(), "session_key": "stored-1", "source": "desktop",
-               "transport": conduit() if transport is None else transport, **fields}
+               "transport": talaria() if transport is None else transport, **fields}
     server._sessions[sid] = session
     return session
 
@@ -101,7 +101,7 @@ def no_turn_markers(monkeypatch):
     monkeypatch.delitem(sys.modules, "tui_gateway.turn_marker", raising=False)
 
 
-def test_an_idle_conduit_chat_lets_go_of_its_claim():
+def test_an_idle_talaria_chat_lets_go_of_its_claim():
     server = Server()
     session = chat(server)
     assert sweep(server) == 1
@@ -149,25 +149,25 @@ def test_waiting_on_an_answer_or_delegated_work_keeps_it():
 def test_a_chat_desktop_has_open_in_this_process_keeps_it():
     server = Server()
     chat(server, sid="desktop", transport=desktop())
-    chat(server, sid="both", transport=FanoutTransport(conduit(), desktop()))
+    chat(server, sid="both", transport=FanoutTransport(talaria(), desktop()))
     assert sweep(server) == 0
 
 
 def test_a_viewer_that_left_does_not_count():
     server = Server()
-    chat(server, transport=FanoutTransport(conduit(), desktop(closed=True)))
+    chat(server, transport=FanoutTransport(talaria(), desktop(closed=True)))
     assert sweep(server) == 1
 
 
-def test_a_chat_conduit_left_counts_once_seen_with_conduit():
+def test_a_chat_talaria_left_counts_once_seen_with_talaria():
     server = Server()
     session = chat(server, last_active=NOW)
-    assert sweep(server) == 0  # still in use, but now known to be Conduit's
+    assert sweep(server) == 0  # still in use, but now known to be Talaria's
     session["transport"] = DETACHED
     assert sweep(server, now=NOW + claims.IDLE_S + 1) == 1
 
 
-def test_a_parked_chat_never_seen_with_conduit_keeps_it():
+def test_a_parked_chat_never_seen_with_talaria_keeps_it():
     server = Server()
     chat(server, transport=DETACHED)
     assert sweep(server) == 0
@@ -245,13 +245,13 @@ def test_a_transport_whose_closed_is_a_method_or_flag_object_reads_it():
     del left._closed
     left.closed = lambda: True
     server = Server()
-    chat(server, transport=FanoutTransport(conduit(), left))
+    chat(server, transport=FanoutTransport(talaria(), left))
     assert sweep(server) == 1
 
 
 def test_byte_headers_are_read():
     server = Server()
-    chat(server, transport=WSTransport({b"x-conduit-client": b"conduit"}))
+    chat(server, transport=WSTransport({b"x-talaria-client": b"talaria"}))
     assert sweep(server) == 1
 
 
@@ -285,7 +285,7 @@ def test_a_replaced_runtime_is_not_released():
 
 
 def test_the_sweeper_stops_once_a_newer_one_takes_over(monkeypatch):
-    spec = importlib.util.spec_from_file_location("conduit_plugin_api_claims", ROOT / "dashboard" / "plugin_api.py")
+    spec = importlib.util.spec_from_file_location("talaria_plugin_api_claims", ROOT / "dashboard" / "plugin_api.py")
     if "hermes_constants" not in sys.modules:
         constants = types.ModuleType("hermes_constants")
         constants.get_hermes_home = lambda: ROOT
@@ -297,11 +297,14 @@ def test_the_sweeper_stops_once_a_newer_one_takes_over(monkeypatch):
     passes = []
     monkeypatch.setattr(claims, "sweep", lambda server, home: passes.append(server) or 0)
     monkeypatch.delitem(sys.__dict__, api._CLAIMS_SWEEPER, raising=False)
+    # A sweeper an earlier test's takeover started may still sleep out its
+    # pass: this test watches only the one it starts.
+    earlier = set(threading.enumerate())
     api._ensure_claims_sweeper()
     token = sys.__dict__[api._CLAIMS_SWEEPER]
     api._ensure_claims_sweeper()  # already running: no second one
     assert sys.__dict__[api._CLAIMS_SWEEPER] is token
-    worker = next(t for t in threading.enumerate() if t.name == "conduit-idle-claims" and t.is_alive())
+    [worker] = [t for t in threading.enumerate() if t.name == "talaria-idle-claims" and t not in earlier]
     deadline = time.monotonic() + 5
     while not passes and time.monotonic() < deadline:
         time.sleep(0.01)
@@ -315,6 +318,6 @@ def test_a_viewer_joining_during_the_check_keeps_it():
     server = Server()
     session = chat(server)
     assert claims.releasable(server, "live-1", session, NOW, lambda: ROOT)
-    session["transport"] = FanoutTransport(conduit(), desktop())
+    session["transport"] = FanoutTransport(talaria(), desktop())
     assert not claims.release(server, "live-1", session, NOW)
     assert server.released == []

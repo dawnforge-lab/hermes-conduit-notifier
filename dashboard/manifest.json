@@ -1,10 +1,10 @@
 {
-  "name": "conduit_push",
-  "label": "Conduit",
-  "description": "Routes the Conduit app calls on this host (pairing, notification settings, chat takeover, calls, shared phone data, group rooms, artifacts).",
+  "name": "talaria_push",
+  "label": "Talaria",
+  "description": "Routes the Talaria app calls on this host (pairing, notification settings, chat takeover, calls, shared phone data, group rooms, artifacts).",
   "icon": "Puzzle",
   "version": "0.69.2",
-  "tab": { "path": "/conduit", "hidden": true },
+  "tab": { "path": "/talaria", "hidden": true },
   "entry": "dist/index.js",
   "api": "plugin_api.py"
 }

@@ -1,10 +1,10 @@
 """Hermes asks the user to OK something on their phone: the confirm prompts
-``conduit_present`` shows and how the user answered them.
+``talaria_present`` shows and how the user answered them.
 
 Before an action the user should approve (sending a message, buying,
 deleting), Hermes keeps a prompt here: a title, a Markdown preview of what
 will happen and the label of the button that does it. The relay wakes the
-phone (``phone.changes``), Conduit fetches the waiting prompts with an
+phone (``phone.changes``), Talaria fetches the waiting prompts with an
 exchange, shows its confirm panel and reports the answer on its next
 exchange: confirmed, declined or edit, by tap or by voice during a call.
 
@@ -13,14 +13,14 @@ answer. The agent reads it with the tool and does (or doesn't do) the action
 itself. An answer the agent hasn't seen yet stays unreported until the tool
 returns it once.
 
-The same exchange carries the cards ``conduit_show`` puts on the screen of
+The same exchange carries the cards ``talaria_show`` puts on the screen of
 a voice call (a table, steps, a chart): short-lived, shown once by a phone
 that says it can (feature ``show-cards``), never answered. A card can carry
 rich cards (maps and places, ``card_schema``) beside its Markdown; a phone
 that doesn't draw them shows the Markdown. ``fallback`` marks Markdown that
 is only the cards' own text, which a phone that draws them leaves out.
 
-State lives in the profile's ``conduit-present.json`` beside the pairing
+State lives in the profile's ``talaria-present.json`` beside the pairing
 state. The tool (agent process) and the dashboard route (dashboard process)
 both use this module: the dashboard loads it by path, so it imports nothing
 from the plugin package.
@@ -49,20 +49,20 @@ try:
 except ImportError:  # everything but Windows
     msvcrt = None  # type: ignore[assignment]
 
-FILE_NAME = "conduit-present.json"
+FILE_NAME = "talaria-present.json"
 VERSION = 1
 
 STATES = ("waiting", "confirmed", "declined", "edit", "expired", "cancelled")
 # What a phone reports for a prompt the user answered, and how.
 OUTCOMES = ("confirmed", "declined", "edit")
-# "auto": Conduit opened Apple Maps for a navigate prompt itself, because the
-# user was in that chat with Conduit open.
+# "auto": Talaria opened Apple Maps for a navigate prompt itself, because the
+# user was in that chat with Talaria open.
 VIAS = ("tap", "voice", "auto")
-# What a navigate prompt (conduit_maps navigate) carries: where to and how.
-# Conduit opens Apple Maps with these when the user says go.
+# What a navigate prompt (talaria_maps navigate) carries: where to and how.
+# Talaria opens Apple Maps with these when the user says go.
 MAPS_MODES = ("driving", "walking", "transit", "cycling")
-# What a Conduit that opens Apple Maps for a navigate prompt says it can do.
-# Only such a Conduit gets one, and only its answer counts: another would show
+# What a Talaria that opens Apple Maps for a navigate prompt says it can do.
+# Only such a Talaria gets one, and only its answer counts: another would show
 # it as a plain confirm, and its yes would never open Maps.
 NAVIGATE_FEATURE = "maps-navigate"
 MAX_MAPS_TO_CHARS = 200
@@ -79,7 +79,7 @@ MAX_DEVICES = 8
 MAX_WAITING = 20
 MAX_PROMPTS = 50
 MAX_RESULTS = 40
-# Cards conduit_show puts on a call's screen: how long a phone may still pick
+# Cards talaria_show puts on a call's screen: how long a phone may still pick
 # one up, how many are kept, and how many Hermes may show an hour.
 CARD_TTL_S = 10 * 60
 MAX_CARDS = 20
@@ -91,9 +91,9 @@ MAX_CARD_MARKDOWN_CHARS = 8000
 # exchanges at least every reply).
 SHOW_FEATURE = "show-cards"
 SHOW_DEVICE_RECENT_S = 6 * 3600
-# What a Conduit that draws cards in chats says. Cards a feature names
-# (info-cards…) stay in a chat's history, which any of the user's Conduits may
-# open, so they need every Conduit that draws cards and exchanged within this
+# What a Talaria that draws cards in chats says. Cards a feature names
+# (info-cards…) stay in a chat's history, which any of the user's Talaria apps may
+# open, so they need every Talaria that draws cards and exchanged within this
 # long to say it draws them.
 CHAT_CARDS_FEATURE = "chat-cards"
 CARD_DEVICE_RECENT_S = 30 * 24 * 3600
@@ -156,7 +156,7 @@ class PresentStore:
         with self._locked() as state:
             now = self.clock()
             device = {
-                "name": _line(body.get("device"), MAX_DEVICE_NAME_CHARS) or "Conduit",
+                "name": _line(body.get("device"), MAX_DEVICE_NAME_CHARS) or "Talaria",
                 "app_version": _line(body.get("app_version"), 40),
                 "features": _features(body.get("features")),
                 "seen_at": now,
@@ -188,24 +188,24 @@ class PresentStore:
     # --- Hermes' side --------------------------------------------------------
 
     def has_device(self) -> bool:
-        """Whether a Conduit that shows prompts has exchanged with this
+        """Whether a Talaria that shows prompts has exchanged with this
         profile."""
         return bool(self._load()["devices"])
 
     def can_show(self) -> bool:
-        """Whether a Conduit that shows cards exchanged with this profile
+        """Whether a Talaria that shows cards exchanged with this profile
         recently."""
         return _shows_cards(self._load(), self.clock())
 
     def has_feature(self, feature: str) -> bool:
-        """Whether a Conduit that exchanged with this profile recently says
+        """Whether a Talaria that exchanged with this profile recently says
         it can do ``feature`` (like "maps-navigate")."""
         now = self.clock()
         return any(feature in device.get("features", []) and now - device["seen_at"] < CARD_DEVICE_RECENT_S
                    for device in self._load()["devices"].values())
 
     def has_feature_everywhere(self, feature: str) -> bool:
-        """Whether every Conduit that draws cards (on a call or in chats) and
+        """Whether every Talaria that draws cards (on a call or in chats) and
         exchanged with this profile recently says it can do ``feature``;
         False when there's none."""
         now = self.clock()
@@ -248,7 +248,7 @@ class PresentStore:
         with self._locked() as state:
             now = self.clock()
             if not state["devices"]:
-                raise PresentError("no_device", "No Conduit that shows confirm prompts has connected to this "
+                raise PresentError("no_device", "No Talaria that shows confirm prompts has connected to this "
                                                 "Hermes profile yet.")
             recent = [at for at in state["asked"] if now - at < HOUR_S]
             if len(recent) >= PER_HOUR:
@@ -290,7 +290,7 @@ class PresentStore:
         with self._locked() as state:
             now = self.clock()
             if not _shows_cards(state, now):
-                raise PresentError("no_device", "No Conduit that shows cards has connected to this Hermes profile "
+                raise PresentError("no_device", "No Talaria that shows cards has connected to this Hermes profile "
                                                 "yet.")
             recent = [at for at in state["shown"] if now - at < HOUR_S]
             if len(recent) >= CARDS_PER_HOUR:
@@ -516,11 +516,11 @@ def _take_result(state: dict[str, Any], installation: str, features: list[str], 
     prompt = _find(state, prompt_id)
     if prompt is None or prompt["status"] != "waiting":
         return
-    # A Go prompt is answered only by a Conduit that opens Maps (it's the only
+    # A Go prompt is answered only by a Talaria that opens Maps (it's the only
     # one that gets it).
     if prompt.get("maps") and NAVIGATE_FEATURE not in features:
         return
-    # Conduit opens Maps by itself, and only as a yes to a Go prompt.
+    # Talaria opens Maps by itself, and only as a yes to a Go prompt.
     if via == "auto" and (outcome != "confirmed" or not prompt.get("maps")):
         return
     prompt.update(status=outcome, via=via, device=installation, finished_at=int(now), reported=False)
@@ -609,7 +609,7 @@ def _normalized(raw: Any, now: float) -> dict[str, Any]:
         seen = device.get("seen_at")
         if not isinstance(seen, (int, float)) or isinstance(seen, bool) or now - seen > DEVICE_TTL_S:
             continue
-        state["devices"][installation] = {"name": _line(device.get("name"), MAX_DEVICE_NAME_CHARS) or "Conduit",
+        state["devices"][installation] = {"name": _line(device.get("name"), MAX_DEVICE_NAME_CHARS) or "Talaria",
                                           "app_version": _line(device.get("app_version"), 40),
                                           "features": _features(device.get("features")),
                                           "seen_at": float(seen)}
@@ -733,7 +733,7 @@ def _card_schema() -> Any:
     with _card_schema_lock:
         if _card_schema_module is None:
             path = Path(__file__).resolve().parent / "card_schema.py"
-            spec = importlib.util.spec_from_file_location("conduit_push_present_card_schema", path)
+            spec = importlib.util.spec_from_file_location("talaria_push_present_card_schema", path)
             try:
                 if spec is None or spec.loader is None:
                     raise ImportError("card_schema.py is missing")

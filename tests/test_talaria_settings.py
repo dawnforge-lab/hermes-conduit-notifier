@@ -11,16 +11,16 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
-BASE = "/api/plugins/conduit_push"
+BASE = "/api/plugins/talaria_push"
 
 if "hermes_constants" not in sys.modules:
     _hermes_constants = types.ModuleType("hermes_constants")
     _hermes_constants.get_hermes_home = lambda: pathlib.Path(tempfile.gettempdir())
     sys.modules["hermes_constants"] = _hermes_constants
-if "conduit_push" not in sys.modules:
-    _pkg = types.ModuleType("conduit_push")
+if "talaria_push" not in sys.modules:
+    _pkg = types.ModuleType("talaria_push")
     _pkg.__path__ = [str(ROOT)]
-    sys.modules["conduit_push"] = _pkg
+    sys.modules["talaria_push"] = _pkg
 
 
 def _load(name, path):
@@ -33,9 +33,9 @@ def _load(name, path):
     return module
 
 
-store_module = _load("conduit_push.settings_store", ROOT / "settings_store.py")
-tool = _load("conduit_push.settings_tool", ROOT / "settings_tool.py")
-_api_spec = importlib.util.spec_from_file_location("conduit_plugin_api_settings", ROOT / "dashboard" / "plugin_api.py")
+store_module = _load("talaria_push.settings_store", ROOT / "settings_store.py")
+tool = _load("talaria_push.settings_tool", ROOT / "settings_tool.py")
+_api_spec = importlib.util.spec_from_file_location("talaria_plugin_api_settings", ROOT / "dashboard" / "plugin_api.py")
 api = importlib.util.module_from_spec(_api_spec)
 _api_spec.loader.exec_module(api)
 
@@ -324,7 +324,7 @@ def _call(args, session_id="s1"):
     return json.loads(tool.handle(args, session_id=session_id))
 
 
-def test_the_tool_is_hidden_until_a_conduit_shares_its_settings(tool_home):
+def test_the_tool_is_hidden_until_a_talaria_shares_its_settings(tool_home):
     assert tool.available() is False
     _sync(SettingsStore(tool_home))
     assert tool.available() is True
@@ -344,11 +344,11 @@ def test_get_shows_settings_mode_and_what_hermes_owns(tool_home):
     assert greeting["value"] == ""
 
 
-def test_change_says_it_waits_for_conduit(tool_home):
+def test_change_says_it_waits_for_talaria(tool_home):
     _sync(SettingsStore(tool_home))
     answer = _call({"action": "change", "changes": [{"key": "voice.gemini.memory", "value": True}],
                     "reason": "You asked Gemini to remember things."})
-    assert answer["ok"] is True and answer["status"] == "waiting_for_conduit"
+    assert answer["ok"] is True and answer["status"] == "waiting_for_talaria"
     assert "approve" in answer["note"] and "isn't changed yet" in answer["note"]
     assert _call({"action": "get"})["waiting"][0]["key"] == "voice.gemini.memory"
 
@@ -362,8 +362,8 @@ def test_small_mode_says_small_changes_apply(tool_home):
 def test_off_points_at_the_switch(tool_home):
     _sync(SettingsStore(tool_home), mode="off")
     answer = _call({"action": "change", "changes": [{"key": "voice.live.tone", "value": "relaxed"}], "reason": "x"})
-    assert answer["error"] == "off" and "conduit://settings/voice" in answer["note"]
-    assert "conduit://settings/voice" in _call({"action": "get"})["note"]
+    assert answer["error"] == "off" and "talaria://settings/voice" in answer["note"]
+    assert "talaria://settings/voice" in _call({"action": "get"})["note"]
 
 
 def test_an_unknown_key_names_hermes_owned_settings(tool_home):
@@ -418,10 +418,10 @@ def test_a_bad_action_is_refused(tool_home):
 @pytest.fixture()
 def route_home(tmp_path, monkeypatch):
     monkeypatch.setattr(api, "_calls_home", lambda: tmp_path)
-    monkeypatch.setattr(api, "_pairing_state_path", lambda: tmp_path / "conduit-push.json")
+    monkeypatch.setattr(api, "_pairing_state_path", lambda: tmp_path / "talaria-push.json")
     monkeypatch.setattr(api, "_profile_scope", lambda profile: contextlib.nullcontext())
-    api._conduit_settings_limiter._mints.clear()
-    (tmp_path / "conduit-push.json").write_text(json.dumps({"credential": "c", "installation_id": "i", "gateway_id": "g"}))
+    api._talaria_settings_limiter._mints.clear()
+    (tmp_path / "talaria-push.json").write_text(json.dumps({"credential": "c", "installation_id": "i", "gateway_id": "g"}))
     return tmp_path
 
 
@@ -434,26 +434,26 @@ def _http():
 def test_the_route_syncs_and_returns_waiting_requests(route_home):
     http = _http()
     body = {"installation_id": PHONE, "device": "iPhone", "mode": "ask", "settings": _settings()}
-    response = http.put(f"{BASE}/conduit-settings", json=body)
+    response = http.put(f"{BASE}/talaria-settings", json=body)
     assert response.status_code == 200 and response.headers["cache-control"] == "no-store"
     assert response.json() == {"ok": True, "pending": []}
     SettingsStore(route_home).request([{"key": "voice.live.tone", "value": "relaxed"}], "x")
-    assert http.put(f"{BASE}/conduit-settings", json=body).json()["pending"][0]["value"] == "relaxed"
+    assert http.put(f"{BASE}/talaria-settings", json=body).json()["pending"][0]["value"] == "relaxed"
 
 
 def test_the_route_refuses_a_malformed_upload(route_home):
-    response = _http().put(f"{BASE}/conduit-settings", json={"installation_id": PHONE, "mode": "maybe", "settings": []})
+    response = _http().put(f"{BASE}/talaria-settings", json={"installation_id": PHONE, "mode": "maybe", "settings": []})
     assert response.status_code == 400
 
 
 def test_the_route_needs_a_paired_profile(route_home):
-    (route_home / "conduit-push.json").unlink()
+    (route_home / "talaria-push.json").unlink()
     body = {"installation_id": PHONE, "mode": "ask", "settings": _settings()}
-    assert _http().put(f"{BASE}/conduit-settings", json=body).status_code == 409
+    assert _http().put(f"{BASE}/talaria-settings", json=body).status_code == 409
 
 
 def test_the_route_is_a_reported_capability():
-    assert "conduit-settings" in api.ROUTE_CAPABILITIES
+    assert "talaria-settings" in api.ROUTE_CAPABILITIES
 
 
 def test_an_unreadable_store_is_not_overwritten(store, monkeypatch):

@@ -11,14 +11,14 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
-BASE = "/api/plugins/conduit_push"
+BASE = "/api/plugins/talaria_push"
 
 if "hermes_constants" not in sys.modules:
     _hermes_constants = types.ModuleType("hermes_constants")
     _hermes_constants.get_hermes_home = lambda: pathlib.Path(tempfile.gettempdir())
     sys.modules["hermes_constants"] = _hermes_constants
 
-_spec = importlib.util.spec_from_file_location("conduit_plugin_api_calls", ROOT / "dashboard" / "plugin_api.py")
+_spec = importlib.util.spec_from_file_location("talaria_plugin_api_calls", ROOT / "dashboard" / "plugin_api.py")
 api = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(api)
 
@@ -26,7 +26,7 @@ _spec.loader.exec_module(api)
 @pytest.fixture()
 def home(tmp_path, monkeypatch):
     monkeypatch.setattr(api, "_calls_home", lambda: tmp_path)
-    monkeypatch.setattr(api, "_pairing_state_path", lambda: tmp_path / "conduit-push.json")
+    monkeypatch.setattr(api, "_pairing_state_path", lambda: tmp_path / "talaria-push.json")
     monkeypatch.setattr(api, "_profile_scope", lambda profile: contextlib.nullcontext())
     api._calls_limiter._mints.clear()
     return tmp_path
@@ -34,7 +34,7 @@ def home(tmp_path, monkeypatch):
 
 @pytest.fixture()
 def paired(home):
-    (home / "conduit-push.json").write_text(json.dumps({"credential": "c", "installation_id": "i", "gateway_id": "g"}))
+    (home / "talaria-push.json").write_text(json.dumps({"credential": "c", "installation_id": "i", "gateway_id": "g"}))
     return home
 
 
@@ -128,7 +128,7 @@ def test_an_outcome_needs_a_paired_profile(home):
     body = {"call_id": "a1b2c3d4e5f6a1b2c3d4e5f6", "session_ids": ["rt-1"], "outcome": "missed"}
     response = _http().post(f"{BASE}/calls/outcomes", json=body)
     assert response.status_code == 409
-    assert not (home / "conduit-calls.json").exists()
+    assert not (home / "talaria-calls.json").exists()
 
 
 def test_a_declined_call_is_recorded_for_its_chat(paired):

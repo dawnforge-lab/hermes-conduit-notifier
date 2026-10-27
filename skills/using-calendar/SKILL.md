@@ -1,34 +1,34 @@
 ---
 name: using-calendar
-description: How to use the calendar, reminders, Focus, phone status, alarms and contacts Conduit shares (conduit_calendar, conduit_phone, conduit_contacts): reading as of the last sync, asking the phone to add or change things, standing preferences, and keeping other people's details private.
+description: How to use the calendar, reminders, Focus, phone status, alarms and contacts Talaria shares (talaria_calendar, talaria_phone, talaria_contacts): reading as of the last sync, asking the phone to add or change things, standing preferences, and keeping other people's details private.
 ---
 
 # Using the user's calendar, reminders and phone
 
-Conduit can share the user's iPhone calendars (every account on the phone:
-iCloud, Google, Exchange, subscribed), their Reminders, which Focus is on
-and a snapshot of the phone (battery, charging, CarPlay, headphones,
+Talaria can share the user's phone calendars (every account on the phone:
+Google, Exchange, subscribed), their reminders, which Focus is on
+and a snapshot of the phone (battery, charging, car mode, headphones,
 network, walking or driving) with this Hermes profile. They chose each
 kind, which calendars and lists, and how far back and ahead.
 
-- `conduit_calendar` reads events and reminders and asks the phone to add
+- `talaria_calendar` reads events and reminders and asks the phone to add
   or change them.
-- `conduit_phone` (`action: "status"`) says how the phone is doing and
+- `talaria_phone` (`action: "status"`) says how the phone is doing and
   which Focus is on. When the user lets Hermes set alarms and timers, it
   also lists them (`alarms`) and sets or cancels them (`set_alarm`,
   `set_timer`, `cancel_alarm`): they ring on the phone through Silent and
   Focus, so set one only when the user asks or set it up.
-- `conduit_contacts` (`action: "people"`) lists the people the user picked
+- `talaria_contacts` (`action: "people"`) lists the people the user picked
   for you to know (name, nickname, relation such as "wife", numbers,
   emails, birthday). Use it to know who "my wife" or "Sam" is; never send
   their details anywhere or into memory unless the user asks.
 
 Use these first. If the user also set up another way to their calendar
-or contacts (a CLI such as gog, another skill or an API), Conduit's copy
+or contacts (a CLI such as gog, another skill or an API), Talaria's copy
 is on this host, covers every account on the phone and answers at once,
 so reach for the other only when the user asks for it, or for what
-Conduit doesn't have (a calendar the phone doesn't share, someone who
-isn't in `conduit_contacts`, or a change since the last sync that
+Talaria doesn't have (a calendar the phone doesn't share, someone who
+isn't in `talaria_contacts`, or a change since the last sync that
 matters).
 
 ## What it's for
@@ -44,7 +44,7 @@ from them as you go. For example:
 - Prep before meetings: who's coming and what it's about (when notes and
   attendees are shared), travel time when the event has a place.
 - Planning around their state: keep it short when the battery is at 6%,
-  call instead of texting while they're driving or in CarPlay, hold
+  call instead of texting while they're driving or in car mode, hold
   non-urgent things during a Sleep or Work Focus.
 - Anything they teach you: "don't book anything before 10", "every Sunday
   evening tell me what next week looks like", "warn me if two things
@@ -59,7 +59,7 @@ what they already shared.
 
 ## Start with overview
 
-`conduit_calendar` with `action: "overview"` says what each device shares
+`talaria_calendar` with `action: "overview"` says what each device shares
 (calendar: read and add, read only, add only, or not shared; reminders:
 read and add, read only, or not shared; whether notes and attendees are
 included; whether Hermes may add without asking), the calendar and list
@@ -78,9 +78,9 @@ themselves.
 | "When did I last see the dentist?" | `events` with `query: "dentist"` over a range |
 | "What reminders are due this week?" | `reminders` with `due_before` |
 | "Which calendars do you see?" | `calendars` or `overview` |
-| "Is my phone charged? Am I in a Focus?" | `conduit_phone` `status` |
-| "Wake me at 6:30" / "Timer for 10 minutes" | `conduit_phone` `set_alarm` (`time` or `at`) / `set_timer` |
-| "When's Sam's birthday? What's my boss's number?" | `conduit_contacts` `people` with `query` |
+| "Is my phone charged? Am I in a Focus?" | `talaria_phone` `status` |
+| "Wake me at 6:30" / "Timer for 10 minutes" | `talaria_phone` `set_alarm` (`time` or `at`) / `set_timer` |
+| "When's Sam's birthday? What's my boss's number?" | `talaria_contacts` `people` with `query` |
 
 Dates are the user's local dates; `to` is inclusive. Times come back with
 the user's offset. Recurring events show one row per occurrence, each with
@@ -89,11 +89,11 @@ its own id.
 ## Freshness: say "as of"
 
 The tools read the phone's copy, which is as fresh as the last sync
-(`as_of`). The phone syncs when Conduit is open, after every message, and
-on background wakes, so an event added on a Mac or by someone else an hour
+(`as_of`). The phone syncs when Talaria is open, after every message, and
+on background wakes, so an event added on a computer or by someone else an hour
 ago may not be there yet. For anything same-day that matters, say "as of
 14:02 your calendar shows..." and ask the user to confirm, or to open
-Conduit so it syncs. A missing event is not proof that the time is free.
+Talaria so it syncs. A missing event is not proof that the time is free.
 Phone status and Focus carry their own age: a battery reading from three
 hours ago says little about now.
 
@@ -128,7 +128,7 @@ In a live voice call the phone adds things itself and reads changes
 waiting for the user out loud, so the same rules hold: ask, then let them
 approve.
 
-In a voice chat with you, Conduit answers the card when the user says yes
+In a voice chat with you, Talaria answers the card when the user says yes
 or no as their very next words after the reply that queued the change, so
 ask in that reply. If they say something else first, it waits for a tap.
 
@@ -152,5 +152,5 @@ ask in that reply. If they say something else first, it waits for a tap.
   fine to remember.
 - Notes, attendees and links are shared only when the user turned on
   "Include notes and attendees". If they're missing, that's their choice:
-  tell them they can turn it on in Conduit's Calendar & phone settings,
+  tell them they can turn it on in Talaria's Calendar & phone settings,
   don't guess around it.

@@ -1,6 +1,6 @@
 """Hermes calls you (#449): this profile's call settings and job watches.
 
-A watch says "call the user when this job ends". Conduit registers one as
+A watch says "call the user when this job ends". Talaria registers one as
 soon as the user asks a Live Voice call for it ("call me when it's done"),
 keyed to the job's own Hermes session ids (runtime and stored), never to the
 voice conversation. The agent's turn-end hooks fire it: the first turn end of
@@ -9,21 +9,21 @@ nothing and the user is called at most once per watch.
 
 While the call is still going the watch is held for the hold it was
 registered with. A job that ends while held is told in the call itself
-(Conduit then removes the watch), or once the hold runs out (the hooks'
+(Talaria then removes the watch), or once the hold runs out (the hooks'
 delivery calls then). So the call never depends on the phone reaching the
 host after hanging up.
 
-Hermes can also ask for a call itself (the ``conduit_call_user`` tool): a
+Hermes can also ask for a call itself (the ``talaria_call_user`` tool): a
 watch on the asking session that calls when its turn ends, with the reason
 Hermes gave. With "approval, question and failure calls" on, a request for
 the user's approval or answer that goes unanswered for a minute calls too
 (an alert: a watch that is already due), and so does a failed turn.
 
-A call the user declines, or that goes unanswered, comes back from Conduit
+A call the user declines, or that goes unanswered, comes back from Talaria
 as an outcome on the call's sessions; the next turn of one of them takes it,
 so Hermes hears it once (``calls.outcome_note``).
 
-State lives in the profile's ``conduit-calls.json`` beside the pairing state,
+State lives in the profile's ``talaria-calls.json`` beside the pairing state,
 so watches survive gateway and dashboard restarts. The hooks (agent process)
 and the dashboard routes (dashboard process) both use this module: the
 dashboard loads it by path, so it imports nothing from the plugin package.
@@ -51,14 +51,14 @@ try:
 except ImportError:  # everything but Windows
     msvcrt = None  # type: ignore[assignment]
 
-FILE_NAME = "conduit-calls.json"
+FILE_NAME = "talaria-calls.json"
 VERSION = 1
 
 DEFAULT_SETTINGS: dict[str, Any] = {
     "enabled": False,
     # Call when the user asked for it ("call me when it's done").
     "when_asked": True,
-    # Hermes may call on its own judgment (the conduit_call_user tool).
+    # Hermes may call on its own judgment (the talaria_call_user tool).
     "decides": False,
     # Call when Hermes waits on the user's approval or answer, or a turn fails.
     "alerts": False,
@@ -69,9 +69,9 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     # ("only if production is down"): Hermes reads them before such a call
     # (call_tool). Empty: the skill's rule alone.
     "rules": "",
-    # Saved places (Conduit's ids, location sharing) where the phone must
+    # Saved places (Talaria's ids, location sharing) where the phone must
     # not ring: a call then sends the usual notification.
-    # avoid_unknown_place: also hold calls while Conduit can't say where the
+    # avoid_unknown_place: also hold calls while Talaria can't say where the
     # user is (no recent location, or sharing paused or off).
     "avoid_places": [],
     "avoid_unknown_place": False,
@@ -90,9 +90,9 @@ INT_BOUNDS: dict[str, tuple[int, int]] = {
 OUTCOMES = ("done", "failed", "stopped")
 # What an alert calls about: Hermes waits on the user.
 ALERT_KINDS = ("approval", "question")
-# Who asked for the watch: Conduit (the user, in a call), Hermes' tool, or an
+# Who asked for the watch: Talaria (the user, in a call), Hermes' tool, or an
 # alert.
-ORIGINS = ("conduit", "tool", "alert")
+ORIGINS = ("talaria", "tool", "alert")
 # An approval or question the user hasn't answered in this long calls.
 ALERT_DELAY_S = 60
 MAX_REASON_CHARS = 200
@@ -113,7 +113,7 @@ DAY_S = 24 * 3600
 # Failed turns' decisions by seeded call id, for a replayed hook: kept as long
 # as the relay remembers an event id.
 MAX_SEEDED = 64
-# How a call that rang ended without the user answering, as Conduit reports
+# How a call that rang ended without the user answering, as Talaria reports
 # it: declined, or missed (rang out, silenced by Do Not Disturb, or reached a
 # phone that was offline).
 CALL_OUTCOMES = ("declined", "missed")
@@ -212,7 +212,7 @@ class CallStore:
                     watch["session_ids"] = ids
                     # A watch Hermes set on its own becomes the user's: their
                     # request calls even with "Hermes decides" off.
-                    watch["origin"] = "conduit"
+                    watch["origin"] = "talaria"
                     watch["asked"] = True
                     if not watch["title"]:
                         watch["title"] = clean_title
@@ -361,7 +361,7 @@ class CallStore:
                     "id": call_id,
                     "session_ids": ids,
                     "outcome": outcome,
-                    # A kind a newer Conduit knows reads as none.
+                    # A kind a newer Talaria knows reads as none.
                     "kind": kind if kind in CALL_KINDS else None,
                     "title": _title(title),
                     "reason": _reason(reason),
@@ -502,7 +502,7 @@ def _encoded(state: dict[str, Any]) -> str:
     return json.dumps(state, separators=(",", ":")) + "\n"
 
 
-def _new_watch(ids: list[str], now: float, *, title: str = "", origin: str = "conduit", reason: str = "",
+def _new_watch(ids: list[str], now: float, *, title: str = "", origin: str = "talaria", reason: str = "",
                asked: bool = False, hold_until: float = 0.0) -> dict[str, Any]:
     return {
         "id": secrets.token_hex(12),
@@ -538,7 +538,7 @@ def _decide(state: dict[str, Any], watch: dict[str, Any], outcome: str, now: flo
     result: dict[str, Any] = {"watch": watch, "outcome": outcome}
     if not _allowed(settings, watch):
         return {**result, "status": "off"}
-    if watch["origin"] != "conduit" and _in_call(state, now):
+    if watch["origin"] != "talaria" and _in_call(state, now):
         # The user is talking to Hermes right now: no ringing over it.
         return {**result, "status": "busy"}
     if place_blocked is not None and (settings["avoid_places"] or settings["avoid_unknown_place"]):
@@ -561,10 +561,10 @@ def _decide(state: dict[str, Any], watch: dict[str, Any], outcome: str, now: flo
 
 
 def _in_call(state: dict[str, Any], now: float) -> bool:
-    """Conduit holds a watch through the call it was asked for in. Not for a
+    """Talaria holds a watch through the call it was asked for in. Not for a
     held watch's own call: its siblings in that call run out moments apart
     once the phone has gone away."""
-    return any(watch["origin"] == "conduit" and watch["hold_until"] > now for watch in state["watches"])
+    return any(watch["origin"] == "talaria" and watch["hold_until"] > now for watch in state["watches"])
 
 
 def _normalized(raw: Any, now: float) -> dict[str, Any]:
@@ -586,7 +586,7 @@ def _normalized(raw: Any, now: float) -> dict[str, Any]:
     for watch in raw.get("watches") if isinstance(raw.get("watches"), list) else []:
         try:
             if watch["expires_at"] > now and _WATCH_ID.match(str(watch["id"])):
-                origin = watch.get("origin") if watch.get("origin") in ORIGINS else "conduit"
+                origin = watch.get("origin") if watch.get("origin") in ORIGINS else "talaria"
                 pending = watch.get("pending")
                 kinds = ALERT_KINDS if origin == "alert" else OUTCOMES
                 if not (isinstance(pending, dict) and pending.get("outcome") in kinds

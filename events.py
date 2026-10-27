@@ -100,7 +100,7 @@ def push_event(
         event["title"] = _clean(title, 120)
     if body:
         event["body"] = _clean(body, 500)
-    # Conduit writes the title in its own language (#1144): `title_label`
+    # Talaria writes the title in its own language (#1144): `title_label`
     # names which one (an event type, or `phone.<kind>`), and the chat's
     # title rides on its own instead of glued into `title`. `title` stays for
     # older apps and the relay.
@@ -109,7 +109,7 @@ def push_event(
     chat_title = _clean(session_title, 120) if isinstance(session_title, str) else ""
     if chat_title:
         event["session_title"] = chat_title
-    # `decision` carries the structured card content that lets Conduit render
+    # `decision` carries the structured card content that lets Talaria render
     # an answerable card from the push payload alone, without the one-shot
     # gateway stream event (which is missed while the app is backgrounded).
     # The decision kind must match the event type: approval.needed -> approval
@@ -120,13 +120,13 @@ def push_event(
         expected_kind = "approval" if kind == "approval.needed" else "clarify"
         if sanitized and sanitized.get("kind") == expected_kind:
             event["decision"] = sanitized
-    # `call` (#449) names the job a call request is about, so Conduit can open
+    # `call` (#449) names the job a call request is about, so Talaria can open
     # its chat and tell the user how it ended.
     if call is not None and kind == "call.requested":
         sanitized_call = sanitize_call(call)
         if sanitized_call:
             event["call"] = sanitized_call
-    # `locate` asks the phone for a fresh location (conduit_location): the
+    # `locate` asks the phone for a fresh location (talaria_location): the
     # request id the phone answers with, and nothing else.
     if locate is not None and kind == "location.requested":
         locate_id = locate.get("id") if isinstance(locate, dict) else None
@@ -134,7 +134,7 @@ def push_event(
             event["locate"] = {"id": locate_id}
     # `mode` (phone.changes only) tells the relay how to wake the phone for a
     # change Hermes queued: "alert" shows a notification the user taps to
-    # review, "background" wakes Conduit silently to apply a change the user
+    # review, "background" wakes Talaria silently to apply a change the user
     # lets Hermes make without asking. Routing, not content: it stays visible
     # to the relay when the rest is sealed.
     if kind == "phone.changes":
@@ -185,14 +185,14 @@ def sanitize_call(value: Any) -> dict[str, Any] | None:
     return call
 
 
-REDACTED_APPROVAL_TEXT = "Hermes needs your approval. Open Conduit for details."
-REDACTED_QUESTION_TEXT = "Hermes needs your answer. Open Conduit for details."
+REDACTED_APPROVAL_TEXT = "Hermes needs your approval. Open Talaria for details."
+REDACTED_QUESTION_TEXT = "Hermes needs your answer. Open Talaria for details."
 
 
 def redact_event(event: dict[str, Any]) -> dict[str, Any]:
     """Strip chat content from an outgoing event, keeping answer routing.
 
-    For profiles that opt into `hermes conduit-push redact on` (#192): no
+    For profiles that opt into `hermes talaria redact on` (#192): no
     title/body text leaves the gateway, and a decision keeps only the
     structural fields the device needs to answer it (kind, session_key or
     request_id, qids, choices, multi_select), with its display text replaced
@@ -296,9 +296,9 @@ def clarify_decision(
 
     `questions` carries the FULL batch (current Hermes `questions[]`
     protocol): each entry keeps the gateway qid as identity plus its
-    choices and multi_select flag, so background Conduit devices see and
+    choices and multi_select flag, so background Talaria devices see and
     answer every question instead of only the first. The collapsed
-    `question`/`choices` summary stays in the payload for older Conduit
+    `question`/`choices` summary stays in the payload for older Talaria
     builds, which render an answerable first-question card from it.
 
     Legacy scalar invocations pass no `questions`, keeping the decision —

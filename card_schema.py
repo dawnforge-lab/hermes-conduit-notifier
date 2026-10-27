@@ -1,9 +1,9 @@
-"""Conduit's rich cards: maps, places, stats, charts, forecasts, comparisons,
-steps, media, contacts and statuses Conduit draws natively, checked against
+"""Talaria's rich cards: maps, places, stats, charts, forecasts, comparisons,
+steps, media, contacts and statuses Talaria draws natively, checked against
 the one schema both sides read (``cards/card-schema.json``).
 
 Hermes fills in a card's facts (a place's name, where it is, a rating it
-found and where from; numbers, a forecast, the steps of a recipe); Conduit
+found and where from; numbers, a forecast, the steps of a recipe); Talaria
 owns the look, and the phone adds what Apple Maps knows itself at draw time
 (address, category, phone, website, travel time, Look Around). So the schema
 has no fields for those, and a rating, hours, price or photo without a named
@@ -13,8 +13,8 @@ must), and otherwise read as Hermes' own; a contact says when the person is
 in the user's own contacts. A card with a ``live`` name replaces the earlier
 card of that name in the conversation, so a status can be kept up to date.
 
-Normalizing follows the schema and is the same in Conduit's Swift
-(``RichCardSchema``); ``cards/card-vectors.json`` holds the examples both
+Normalizing follows the schema and is the same in the Talaria app
+(``RichCards``); ``cards/card-vectors.json`` holds the examples both
 test suites run, so the two can't drift:
 - unknown keys are dropped;
 - text has control characters turned into spaces, is trimmed, and is cut to
@@ -185,7 +185,7 @@ _TYPE_FIELDS = {"map": ("places", "route"), "place": ("places",), "places": ("pl
                 "media": ("media",), "contact": ("people",), "status": ("status",)}
 PLACE_TYPES = ("map", "place", "places")
 # The information cards (plugin 0.46+), media and contacts, and statuses
-# (0.47+): a Conduit draws each group only when its exchange names it.
+# (0.47+): a Talaria draws each group only when its exchange names it.
 INFO_TYPES = ("stats", "chart", "weather", "comparison", "steps")
 MEDIA_TYPES = ("media", "contact")
 LIVE_TYPES = ("status",)
@@ -530,7 +530,7 @@ def _status_markdown(card: dict[str, Any]) -> list[str]:
         head += f" ({phase})"
     facts = []
     if "progress" in status:
-        # Done is complete, as Conduit draws it, whatever was last reported.
+        # Done is complete, as Talaria draws it, whatever was last reported.
         facts.append(f"{100 if status.get('phase') == 'done' else round(status['progress'] * 100)}%")
     if status.get("eta"):
         facts.append(_escape(status["eta"]))

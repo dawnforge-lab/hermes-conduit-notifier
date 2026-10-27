@@ -1,6 +1,6 @@
-"""Health data from Conduit: the store, its encryption and its queries.
+"""Health data from Talaria: the store, its encryption and its queries.
 
-Conduit can share Apple Health data with this profile so Hermes can read it
+Talaria can share the phone's health data with this profile so Hermes can read it
 (off until the user turns it on, per category). The phone sends it straight
 to this host over the dashboard connection, never through the push relay.
 
@@ -23,10 +23,10 @@ that exchange still can't open later bodies. HKDF-SHA256 and
 ChaCha20-Poly1305 as in e2e.py; the associated data binds a body to its key
 and batch.
 
-State lives in the profile's ``conduit-health.sqlite3`` (owner-only). The
-dashboard routes (dashboard process) write it; the ``conduit_health`` tool
+State lives in the profile's ``talaria-health.sqlite3`` (owner-only). The
+dashboard routes (dashboard process) write it; the ``talaria_health`` tool
 (agent process) reads it. The dashboard loads this file and health_tool.py as
-a private package (``conduit_push_dashboard_pkg``), so it imports nothing else
+a private package (``talaria_push_dashboard_pkg``), so it imports nothing else
 from the plugin.
 """
 
@@ -56,16 +56,16 @@ try:
 except ImportError:  # everything but Windows
     msvcrt = None  # type: ignore[assignment]
 
-FILE_NAME = "conduit-health.sqlite3"
+FILE_NAME = "talaria-health.sqlite3"
 SCHEMA_VERSION = 1
 
-SALT = b"conduit-health-v1"
-INFO_INGEST = b"conduit-health-v1 ingest device-to-host"
-AAD_TAG = "conduit-health/1"
+SALT = b"talaria-health-v1"
+INFO_INGEST = b"talaria-health-v1 ingest device-to-host"
+AAD_TAG = "talaria-health/1"
 NONCE_BYTES = 12
 KEY_BYTES = 32
 
-# What Conduit may send, each with its one unit. A metric not listed is
+# What Talaria may send, each with its one unit. A metric not listed is
 # refused, so the store never fills with names the tool can't explain.
 # "sum": cumulative (sum per bucket); "stats": discrete (min/avg/max).
 METRICS: dict[str, tuple[str, str, str]] = {
@@ -190,7 +190,7 @@ def crypto_available() -> bool:
 
 
 def key_id(device_public: bytes, host_public: bytes) -> str:
-    return hashlib.sha256(b"conduit-health-kid\n" + device_public + host_public).hexdigest()[:32]
+    return hashlib.sha256(b"talaria-health-kid\n" + device_public + host_public).hexdigest()[:32]
 
 
 def derive_key(shared: bytes, device_id: str, device_public: bytes, host_public: bytes,
@@ -410,7 +410,7 @@ class HealthStore:
         device_id = body.get("device_id")
         if not isinstance(device_id, str) or not _DEVICE_ID.match(device_id):
             raise HealthError("malformed", "device_id must be 8-64 letters, digits, - or _")
-        name = _text(body.get("device_name"), "device_name", MAX_DEVICE_NAME_CHARS) or "iPhone"
+        name = _text(body.get("device_name"), "device_name", MAX_DEVICE_NAME_CHARS) or "Phone"
         device_public = unb64u(body.get("public_key"))
         if len(device_public) != 32:
             raise HealthError("malformed", "public_key must be a 32-byte X25519 key")
@@ -426,7 +426,7 @@ class HealthStore:
             if not known and count >= MAX_DEVICES:
                 raise HealthError("too_many_devices",
                                   f"This profile already keeps health data from {MAX_DEVICES} devices; delete one "
-                                  "from Conduit first", status=409)
+                                  "from Talaria first", status=409)
             if known and bytes(known[0]) != device_public:
                 # A new device key starts the device over: what the old key
                 # sent belongs to the old key, and the phone re-sends everything after a new key anyway. The

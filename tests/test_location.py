@@ -16,16 +16,16 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
-BASE = "/api/plugins/conduit_push"
+BASE = "/api/plugins/talaria_push"
 
 if "hermes_constants" not in sys.modules:
     _hermes_constants = types.ModuleType("hermes_constants")
     _hermes_constants.get_hermes_home = lambda: pathlib.Path(tempfile.gettempdir())
     sys.modules["hermes_constants"] = _hermes_constants
-if "conduit_push" not in sys.modules:
-    _pkg = types.ModuleType("conduit_push")
+if "talaria_push" not in sys.modules:
+    _pkg = types.ModuleType("talaria_push")
     _pkg.__path__ = [str(ROOT)]
-    sys.modules["conduit_push"] = _pkg
+    sys.modules["talaria_push"] = _pkg
 
 
 def _load(name, path):
@@ -38,12 +38,12 @@ def _load(name, path):
     return module
 
 
-location = _load("conduit_push.location_store", ROOT / "location_store.py")
-tool = _load("conduit_push.location_tool", ROOT / "location_tool.py")
-profiles = _load("conduit_push.location_profiles", ROOT / "location_profiles.py")
-calls_store = _load("conduit_push.calls_store", ROOT / "calls_store.py")
-calls = _load("conduit_push.calls", ROOT / "calls.py")
-_api_spec = importlib.util.spec_from_file_location("conduit_plugin_api_location", ROOT / "dashboard" / "plugin_api.py")
+location = _load("talaria_push.location_store", ROOT / "location_store.py")
+tool = _load("talaria_push.location_tool", ROOT / "location_tool.py")
+profiles = _load("talaria_push.location_profiles", ROOT / "location_profiles.py")
+calls_store = _load("talaria_push.calls_store", ROOT / "calls_store.py")
+calls = _load("talaria_push.calls", ROOT / "calls.py")
+_api_spec = importlib.util.spec_from_file_location("talaria_plugin_api_location", ROOT / "dashboard" / "plugin_api.py")
 api = importlib.util.module_from_spec(_api_spec)
 _api_spec.loader.exec_module(api)
 
@@ -54,7 +54,7 @@ VECTOR = json.loads((ROOT / "tests" / "location_vector.json").read_text())
 
 
 class Phone:
-    """Conduit's side of the protocol, as the Swift code does it."""
+    """Talaria's side of the protocol, as the app does it."""
 
     def __init__(self, device_id=DEVICE):
         self.device_id = device_id
@@ -182,7 +182,7 @@ def test_a_private_place_hides_everything_but_itself(store, phone):
 def test_making_a_place_private_forgets_what_it_revealed(store, phone):
     arrive = {"id": "e_home", "kind": "arrive", "place_id": "p_home", "at": "2026-10-13T06:50:00+01:00"}
     store.ingest(phone.seal(phone.batch(fix=fix(place_id="p_home"), events=[arrive])))
-    # The user marks Home private: Conduit sends just the settings.
+    # The user marks Home private: Talaria sends just the settings.
     store.ingest(phone.seal(phone.batch(places=[{**PLACES[0], "private": True}, *PLACES[1:]])))
     stored = store.snapshot()["fix"]
     assert stored["place_id"] == "p_home" and stored["precision"] == "places"
@@ -470,8 +470,8 @@ def test_a_deleted_rules_job_stays_listed_until_its_gone(store, phone):
     assert store.pending_rule_jobs() == ["job-1"] and store.path.exists() and store.status()["stored"] is True
 
 
-def test_shared_vector_matches_conduit():
-    # ConduitTests checks the same values.
+def test_shared_vector_matches_talaria():
+    # The Talaria app's tests check the same values.
     host_private = location.unb64u(VECTOR["host_private"])
     device_private = location.unb64u(VECTOR["device_private"])
     raw = (serialization.Encoding.Raw, serialization.PublicFormat.Raw)
@@ -683,10 +683,10 @@ def test_set_rule_writes_one_job_and_changes_it_in_place(home, scheduler):
     assert answer["result"] == "created" and answer["rule"]["days"] == ["mon", "tue", "fri"]
     job = scheduler.jobs["job-1"]
     assert job["name"] == "Place rule: weekday morning brief" and job["schedule"] == tool.RULE_SCHEDULE
-    assert tool.EVENT_MARK in job["prompt"] and "conduit_call_user" in job["prompt"]
+    assert tool.EVENT_MARK in job["prompt"] and "talaria_call_user" in job["prompt"]
     answer = _call({"action": "set_rule", "rule": {**RULE, "what": "Weekday morning brief", "call": False}})
     assert answer["result"] == "changed" and list(scheduler.jobs) == ["job-1"]
-    assert "conduit_call_user" not in scheduler.jobs["job-1"]["prompt"]
+    assert "talaria_call_user" not in scheduler.jobs["job-1"]["prompt"]
     rules = _call({"action": "rules"})["rules"]
     assert len(rules) == 1 and rules[0]["calls"] is False
     assert _call({"action": "remove_rule", "id": rules[0]["id"]})["result"] == "removed"
@@ -849,7 +849,7 @@ def test_a_relay_without_a_reason_or_with_a_strange_one_gets_the_plain_note(home
 
 def _paired(home, installation="installation-1"):
     home.mkdir(parents=True, exist_ok=True)
-    (home / "conduit-push.json").write_text(json.dumps({"credential": "c", "installation_id": installation}))
+    (home / "talaria-push.json").write_text(json.dumps({"credential": "c", "installation_id": installation}))
 
 
 def _work_shares(home, other_profiles=True, installation="installation-1", **batch):
@@ -1075,10 +1075,10 @@ def test_a_wipe_whose_job_removal_fails_retries_on_the_next_change(client, monke
 
 
 def test_status_says_whether_hermes_can_ask_for_a_fresh_position(client, monkeypatch):
-    # Conduit's Location settings read `locate.available` to tell whether
-    # conduit_location's locate can reach this phone; it mirrors locate's own
+    # Talaria's Location settings read `locate.available` to tell whether
+    # talaria_location's locate can reach this phone; it mirrors locate's own
     # not_paired gate (background sharing is the phone's own setting).
-    pairing = client.home / "conduit-push.json"
+    pairing = client.home / "talaria-push.json"
     monkeypatch.setattr(api, "_pairing_state_path", lambda: pairing)
     assert client.get(f"{BASE}/location/status").json()["locate"] == {"available": False}
     pairing.write_text(json.dumps({"credential": "c" * 32, "installation_id": "i" * 16}))
@@ -1092,7 +1092,7 @@ def test_ingest_refuses_an_oversized_body(client):
 
 
 def test_a_lost_key_refusal_carries_the_stores_code(client):
-    # Conduit sets up a new key when the host lost its old one; until now it
+    # Talaria sets up a new key when the host lost its old one; until now it
     # had only the message to go on, which never named the code.
     phone = Phone()
     phone.accept(client.post(f"{BASE}/location/key", json=phone.key_request()).json())
@@ -1116,7 +1116,7 @@ def test_a_rule_deleted_meanwhile_isnt_brought_back(store):
 
 
 def test_a_redacted_profile_still_sends_the_locate_id():
-    from conduit_push import events
+    from talaria_push import events
     event = events.push_event("location.requested", identifier="locate:x", profile="default",
                               locate={"id": "l_" + "a" * 20})
     assert events.redact_event(event)["locate"] == {"id": "l_" + "a" * 20}
@@ -1124,7 +1124,7 @@ def test_a_redacted_profile_still_sends_the_locate_id():
 
 
 def test_a_content_free_locate_carries_only_a_valid_id():
-    from conduit_push import e2e
+    from talaria_push import e2e
     event = {"type": "location.requested", "event_id": "e1", "locate": {"id": "l_" + "a" * 20}}
     assert e2e.content_free(event)["locate"] == {"id": "l_" + "a" * 20}
     assert "locate" not in e2e.content_free({**event, "locate": {"id": "bad\n"}})

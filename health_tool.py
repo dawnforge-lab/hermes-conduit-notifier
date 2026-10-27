@@ -1,10 +1,10 @@
-"""Hermes reads the user's health data: the ``conduit_health`` tool.
+"""Hermes reads the user's health data: the ``talaria_health`` tool.
 
-Conduit shares Apple Health data (an Android phone, Health Connect data) with
+Talaria shares the phone's health data (Health Connect) with
 this profile when the user turns it on (health_store). The tool only reads:
 daily and hourly totals, nights of sleep, workouts, and raw readings for
 categories where the user turned on detailed readings. Nothing here changes the data or sends it anywhere; what
-the tool returns goes to the model like any tool result, which Conduit tells
+the tool returns goes to the model like any tool result, which Talaria tells
 the user before they turn sync on.
 """
 
@@ -17,27 +17,26 @@ from typing import Any, Callable
 
 from hermes_constants import get_hermes_home
 
-from .conduit_first import HEALTH_FIRST
+from .talaria_first import HEALTH_FIRST
 from .health_store import CATEGORIES, METRICS, HealthError, HealthStore, parse_day
 
-logger = logging.getLogger("hermes.plugins.conduit_push")
+logger = logging.getLogger("hermes.plugins.talaria_push")
 
-TOOL_NAME = "conduit_health"
-TOOLSET = "conduit"
+TOOL_NAME = "talaria_health"
+TOOLSET = "talaria"
 SKILL_NAME = "reading-health-data"
 MAX_DAYS = 92
 MAX_METRICS = 8
 MAX_EVENTS = 200
 MAX_SAMPLES = 500
-SETTINGS_LINK = "[Health settings](conduit://settings/health)"
+SETTINGS_LINK = "[Health settings](talaria://settings/health)"
 
 _BUCKET_METRICS = sorted(metric for metric, (_, _, aggregation) in METRICS.items() if aggregation in ("sum", "stats"))
 
 # The use policy here and in skills/reading-health-data/SKILL.md says the
 # same thing: keep them in sync.
 DESCRIPTION = (
-    "Read the user's health data that their phone shares (Apple Health on an iPhone, Health Connect on "
-    "Android): activity, heart, sleep, "
+    "Read the user's health data that their phone shares (Health Connect): activity, heart, sleep, "
     "workouts, body, vitals, fitness, only the categories they chose. Read-only. The user shared it so you "
     "can use it: answer their questions, and do whatever they set you up to do with it, such as morning "
     "summaries, check-ins on a schedule, training or sleep coaching, or planning around how they slept, "
@@ -96,12 +95,12 @@ def register(ctx: Any, *, is_child: Callable[[Any], bool], skill_path: Any) -> N
             except TypeError:
                 ctx.register_tool(**tool)
         except Exception:  # noqa: BLE001
-            logger.warning("conduit_push: could not register %s", TOOL_NAME, exc_info=True)
+            logger.warning("talaria_push: could not register %s", TOOL_NAME, exc_info=True)
     if hasattr(ctx, "register_skill"):
         try:
             ctx.register_skill(SKILL_NAME, skill_path)
         except Exception:  # noqa: BLE001
-            logger.warning("conduit_push: could not register the %s skill", SKILL_NAME, exc_info=True)
+            logger.warning("talaria_push: could not register the %s skill", SKILL_NAME, exc_info=True)
 
 
 def _store() -> HealthStore:
@@ -109,7 +108,7 @@ def _store() -> HealthStore:
 
 
 def available() -> bool:
-    """Shown to the model only once a Conduit has synced health data here."""
+    """Shown to the model only once a Talaria has synced health data here."""
     try:
         return bool(_store().overview()["devices"])
     except Exception:  # noqa: BLE001
@@ -123,7 +122,7 @@ def handle(args: Any, *, session_id: Any = None, is_child: Callable[[Any], bool]
     except HealthError as error:
         return _answer(ok=False, error=error.code, note=str(error))
     except Exception:  # noqa: BLE001 — a tool must never raise
-        logger.warning("conduit_health failed", exc_info=True)
+        logger.warning("talaria_health failed", exc_info=True)
         return _answer(ok=False, error="unavailable", note="The health data couldn't be read. Tell the user.")
 
 
@@ -176,7 +175,7 @@ def _handle(args: dict[str, Any], session_id: Any, is_child: Callable[[Any], boo
             answer["note"] = f"Only the first {MAX_SAMPLES} readings; ask for a shorter range."
         if not found:
             answer["note"] = ("No raw readings. They're only shared for categories where the user turned on "
-                              f"detailed readings in Conduit's {SETTINGS_LINK}; daily and hourly totals may still "
+                              f"detailed readings in Talaria's {SETTINGS_LINK}; daily and hourly totals may still "
                               "answer the question.")
         return answer
 
@@ -197,14 +196,14 @@ def _overview(store: HealthStore) -> dict[str, Any]:
             "metrics": device["metrics"],
         })
     return {"ok": True, "devices": devices,
-            "note": "The phone syncs in the background when iOS lets it (often hourly, sooner when Conduit is "
+            "note": "The phone syncs in the background when the system lets it (often hourly, sooner when Talaria is "
                     "open), so today's numbers can lag. Say how fresh the data is when it matters."}
 
 
 def _nothing_shared() -> dict[str, Any]:
     return {"ok": False, "error": "nothing_shared",
             "note": "No health data has been shared with this Hermes profile. The user can turn it on in "
-                    f"Conduit's {SETTINGS_LINK} (leave the link out of anything spoken)."}
+                    f"Talaria's {SETTINGS_LINK} (leave the link out of anything spoken)."}
 
 
 def _metrics(value: Any, *, default: list[str]) -> list[str]:

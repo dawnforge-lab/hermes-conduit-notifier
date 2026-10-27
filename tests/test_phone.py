@@ -15,16 +15,16 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
-BASE = "/api/plugins/conduit_push"
+BASE = "/api/plugins/talaria_push"
 
 if "hermes_constants" not in sys.modules:
     _hermes_constants = types.ModuleType("hermes_constants")
     _hermes_constants.get_hermes_home = lambda: pathlib.Path(tempfile.gettempdir())
     sys.modules["hermes_constants"] = _hermes_constants
-if "conduit_push" not in sys.modules:
-    _pkg = types.ModuleType("conduit_push")
+if "talaria_push" not in sys.modules:
+    _pkg = types.ModuleType("talaria_push")
     _pkg.__path__ = [str(ROOT)]
-    sys.modules["conduit_push"] = _pkg
+    sys.modules["talaria_push"] = _pkg
 
 
 def _load(name, path):
@@ -37,11 +37,11 @@ def _load(name, path):
     return module
 
 
-phone = _load("conduit_push.phone_store", ROOT / "phone_store.py")
-tool = _load("conduit_push.phone_tool", ROOT / "phone_tool.py")
-events_module = _load("conduit_push.events", ROOT / "events.py")
-e2e = _load("conduit_push.e2e", ROOT / "e2e.py")
-_api_spec = importlib.util.spec_from_file_location("conduit_plugin_api_phone", ROOT / "dashboard" / "plugin_api.py")
+phone = _load("talaria_push.phone_store", ROOT / "phone_store.py")
+tool = _load("talaria_push.phone_tool", ROOT / "phone_tool.py")
+events_module = _load("talaria_push.events", ROOT / "events.py")
+e2e = _load("talaria_push.e2e", ROOT / "e2e.py")
+_api_spec = importlib.util.spec_from_file_location("talaria_plugin_api_phone", ROOT / "dashboard" / "plugin_api.py")
 api = importlib.util.module_from_spec(_api_spec)
 _api_spec.loader.exec_module(api)
 
@@ -55,7 +55,7 @@ def _raw(private):
 
 
 class Phone:
-    """Conduit's side of the protocol, as the Swift code does it."""
+    """Talaria's side of the protocol, as the app does it."""
 
     def __init__(self, device_id=DEVICE, private=None, name="Eric's iPhone"):
         self.device_id = device_id
@@ -197,8 +197,8 @@ def _events(store, need="events"):
 # --- Crypto ---------------------------------------------------------------------
 
 
-def test_shared_vector_matches_conduit():
-    # The iOS app's PhoneSyncCryptoTests checks the same values.
+def test_shared_vector_matches_talaria():
+    # The Talaria app's tests check the same values.
     host_private, device_private = phone.unb64u(VECTOR["host_private"]), phone.unb64u(VECTOR["device_private"])
     host_public = _raw(X25519PrivateKey.from_private_bytes(host_private))
     device_public = _raw(X25519PrivateKey.from_private_bytes(device_private))
@@ -936,7 +936,7 @@ def test_a_change_reaches_the_phone_and_its_outcome_comes_back(store, iphone):
     assert store.changes()[0]["state"] == "applied"
 
 
-# Conduit keeps a change's URL only when it's http or https and applies the
+# Talaria keeps a change's URL only when it's http or https and applies the
 # rest without it, so anything else is refused here rather than lost there.
 @pytest.mark.parametrize("url", ["javascript:alert(1)", "ftp://files.example.com/a", "example.com/booking",
                                  "/booking", "mailto:a@example.com", "https://"])
@@ -1139,7 +1139,7 @@ def _cal(args, **kw):
 def test_the_tools_hide_until_something_is_shared(home):
     assert tool.calendar_available() is False and tool.phone_available() is False
     assert _cal({"action": "overview"})["error"] == "nothing_shared"
-    assert "conduit://settings/phone" in _cal({"action": "overview"})["note"]
+    assert "talaria://settings/phone" in _cal({"action": "overview"})["note"]
     store = phone.PhoneStore(home.path, clock=lambda: NOW)
     handset = Phone()
     handset.accept(store.register_key(handset.key_request()))
@@ -1194,7 +1194,7 @@ def test_read_only_sharing_reads_and_tells_the_agent_not_to_write(home):
     assert _cal({"action": "events", "from": "2026-10-14"})["ok"] is True
     added = _cal({"action": "add_event", "title": "Gym", "start": "2026-10-15T07:00:00+01:00",
                   "end": "2026-10-15T08:00:00+01:00"})
-    assert added["error"] == "shared_read_only" and "tell the user" in added["note"] and "conduit://settings/phone" in added["note"]
+    assert added["error"] == "shared_read_only" and "tell the user" in added["note"] and "talaria://settings/phone" in added["note"]
     assert _cal({"action": "complete_reminder", "reminder_id": "r_milk"})["error"] == "shared_read_only"
     assert device["adds_without_asking"] is False
     assert home.sent == []
@@ -1209,7 +1209,7 @@ def test_a_write_queues_a_change_and_nudges_the_phone(home):
     # A voice chat answers it out loud: Hermes doesn't send the user to tap.
     assert "say yes or no" in added["note"] and "don't ask them to tap first" in added["note"]
     assert "ask them to tap the card" in added["note"]
-    # Conduit takes a spoken answer only as the user's very next words.
+    # Talaria takes a spoken answer only as the user's very next words.
     assert "very next words" in added["note"]
     assert "very next words after the reply" in tool.CALENDAR_SCHEMA["description"]
     assert "very next words after the reply" in tool.PHONE_SCHEMA["description"]
@@ -1691,7 +1691,7 @@ def test_the_contacts_tool_reads_only_the_people_picked(home):
     assert [person["name"] for person in people["people"]] == ["Sam Taylor", "Alex Kim"]
     assert json.loads(tool.handle_contacts({"action": "people", "query": "sammy"}))["people"][0]["id"] == "p_sam"
     nobody = json.loads(tool.handle_contacts({"action": "people", "query": "Bob"}))
-    assert nobody["people"] == [] and "conduit://settings/phone" in nobody["note"]
+    assert nobody["people"] == [] and "talaria://settings/phone" in nobody["note"]
     bell = json.loads(tool.handle_contacts({"action": "people", "query": "Bo\x07b"}))
     assert "\x07" not in bell["note"] and "\\x07" not in bell["note"]
     assert json.loads(tool.handle_contacts({"action": "all"}))["error"] == "invalid"
@@ -1701,11 +1701,11 @@ def test_the_contacts_tool_reads_only_the_people_picked(home):
     assert json.loads(tool.handle_phone({"action": "alarms"}, **child))["error"] == "subagent"
 
 
-def test_every_change_kind_names_a_title_label_conduit_reads():
+def test_every_change_kind_names_a_title_label_talaria_reads():
     # A kind the label pattern drops would leave the phone with the host's
     # English title (#1144).
-    events = sys.modules["conduit_push.events"]
-    store = sys.modules["conduit_push.phone_store"]
+    events = sys.modules["talaria_push.events"]
+    store = sys.modules["talaria_push.phone_store"]
     for kind in store.CHANGE_KINDS:
         assert events._TITLE_LABEL.match(f"phone.{kind}"), kind
         assert events._TITLE_LABEL.match(f"phone.auto.{kind}"), kind

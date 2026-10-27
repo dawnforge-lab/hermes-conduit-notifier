@@ -10,10 +10,10 @@ from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
 
 ROOT = Path(__file__).resolve().parents[1]
-BASE = "/api/plugins/conduit_push"
+BASE = "/api/plugins/talaria_push"
 
 # The dashboard imports plugin_api.py by file path, not as a package.
-_spec = importlib.util.spec_from_file_location("conduit_plugin_api", ROOT / "dashboard" / "plugin_api.py")
+_spec = importlib.util.spec_from_file_location("talaria_plugin_api", ROOT / "dashboard" / "plugin_api.py")
 api = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(api)
 
@@ -60,7 +60,7 @@ def test_a_full_limiter_turns_new_keys_away():
 
 
 @pytest.mark.parametrize("method, path, limiter", [
-    ("put", "/conduit-settings", "_conduit_settings_limiter"),
+    ("put", "/talaria-settings", "_talaria_settings_limiter"),
     ("get", "/cron/notifications", "_cron_limiter"),
     ("get", "/calls", "_calls_limiter"),
     ("post", "/health/key", "_health_key_limiter"),
@@ -85,12 +85,12 @@ def test_a_broken_scope_is_a_named_host_failure(client, monkeypatch):
     monkeypatch.setattr(api, "_profile_scope", broken)
     response = client.post(f"{BASE}/health/key?profile=coder", json={})
     assert response.status_code == 500 and response.headers["cache-control"] == "no-store"
-    assert response.json()["detail"] == "Conduit profile check failed on the host (RuntimeError)"
+    assert response.json()["detail"] == "Talaria profile check failed on the host (RuntimeError)"
 
 
 def test_manifest_mounts_the_api_under_the_plugin_name():
     manifest = json.loads((ROOT / "dashboard" / "manifest.json").read_text())
-    assert manifest["name"] == "conduit_push"
+    assert manifest["name"] == "talaria_push"
     assert manifest["api"] == "plugin_api.py"
     assert manifest["tab"]["hidden"] is True
     assert (ROOT / "dashboard" / manifest["entry"]).exists()

@@ -9,14 +9,14 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
-BASE = "/api/plugins/conduit_push"
+BASE = "/api/plugins/talaria_push"
 
 if "hermes_constants" not in sys.modules:
     _hermes_constants = types.ModuleType("hermes_constants")
     _hermes_constants.get_hermes_home = lambda: pathlib.Path("/nonexistent-hermes-home")
     sys.modules["hermes_constants"] = _hermes_constants
 
-_spec = importlib.util.spec_from_file_location("conduit_plugin_api_room_files", ROOT / "dashboard" / "plugin_api.py")
+_spec = importlib.util.spec_from_file_location("talaria_plugin_api_room_files", ROOT / "dashboard" / "plugin_api.py")
 api = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(api)
 
@@ -110,7 +110,7 @@ def test_bad_input_is_refused(tmp_path):
 
 
 def test_the_route_stores_under_the_hermes_home(tmp_path, monkeypatch):
-    monkeypatch.setattr(api, "_room_files_root", lambda: str(tmp_path / "conduit" / "room-files"))
+    monkeypatch.setattr(api, "_room_files_root", lambda: str(tmp_path / "talaria" / "room-files"))
     app = FastAPI()
     app.include_router(api.router, prefix=BASE)
     response = TestClient(app).post(f"{BASE}/room-files", json=_body(b"hi", "a.txt"))

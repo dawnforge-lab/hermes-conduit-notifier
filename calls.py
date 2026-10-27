@@ -1,7 +1,7 @@
 """Hermes calls you (#449): turning a watched job's end into a call request.
 
 The turn-end hooks hand every top-level turn end here. A turn of a session
-Conduit watches consumes the watch (calls_store) and, within the user's
+Talaria watches consumes the watch (calls_store) and, within the user's
 limits, sends a ``call.requested`` event in place of the push the hook would
 have sent. Delivery retries a transport or relay failure with the same event
 id, which the relay dedupes; a rejection (an older relay, the relay's daily
@@ -14,12 +14,12 @@ gets its ordinary push; the call waits. A waiter thread calls once the hold
 runs out unreleased (the phone went away mid-call), and every turn end
 sweeps for such calls too, so a gateway restart doesn't lose one.
 
-Hermes asks for a call itself through the ``conduit_call_user`` tool (a watch
+Hermes asks for a call itself through the ``talaria_call_user`` tool (a watch
 on the asking session, see ``tool_watch``). With alert calls on, an approval
 or question left unanswered calls through the same waiter (``alert``), and a
 failed turn calls in place of its push (``failed_turn``).
 
-A call the user declined or didn't answer comes back from Conduit (the
+A call the user declined or didn't answer comes back from Talaria (the
 dashboard's outcome route), and the next turn of its chat tells Hermes so
 (``outcome_note``): nothing rings again.
 """
@@ -39,7 +39,7 @@ from .calls_store import CallStore
 from .location_store import LocationStore
 from .events import push_event
 
-logger = logging.getLogger("hermes.plugins.conduit_push")
+logger = logging.getLogger("hermes.plugins.talaria_push")
 
 CALL_TITLE = "Hermes wants to talk"
 # Seconds to wait before each delivery attempt.
@@ -52,7 +52,7 @@ def _spawn(work: Callable[[], None]) -> None:
     if _stopped.is_set():
         return
     # Under the profile that started the work (see client.enqueue).
-    threading.Thread(target=contextvars.copy_context().run, args=(work,), name="conduit-call", daemon=True).start()
+    threading.Thread(target=contextvars.copy_context().run, args=(work,), name="talaria-call", daemon=True).start()
 
 
 # Homes with a waiter thread running, so a burst of held turn ends starts one,
@@ -103,7 +103,7 @@ def _store(home: Any) -> CallStore:
 
 def _place_blocked(home: Any, settings: dict[str, Any]) -> bool:
     """Whether the user is at a saved place they don't want calls at (or
-    Conduit can't say where they are and they asked to count that too)."""
+    Talaria can't say where they are and they asked to count that too)."""
     # A profile reading another's shared location is held back by it too.
     store, _ = location_profiles.store_for(home, lambda path: LocationStore(path, clock=lambda: _clock()))
     place = store.latest_place()
@@ -128,17 +128,17 @@ def turn_ended(session_id: str, outcome: str, *, profile: str, fallback: dict[st
         home = get_hermes_home()
         store = _store(home)
     except Exception:  # noqa: BLE001
-        logger.warning("Conduit could not open call watches for this turn", exc_info=True)
+        logger.warning("Talaria could not open call watches for this turn", exc_info=True)
         return False
     try:
         # Watches consumed here are sent even if this turn's own check fails.
         _send_due(store.fire_due(), profile)
     except Exception:  # noqa: BLE001
-        logger.warning("Conduit could not sweep held calls", exc_info=True)
+        logger.warning("Talaria could not sweep held calls", exc_info=True)
     try:
         result = store.fire(session_id, outcome)
     except Exception:  # noqa: BLE001
-        logger.warning("Conduit could not check call watches for this turn", exc_info=True)
+        logger.warning("Talaria could not check call watches for this turn", exc_info=True)
         return False
     if result is None:
         return False
@@ -148,16 +148,16 @@ def turn_ended(session_id: str, outcome: str, *, profile: str, fallback: dict[st
         try:
             _wait_for_holds(home, profile)
         except Exception:  # noqa: BLE001 — the next turn end sweeps again
-            logger.warning("Conduit could not wait on a held call", exc_info=True)
+            logger.warning("Talaria could not wait on a held call", exc_info=True)
         return False
     if result["status"] != "call":
-        logger.info("Conduit call for a finished job held back: %s", result.get("reason") or result["status"])
+        logger.info("Talaria call for a finished job held back: %s", result.get("reason") or result["status"])
         return False
     try:
         event = call_event(result["watch"], outcome, session_id=session_id, profile=profile)
         _spawn(lambda: deliver(event, fallback))
     except Exception:  # noqa: BLE001 — the caller sends its usual push
-        logger.warning("Conduit could not send a call request", exc_info=True)
+        logger.warning("Talaria could not send a call request", exc_info=True)
         return False
     return True
 
@@ -167,14 +167,14 @@ def _send_due(results: list[dict[str, Any]], profile: str) -> None:
     push went out when they ended, so there is nothing to fall back to."""
     for result in results:
         if result["status"] != "call":
-            logger.info("Conduit call for a finished job held back: %s", result.get("reason") or result["status"])
+            logger.info("Talaria call for a finished job held back: %s", result.get("reason") or result["status"])
             continue
         # One that can't go out never stops the rest: they're consumed too.
         try:
             event = call_event(result["watch"], result["outcome"], session_id=result["session_id"], profile=profile)
             _spawn(lambda event=event: deliver(event, None))
         except Exception:  # noqa: BLE001
-            logger.warning("Conduit could not send a held call", exc_info=True)
+            logger.warning("Talaria could not send a held call", exc_info=True)
 
 
 def resume(profile: str) -> None:
@@ -185,12 +185,12 @@ def resume(profile: str) -> None:
         if _store(home).next_due() is not None:
             _wait_for_holds(home, profile)
     except Exception:  # noqa: BLE001 — the next turn end sweeps again
-        logger.warning("Conduit could not resume held calls", exc_info=True)
+        logger.warning("Talaria could not resume held calls", exc_info=True)
 
 
 def _wait_for_holds(home: Any, profile: str) -> None:
     """Sleeps until each hold over an ended job runs out, then calls for it
-    unless Conduit released or removed the watch meanwhile."""
+    unless Talaria released or removed the watch meanwhile."""
     key = str(home)
     with _waiting_lock:
         if _stopped.is_set():
@@ -234,7 +234,7 @@ def _waiter(home: Any, profile: str, key: str, generation: int = 0) -> Callable[
                     return
                 _send_due(store.fire_due(), profile)
         except Exception:  # noqa: BLE001 — the next turn end sweeps again
-            logger.warning("Conduit stopped waiting on a held call", exc_info=True)
+            logger.warning("Talaria stopped waiting on a held call", exc_info=True)
             with _waiting_lock:
                 if generation == _generation:
                     _waiting.discard(key)
@@ -248,7 +248,7 @@ def settings() -> dict[str, Any]:
 
 
 def tool_watch(session_id: str, reason: str, *, asked: bool) -> dict[str, Any]:
-    """The conduit_call_user tool: call when this turn of ``session_id``
+    """The talaria_call_user tool: call when this turn of ``session_id``
     ends. The store's answer; raises ValueError like ``add_tool_watch``."""
     return _store(get_hermes_home()).add_tool_watch(session_id, reason, asked)
 
@@ -267,7 +267,7 @@ def alert(session_id: str, kind: str, reason: str, *, profile: str, turn_session
         if _store(home).add_alert(ids, kind, reason) is not None:
             _wait_for_holds(home, profile)
     except Exception:  # noqa: BLE001
-        logger.warning("Conduit could not set up an alert call", exc_info=True)
+        logger.warning("Talaria could not set up an alert call", exc_info=True)
 
 
 def cancel_alerts(session_id: str, kind: str | None = None) -> None:
@@ -277,7 +277,7 @@ def cancel_alerts(session_id: str, kind: str | None = None) -> None:
     try:
         _store(get_hermes_home()).cancel_alerts(session_id, kind)
     except Exception:  # noqa: BLE001
-        logger.warning("Conduit could not cancel an alert call", exc_info=True)
+        logger.warning("Talaria could not cancel an alert call", exc_info=True)
 
 
 def failed_turn(session_id: str, *, profile: str, fallback: dict[str, Any] | None, turn_id: Any = None) -> bool:
@@ -290,18 +290,18 @@ def failed_turn(session_id: str, *, profile: str, fallback: dict[str, Any] | Non
         seed = "" if turn_id is None else str(turn_id)
         result = _store(get_hermes_home()).alert_now(session_id, "failed", "", seed=seed)
     except Exception:  # noqa: BLE001
-        logger.warning("Conduit could not check alert calls for a failed turn", exc_info=True)
+        logger.warning("Talaria could not check alert calls for a failed turn", exc_info=True)
         return False
     if result is None:
         return False
     if result["status"] != "call":
-        logger.info("Conduit call for a failed turn held back: %s", result.get("reason") or result["status"])
+        logger.info("Talaria call for a failed turn held back: %s", result.get("reason") or result["status"])
         return False
     try:
         event = call_event(result["watch"], "failed", session_id=session_id, profile=profile)
         _spawn(lambda: deliver(event, fallback))
     except Exception:  # noqa: BLE001 — the caller sends its usual push
-        logger.warning("Conduit could not send a call request", exc_info=True)
+        logger.warning("Talaria could not send a call request", exc_info=True)
         return False
     return True
 
@@ -318,7 +318,7 @@ def outcome_note(session_id: str) -> str | None:
         now = store.clock()
         return "\n".join(_outcome_line(entry, now) for entry in taken) or None
     except Exception:  # noqa: BLE001
-        logger.warning("Conduit could not read call outcomes for this turn", exc_info=True)
+        logger.warning("Talaria could not read call outcomes for this turn", exc_info=True)
         return None
 
 
@@ -336,7 +336,7 @@ def _outcome_line(entry: dict[str, Any], now: float) -> str:
         what += " (about an approval you were waiting for)"
     elif entry["kind"] == "question":
         what += " (about a question you asked them)"
-    return f"[Conduit: {what}. They haven't heard what you called about; if it still matters, tell them.]"
+    return f"[Talaria: {what}. They haven't heard what you called about; if it still matters, tell them.]"
 
 
 # What a reason or title can't carry into the note: it can't close the quote
@@ -397,7 +397,7 @@ def deliver(event: dict[str, Any], fallback: dict[str, Any] | None) -> None:
         if delay:
             _sleep(delay)
         if _stopped.is_set():
-            logger.info("Conduit call request dropped: the plugin was unloaded")
+            logger.info("Talaria call request dropped: the plugin was unloaded")
             return
         try:
             answer = client.send_now(event)
@@ -405,22 +405,22 @@ def deliver(event: dict[str, Any], fallback: dict[str, Any] | None) -> None:
             if getattr(error, "status", 0) >= 500 and getattr(error, "detail", "") not in APNS_FAILURES:
                 # The relay (or a proxy in front of it) failed to handle it:
                 # worth another try.
-                logger.warning("Conduit call request delivery failed: %s", error)
+                logger.warning("Talaria call request delivery failed: %s", error)
                 relay_failed = True
                 continue
             # The relay refused it, the profile lost its pairing, or the
             # relay took it and Apple didn't: sending the same event again
             # won't change that (a retry only answers "duplicate").
-            logger.warning("Conduit call request refused: %s", error)
+            logger.warning("Talaria call request refused: %s", error)
             break
         except Exception as error:  # noqa: BLE001 — transport: try again
-            logger.warning("Conduit call request delivery failed: %s", error)
+            logger.warning("Talaria call request delivery failed: %s", error)
             continue
         # A relay that failed after taking the event answers the retry as a
         # duplicate without sending it again.
         if not (relay_failed and isinstance(answer, dict) and answer.get("duplicate")):
             return
-        logger.warning("Conduit call request was taken but never sent")
+        logger.warning("Talaria call request was taken but never sent")
         break
     if fallback is not None and not client.enqueue(fallback):
-        logger.warning("Conduit could not queue the usual push for a call that didn't go out")
+        logger.warning("Talaria could not queue the usual push for a call that didn't go out")

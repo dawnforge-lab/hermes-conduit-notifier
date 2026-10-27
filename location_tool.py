@@ -1,6 +1,6 @@
-"""Hermes knows where the user is: the ``conduit_location`` tool.
+"""Hermes knows where the user is: the ``talaria_location`` tool.
 
-Conduit shares the user's location with this profile when they turn it on
+Talaria shares the user's location with this profile when they turn it on
 (location_store): a fix as they talk to Hermes, and, if they also allow it,
 arrivals and departures at their saved places and big moves in the
 background, each at the detail they chose. The tool reads that, asks the
@@ -11,8 +11,8 @@ building block: any chat, cron job or skill can read it, and the user teaches
 their agent what to do with it.
 
 Every read is logged (when, which action, which chat, never what was read)
-and Conduit shows the user that log. What the tool returns goes to the model
-like any tool result, which Conduit tells the user before they turn sharing
+and Talaria shows the user that log. What the tool returns goes to the model
+like any tool result, which Talaria tells the user before they turn sharing
 on.
 """
 
@@ -30,25 +30,25 @@ from typing import Any, Callable
 from hermes_constants import get_hermes_home
 
 from . import call_watches, client, location_profiles, session_titles
-from .conduit_first import LOCATION_FIRST
+from .talaria_first import LOCATION_FIRST
 from .events import push_event
 from .location_store import (
     ANY_PLACE, MAX_RULES, MAX_TASK_CHARS, MAX_WHAT_CHARS, RULE_EVENTS, RULE_REPEATS, WEEKDAYS, LocationError,
     TALKING_SOURCES, LocationStore, clean_task, clean_text, parse_hours, sharing_paused,
 )
 
-logger = logging.getLogger("hermes.plugins.conduit_push")
+logger = logging.getLogger("hermes.plugins.talaria_push")
 
-TOOL_NAME = "conduit_location"
-TOOLSET = "conduit"
+TOOL_NAME = "talaria_location"
+TOOLSET = "talaria"
 SKILL_NAME = "using-location"
-SETTINGS_LINK = "[Location settings](conduit://settings/location)"
+SETTINGS_LINK = "[Location settings](talaria://settings/location)"
 RULE_PREFIX = "Place rule: "
-# Rule jobs run only when Conduit starts them. Hermes jobs need a schedule,
+# Rule jobs run only when Talaria starts them. Hermes jobs need a schedule,
 # so this one comes round on 29 February; a run without a place event line
 # replies [SILENT].
 RULE_SCHEDULE = "0 4 29 2 *"
-EVENT_MARK = "[Conduit place event:"
+EVENT_MARK = "[Talaria place event:"
 # How long after the plugin loads its leftover rule jobs are retried.
 STARTUP_CLEANUP_DELAY_S = 30.0
 MAX_HISTORY_DAYS = 31
@@ -59,7 +59,7 @@ LOCATE_POLL_S = 1.0
 SCHEMA: dict[str, Any] = {
     "name": TOOL_NAME,
     "description": (
-        "Where the user is, as shared from their iPhone by Conduit, at the detail they chose (a saved place "
+        "Where the user is, as shared from their phone by Talaria, at the detail they chose (a saved place "
         "like Home, an area like a neighbourhood, or precise coordinates). Use it whenever where they are "
         "matters to what they asked or set up: near me, directions, travel time, weather, \"am I going to make "
         "it\", or anything they've taught you that depends on their location, in a chat, a scheduled job or a "
@@ -70,7 +70,7 @@ SCHEMA: dict[str, Any] = {
         "places), history (arrivals and departures), distance_to (from the latest fix to a saved place), "
         "rules / set_rule / remove_rule (place rules: run any task when they arrive at or leave a saved place, "
         "or any of them). "
-        f"Before setting up a place rule or a job that uses location, load skill_view(\"conduit_push:{SKILL_NAME}\"). "
+        f"Before setting up a place rule or a job that uses location, load skill_view(\"talaria_push:{SKILL_NAME}\"). "
         f"{LOCATION_FIRST}"
     ),
     "parameters": {
@@ -125,12 +125,12 @@ def register(ctx: Any, *, is_child: Callable[[Any], bool], profile: Callable[[],
             except TypeError:
                 ctx.register_tool(**tool)
         except Exception:  # noqa: BLE001
-            logger.warning("conduit_push: could not register %s", TOOL_NAME, exc_info=True)
+            logger.warning("talaria_push: could not register %s", TOOL_NAME, exc_info=True)
     if hasattr(ctx, "register_skill"):
         try:
             ctx.register_skill(SKILL_NAME, skill_path)
         except Exception:  # noqa: BLE001
-            logger.warning("conduit_push: could not register the %s skill", SKILL_NAME, exc_info=True)
+            logger.warning("talaria_push: could not register the %s skill", SKILL_NAME, exc_info=True)
     clear_rule_jobs_at_start()
 
 
@@ -145,7 +145,7 @@ def _shared_store() -> tuple[LocationStore, str | None]:
 
 
 def available() -> bool:
-    """Shown to the model only once a Conduit has shared location here."""
+    """Shown to the model only once a Talaria has shared location here."""
     try:
         return _store().snapshot() is not None
     except Exception:  # noqa: BLE001
@@ -159,7 +159,7 @@ def handle(args: Any, *, session_id: Any = None, is_child: Callable[[Any], bool]
     except LocationError as error:
         return _answer(ok=False, error=error.code, note=str(error))
     except Exception:  # noqa: BLE001 — a tool must never raise
-        logger.warning("conduit_location failed", exc_info=True)
+        logger.warning("talaria_location failed", exc_info=True)
         return _answer(ok=False, error="unavailable", note="The location couldn't be read. Tell the user.")
 
 
@@ -203,7 +203,7 @@ def _handle(args: dict[str, Any], session_id: Any, is_child: Callable[[Any], boo
     if sharing_paused(view["sharing"], now):
         _log(store, action, session, session_label)
         return {"ok": False, "error": "paused",
-                "note": "The user has paused location sharing (or turned it off) in Conduit. Don't guess where they "
+                "note": "The user has paused location sharing (or turned it off) in Talaria. Don't guess where they "
                         "are; ask them if it matters."}
     _log(store, action, session, session_label)
     if action == "locate":
@@ -217,7 +217,7 @@ def _read(store: LocationStore, view: dict[str, Any], action: str, args: dict[st
         return {"ok": True, **_fix_view(view, now)}
     if action == "places":
         return {"ok": True, "places": [_place_view(place) for place in view["places"].values()],
-                "note": "Saved places live on the user's phone; they add and change them in Conduit's "
+                "note": "Saved places live on the user's phone; they add and change them in Talaria's "
                         f"{SETTINGS_LINK}. Their coordinates are never shared, only names and distances."}
     if action == "distance_to":
         return _distance_to(view, args.get("place"), now)
@@ -232,7 +232,7 @@ def _fix_view(view: dict[str, Any], now: float) -> dict[str, Any]:
     background = bool(view["sharing"].get("background"))
     if fix is None:
         return {"known": False,
-                "note": "No location has arrived yet. It's sent when the user writes or calls from Conduit"
+                "note": "No location has arrived yet. It's sent when the user writes or calls from Talaria"
                         + (", and when they move or arrive somewhere." if background else ".")}
     answer: dict[str, Any] = {"known": True, "as_of": f"{fix['at_local']} ({_ago(now - fix['at'])})",
                               "source": _SOURCE_TEXT.get(fix["source"], fix["source"]), "detail": fix["precision"]}
@@ -261,7 +261,7 @@ def _fix_view(view: dict[str, Any], now: float) -> dict[str, Any]:
                           "or leaves a saved place, so an older fix usually still says where they are. Say how old "
                           "it is when it matters.")
     else:
-        answer["note"] = ("Only shared when the user writes or calls from Conduit: this is where they were then, "
+        answer["note"] = ("Only shared when the user writes or calls from Talaria: this is where they were then, "
                           "not necessarily now. Say how old it is.")
     return answer
 
@@ -269,7 +269,7 @@ def _fix_view(view: dict[str, Any], now: float) -> dict[str, Any]:
 _SOURCE_TEXT = {
     "message": "when the user sent a message", "call": "during a voice call", "visit": "a visit",
     "place": "arriving at or leaving a saved place", "significant": "a move in the background",
-    "app": "Conduit was open", "locate": "a fresh lookup",
+    "app": "Talaria was open", "locate": "a fresh lookup",
 }
 
 
@@ -290,7 +290,7 @@ LOCATE_HINT = " Action locate asks the phone for a fresh fix."
 def _no_distance_note(view: dict[str, Any], fix: dict[str, Any], place: dict[str, Any]) -> str:
     """Why this fix has no distance to that place. "Places only" is one cause,
     not the usual one: a background fix often carries no distances at all
-    (they arrive with a lookup or a fix sent while Conduit is open), and a
+    (they arrive with a lookup or a fix sent while Talaria is open), and a
     place added after the fix isn't in it either. Blaming "places only" for
     those sent the reader chasing a setting the user never touched."""
     sharing = view["sharing"]
@@ -317,7 +317,7 @@ def _distance_to(view: dict[str, Any], wanted: Any, now: float) -> dict[str, Any
     place = _find_place(view, wanted)
     if place is None:
         return {"ok": False, "error": "unknown_place",
-                "note": "No saved place has that name. Use places to see them; the user adds places in Conduit."}
+                "note": "No saved place has that name. Use places to see them; the user adds places in Talaria."}
     if place["private"]:
         return {"ok": False, "error": "private", "note": "That place is private: distances to it aren't shared."}
     fix = view["fix"]
@@ -371,7 +371,7 @@ def not_delivered(kind: str, answer: dict[str, Any], what: str) -> dict[str, Any
     # to the log and to the model.
     if not isinstance(reason, str) or not _REASON.fullmatch(reason):
         reason = None
-    logger.info("Conduit %s request not delivered by the relay: %s", kind, reason or "no reason given")
+    logger.info("Talaria %s request not delivered by the relay: %s", kind, reason or "no reason given")
     return {"ok": False, "error": "not_set_up", "note": not_delivered_note(reason, what),
             **({"reason": reason} if reason else {})}
 
@@ -379,9 +379,9 @@ def not_delivered(kind: str, answer: dict[str, Any], what: str) -> dict[str, Any
 def not_delivered_note(reason: str | None, what: str) -> str:
     if reason == "no_location_token":
         return (f"The phone can't answer {what} yet: the notification relay has no location push token for it. "
-                "The user can fix this by updating Conduit and opening it with background location sharing on "
-                "(on an older Conduit, opening its Settings > Notifications sends the token until it next starts).")
-    return (f"The phone can't answer {what} yet (Conduit or the notification relay needs updating, "
+                "The user can fix this by updating Talaria and opening it with background location sharing on "
+                "(on an older Talaria, opening its Settings > Notifications sends the token until it next starts).")
+    return (f"The phone can't answer {what} yet (Talaria or the notification relay needs updating, "
             "or background sharing was just turned on).")
 
 
@@ -392,7 +392,7 @@ def _locate(store: LocationStore, view: dict[str, Any], profile: str, sleep: Cal
                         "Use action now, or ask them."}
     if client.load_state() is None:
         return {"ok": False, "error": "not_paired",
-                "note": "This Hermes profile isn't paired with Conduit for notifications, so it can't reach the phone. "
+                "note": "This Hermes profile isn't paired with Talaria for notifications, so it can't reach the phone. "
                         "Use action now."}
     locate_id = store.start_locate()
     event = push_event("location.requested", identifier=f"locate:{locate_id}", profile=profile,
@@ -400,7 +400,7 @@ def _locate(store: LocationStore, view: dict[str, Any], profile: str, sleep: Cal
     try:
         answer = client.send_now(event)
     except Exception as error:  # noqa: BLE001
-        logger.warning("Conduit location request failed: %s", error)
+        logger.warning("Talaria location request failed: %s", error)
         store.cancel_locate(locate_id)
         return {**_fix_view(view, store.clock()), "ok": False, "error": "unreachable",
                 "note": "The phone couldn't be asked just now. Use action now."}
@@ -453,7 +453,7 @@ def _set_rule_locked(store: LocationStore, view: dict[str, Any], raw: Any) -> di
         place = _find_place(view, raw.get("place"))
     if place is None:
         return {"ok": False, "error": "unknown_place",
-                "note": "No saved place has that name. Use places; if it's missing, the user adds it in Conduit's "
+                "note": "No saved place has that name. Use places; if it's missing, the user adds it in Talaria's "
                         f"{SETTINGS_LINK} first."}
     if raw.get("event") not in RULE_EVENTS:
         return {"ok": False, "error": "invalid", "note": "event is arrive, leave or either."}
@@ -487,7 +487,7 @@ def _set_rule_locked(store: LocationStore, view: dict[str, Any], raw: Any) -> di
             # old one live with no rule pointing at it.
             return {"ok": False, "error": "scheduler", "note": "The scheduled jobs couldn't be listed; try again."}
         job = next((item for item in jobs if str(item.get("job_id")) == existing["job_id"]), None)
-    toolsets = call_watches._toolsets_with_conduit(job)
+    toolsets = call_watches._toolsets_with_talaria(job)
     if toolsets is not None:
         fields["enabled_toolsets"] = toolsets
     if job is not None:
@@ -511,16 +511,16 @@ def _set_rule_locked(store: LocationStore, view: dict[str, Any], raw: Any) -> di
                 store.pend_rule_job(job_id)
             except Exception:  # noqa: BLE001 — the store itself failed; one try
                 if not call_watches._call(cronjob, action="remove", job_id=job_id).get("success"):
-                    logger.warning("conduit_push: place rule job %s left with no rule and not listed", job_id)
+                    logger.warning("talaria_push: place rule job %s left with no rule and not listed", job_id)
             else:
                 _clear_rule_jobs(store, cronjob)
         raise
     return {"ok": True, "result": "changed" if existing else "created", "rule": _rule_view(saved),
             "note": ("Tell the user what it does in a sentence. It runs only while they share location in the "
-                     "background in Conduit, " + ("at most once a day" if repeat == "daily" else
+                     "background in Talaria, " + ("at most once a day" if repeat == "daily" else
                                                   "at most every 30 minutes") +
                      ", and only if the phone reports the move within 15 minutes. They can see and delete rules in "
-                     "Conduit's " + SETTINGS_LINK + ".")}
+                     "Talaria's " + SETTINGS_LINK + ".")}
 
 
 def _remove_rule(store: LocationStore, rule_id: Any) -> dict[str, Any]:
@@ -557,10 +557,10 @@ def _clear_rule_jobs(store: LocationStore, cronjob: Callable[..., str]) -> None:
                 gone += [job_id for job_id in left if job_id not in present]
                 left = [job_id for job_id in left if job_id in present]
             if left:
-                logger.warning("conduit_push: place rule jobs not removed yet: %s", ", ".join(left))
+                logger.warning("talaria_push: place rule jobs not removed yet: %s", ", ".join(left))
         store.rule_jobs_gone(gone)
     except Exception:  # noqa: BLE001 — the jobs stay listed; the next change or start tries again
-        logger.warning("conduit_push: place rule jobs not cleared", exc_info=True)
+        logger.warning("talaria_push: place rule jobs not cleared", exc_info=True)
 
 
 def clear_rule_jobs_at_start(delay: float = STARTUP_CLEANUP_DELAY_S) -> threading.Thread:
@@ -584,9 +584,9 @@ def clear_rule_jobs_at_start(delay: float = STARTUP_CLEANUP_DELAY_S) -> threadin
             if cronjob is not None:
                 _clear_rule_jobs(store, cronjob)
         except Exception:  # noqa: BLE001
-            logger.warning("conduit_push: place rule jobs not cleared at start", exc_info=True)
+            logger.warning("talaria_push: place rule jobs not cleared at start", exc_info=True)
 
-    thread = threading.Thread(target=run, name="conduit-location-rule-jobs", daemon=True)
+    thread = threading.Thread(target=run, name="talaria-location-rule-jobs", daemon=True)
     with _rule_lock:
         if _cleanup_started is not None:
             return _cleanup_started
@@ -596,18 +596,18 @@ def clear_rule_jobs_at_start(delay: float = STARTUP_CLEANUP_DELAY_S) -> threadin
 
 
 def run_prompt(rule: dict[str, Any]) -> str:
-    """What a rule's run does. Conduit starts the run with a place event
+    """What a rule's run does. Talaria starts the run with a place event
     line; a run without one (the job's own schedule) does nothing."""
     verb = {"arrive": "arrives at", "leave": "leaves", "either": "arrives at or leaves"}[rule["event"]]
     lines = [
-        f"This is the place rule \"{rule['what']}\": Conduit starts it when the user {verb} {rule['place_name']}. "
+        f"This is the place rule \"{rule['what']}\": Talaria starts it when the user {verb} {rule['place_name']}. "
         "The event line says which place and which move.",
         f"If nothing above starts with \"{EVENT_MARK}\", reply exactly [SILENT] and stop.",
         "",
         "Otherwise: " + "\n  ".join(rule["task"].splitlines()),
     ]
     if rule["call"]:
-        lines += ["", "When the result is ready, call the user with conduit_call_user (asked_by_user true, a short "
+        lines += ["", "When the result is ready, call the user with talaria_call_user (asked_by_user true, a short "
                       "reason), and end the turn with the result as your reply."]
     lines += ["", "Don't set up, change or remove jobs or place rules from here."]
     return "\n".join(lines)
@@ -655,7 +655,7 @@ def _log(store: LocationStore, action: str, session: str, profile: str = "") -> 
             title = f"{name}: {title}" if title else name
         store.log_read(action, session, title)
     except Exception:  # noqa: BLE001 — the read still answers
-        logger.warning("conduit_push: could not log a location read", exc_info=True)
+        logger.warning("talaria_push: could not log a location read", exc_info=True)
 
 
 def _zone(name: Any) -> Any:
@@ -690,7 +690,7 @@ def _ago(seconds: float) -> str:
 def _nothing_shared() -> dict[str, Any]:
     return {"ok": False, "error": "nothing_shared",
             "note": "The user hasn't shared their location with this Hermes profile. They can turn it on in "
-                    f"Conduit's {SETTINGS_LINK} (leave the link out of anything spoken)."}
+                    f"Talaria's {SETTINGS_LINK} (leave the link out of anything spoken)."}
 
 
 def _answer(**fields: Any) -> str:

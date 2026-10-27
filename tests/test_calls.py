@@ -30,10 +30,10 @@ if "tools.clarify_tool" not in sys.modules:
 
     _clarify_tool.strip_recommended = _strip_recommended
     sys.modules["tools.clarify_tool"] = _clarify_tool
-if "conduit_push" not in sys.modules:
-    _pkg = types.ModuleType("conduit_push")
+if "talaria_push" not in sys.modules:
+    _pkg = types.ModuleType("talaria_push")
     _pkg.__path__ = [str(ROOT)]
-    sys.modules["conduit_push"] = _pkg
+    sys.modules["talaria_push"] = _pkg
 
 
 def _load(name, path):
@@ -46,8 +46,8 @@ def _load(name, path):
     return module
 
 
-calls = _load("conduit_push.calls", ROOT / "calls.py")
-plugin = _load("conduit_push.__init__", ROOT / "__init__.py")
+calls = _load("talaria_push.calls", ROOT / "calls.py")
+plugin = _load("talaria_push.__init__", ROOT / "__init__.py")
 
 
 def _reply(**kwargs):
@@ -55,7 +55,7 @@ def _reply(**kwargs):
     plugin._post_llm_call(**kwargs)
     plugin._on_session_end(session_id=kwargs.get("session_id"), task_id=kwargs.get("task_id"),
                            turn_id=kwargs.get("turn_id"), completed=True, failed=False, interrupted=False)
-CallStore = sys.modules["conduit_push.calls_store"].CallStore
+CallStore = sys.modules["talaria_push.calls_store"].CallStore
 
 
 class FakeClient:
@@ -184,7 +184,7 @@ def test_a_refused_call_sends_the_usual_push_at_once(home, fake):
 
 
 def _Rejected(status, detail="request_rejected"):
-    return sys.modules["conduit_push.client"].RelayRejected(status, detail)
+    return sys.modules["talaria_push.client"].RelayRejected(status, detail)
 
 
 def test_a_relay_that_fails_to_handle_the_call_is_tried_again(home, fake, sleeps):
@@ -227,7 +227,7 @@ def test_relay_errors_carry_their_status_and_a_bounded_detail(monkeypatch):
     import io
     import urllib.error
 
-    real = sys.modules["conduit_push.client"]
+    real = sys.modules["talaria_push.client"]
 
     def refuse(body):
         def open_request(request, timeout):
@@ -384,7 +384,7 @@ def test_a_watch_removed_during_the_call_never_calls(home, fake, clock, monkeypa
     watch_id = _held_watch(home, "rt-1")
 
     def sleep(seconds, wake=None):
-        # Conduit told the user in the call and removed the watch.
+        # Talaria told the user in the call and removed the watch.
         calls._store(home).remove_watch(watch_id)
         clock[0] += seconds
     monkeypatch.setattr(calls, "_sleep", sleep)
@@ -461,7 +461,7 @@ def test_one_held_call_that_cannot_go_out_never_stops_the_rest(home, fake):
 
 # --- Calls Hermes asks for, and alert calls ----------------------------------
 
-call_tool = sys.modules["conduit_push.call_tool"]
+call_tool = sys.modules["talaria_push.call_tool"]
 
 
 @pytest.fixture
@@ -556,9 +556,9 @@ def test_the_users_rules_leave_other_calls_alone(home, fake, paired):
 
 def test_calls_off_links_the_setting_for_a_call_the_user_asked_for(home, fake, paired):
     note = _tool({"reason": "Done.", "asked_by_user": True})["note"]
-    assert "[Calls from Hermes](conduit://settings/calls)" in note
+    assert "[Calls from Hermes](talaria://settings/calls)" in note
     _settings(home)
-    assert "conduit://" not in _tool({"reason": "Heads up.", "asked_by_user": False})["note"]
+    assert "talaria://" not in _tool({"reason": "Heads up.", "asked_by_user": False})["note"]
 
 
 def test_the_tool_refuses_what_cannot_ring(home, fake, monkeypatch):
@@ -596,27 +596,27 @@ def test_register_adds_the_tool_and_its_skill():
                                 register_tool=lambda **kwargs: tools.append(kwargs),
                                 register_skill=lambda name, path: skills.append((name, path)))
     plugin.register(ctx)
-    assert [tool["name"] for tool in tools] == ["conduit_call_user", "conduit_call_watch", "conduit_watch_report",
-                                                  "conduit_settings", "conduit_present", "conduit_show", "conduit_health",
-                                                  "conduit_location", "conduit_maps", "conduit_calendar",
-                                                  "conduit_phone", "conduit_contacts"]
+    assert [tool["name"] for tool in tools] == ["talaria_call_user", "talaria_call_watch", "talaria_watch_report",
+                                                  "talaria_settings", "talaria_present", "talaria_show", "talaria_health",
+                                                  "talaria_location", "talaria_maps", "talaria_calendar",
+                                                  "talaria_phone", "talaria_contacts"]
     tool = tools[0]
-    assert (tool["toolset"], tool["schema"]["name"]) == ("conduit", "conduit_call_user")
+    assert (tool["toolset"], tool["schema"]["name"]) == ("talaria", "talaria_call_user")
     assert tool["schema"]["parameters"]["required"] == ["reason", "asked_by_user"]
-    assert all(other["toolset"] == "conduit" and other["schema"]["name"] == other["name"] for other in tools)
+    assert all(other["toolset"] == "talaria" and other["schema"]["name"] == other["name"] for other in tools)
     [(name, path), (health_name, health_path), (location_name, location_path), (calendar_name, calendar_path)] = skills
     assert location_name == "using-location" and location_path.is_file()
     assert name == "calling-the-user" and path.is_file()
     assert health_name == "reading-health-data" and health_path.read_text().startswith("---\nname: reading-health-data\n")
     assert calendar_name == "using-calendar" and calendar_path.read_text().startswith("---\nname: using-calendar\n")
-    assert "conduit_push:calling-the-user" in tool["schema"]["description"]
+    assert "talaria_push:calling-the-user" in tool["schema"]["description"]
     # "Call me if X" goes to the watch tool, which keeps the jobs itself.
-    assert "conduit_call_watch" in tool["schema"]["description"]
+    assert "talaria_call_watch" in tool["schema"]["description"]
     assert path.read_text().startswith("---\nname: calling-the-user\n")
     # The skill opens on which tool fits which case.
     text = path.read_text()
     table = text[text.index("## Which case is this?"):text.index("## When the user asked")]
-    for name in ("conduit_call_user", "conduit_call_watch", "conduit_watch_report", "`sync`", "`set`"):
+    for name in ("talaria_call_user", "talaria_call_watch", "talaria_watch_report", "`sync`", "`set`"):
         assert name in table
 
 
@@ -628,9 +628,9 @@ def test_a_hermes_without_the_display_fields_still_gets_the_tool(home, paired):
     ctx = types.SimpleNamespace(profile_name="default", register_hook=lambda name, fn: None,
                                 register_cli_command=lambda **kwargs: None, register_tool=register_tool)
     plugin.register(ctx)
-    assert [name for name, _ in tools] == ["conduit_call_user", "conduit_call_watch", "conduit_watch_report", "conduit_settings",
-                                           "conduit_present", "conduit_show", "conduit_health", "conduit_location", "conduit_maps", "conduit_calendar", "conduit_phone",
-                                           "conduit_contacts"]
+    assert [name for name, _ in tools] == ["talaria_call_user", "talaria_call_watch", "talaria_watch_report", "talaria_settings",
+                                           "talaria_present", "talaria_show", "talaria_health", "talaria_location", "talaria_maps", "talaria_calendar", "talaria_phone",
+                                           "talaria_contacts"]
     handler = tools[0][1]
     _settings(home)
     # Hermes passes the agent itself as parent_agent; only a child session is refused.
@@ -683,7 +683,7 @@ def test_an_unanswered_approval_call_names_the_turns_session_too(home, fake, clo
     plugin._pre_approval_request(session_key="sk-1", session_id="st-1", description="Run the migration",
                                  turn_id="t1")
     [event] = fake.sent
-    # Conduit reports a declined or missed call under these: the turn's id
+    # Talaria reports a declined or missed call under these: the turn's id
     # lets the next turn hear it.
     assert (event["session_id"], event["call"]["session_ids"]) == ("sk-1", ["sk-1", "st-1"])
 
@@ -768,7 +768,7 @@ def test_a_failed_turn_calls_in_place_of_its_push_with_alerts_on(home, fake):
 
 
 def test_a_question_left_unanswered_calls_and_an_answer_stops_it(home, fake, clock, monkeypatch, paired):
-    loop = sys.modules["conduit_push.clarify_loop"]
+    loop = sys.modules["talaria_push.clarify_loop"]
     _settings(home, alerts=True)
     scheduled = []
     monkeypatch.setattr(calls, "_wait_for_holds", lambda home, profile: scheduled.append(home))
@@ -783,7 +783,7 @@ def test_a_question_left_unanswered_calls_and_an_answer_stops_it(home, fake, clo
 
 
 def test_a_batch_of_questions_says_how_many_wait(home, fake, monkeypatch, paired):
-    loop = sys.modules["conduit_push.clarify_loop"]
+    loop = sys.modules["talaria_push.clarify_loop"]
     _settings(home, alerts=True)
     reasons = []
     monkeypatch.setattr(calls, "_wait_for_holds", lambda home, profile: None)
@@ -795,7 +795,7 @@ def test_a_batch_of_questions_says_how_many_wait(home, fake, monkeypatch, paired
     assert reasons == ["2 questions, first: Which branch?"]
 
 
-# --- Declined and missed calls (outcomes from Conduit) ----------------------
+# --- Declined and missed calls (outcomes from Talaria) ----------------------
 
 CALL_ID = "a1b2c3d4e5f6a1b2c3d4e5f6"
 
@@ -806,7 +806,7 @@ def test_the_next_turn_of_a_declined_calls_chat_hears_it_once(home, clock):
     clock[0] += 12 * 60
     assert plugin._pre_llm_call(session_id="other", conversation_history=[]) is None
     assert plugin._pre_llm_call(session_id="st-1", conversation_history=[]) == {"context": (
-        '[Conduit: the user declined the phone call you placed 12 minutes ago (you were calling to say: '
+        '[Talaria: the user declined the phone call you placed 12 minutes ago (you were calling to say: '
         '"The deploy finished, and two tests failed."). They haven\'t heard what you called about; if it still '
         'matters, tell them.]'
     )}
@@ -828,7 +828,7 @@ def test_the_note_says_how_the_call_ended_when_and_what_about(home, clock, entry
     calls._store(home).record_outcome(CALL_ID, ["rt-1"], entry["outcome"], kind=entry.get("kind"),
                                       title=entry.get("title", ""), age_s=0)
     clock[0] += ago
-    assert calls.outcome_note("rt-1") == f"[Conduit: {says}. They haven't heard what you called about; if it still matters, tell them.]"
+    assert calls.outcome_note("rt-1") == f"[Talaria: {says}. They haven't heard what you called about; if it still matters, tell them.]"
 
 
 def test_the_hook_takes_the_note_with_the_kwargs_hermes_passes(home, clock):
@@ -837,7 +837,7 @@ def test_the_hook_takes_the_note_with_the_kwargs_hermes_passes(home, clock):
     calls._store(home).record_outcome(CALL_ID, ["st-1"], "declined", age_s=0)
     result = plugin._pre_llm_call(session_id="st-1", user_message="hi", conversation_history=[{"role": "user", "content": "hi"}],
                                   is_first_turn=False, model="some-model", platform="tui", turn_id="t-1", sender_id="u-1")
-    assert result["context"].startswith("[Conduit: the user declined the phone call you placed just now.")
+    assert result["context"].startswith("[Talaria: the user declined the phone call you placed just now.")
 
 
 def test_a_voice_turn_after_a_missed_call_gets_both_notes(home, clock):
@@ -845,7 +845,7 @@ def test_a_voice_turn_after_a_missed_call_gets_both_notes(home, clock):
     voice = "[Note: this message is a delegation from a live spoken conversation ...]\n\nhi"
     context = plugin._pre_llm_call(session_id="rt-1", conversation_history=[{"role": "user", "content": voice}])["context"]
     first, second = context.split("\n\n")
-    assert first.startswith("[Conduit: the phone call you placed just now went unanswered.")
+    assert first.startswith("[Talaria: the phone call you placed just now went unanswered.")
     assert second == plugin.PERSONA_VOICE_NOTE
 
 
@@ -867,7 +867,7 @@ def test_an_unreadable_store_says_nothing_and_never_raises(home, monkeypatch):
 
 def _desktop_selects(home, monkeypatch, *ids):
     monkeypatch.setattr(plugin, "get_hermes_home", lambda: home)
-    sys.modules["conduit_push.desktop_selected"].publish(home, ids)
+    sys.modules["talaria_push.desktop_selected"].publish(home, ids)
 
 
 def test_a_quick_reply_in_a_chat_desktop_has_selected_sends_no_ready_push(home, fake, monkeypatch):
@@ -884,7 +884,7 @@ def test_a_quick_reply_in_a_chat_desktop_has_selected_sends_no_ready_push(home, 
 def test_a_long_turn_in_a_chat_desktop_has_selected_still_pushes(home, fake, monkeypatch):
     _desktop_selects(home, monkeypatch, "st-1")
     plugin._pre_llm_call(session_id="st-1", turn_id="t1")
-    desktop_selected = sys.modules["conduit_push.desktop_selected"]
+    desktop_selected = sys.modules["talaria_push.desktop_selected"]
     plugin._turn_started["t1"] -= desktop_selected.QUICK_TURN_S + 1
     _reply(session_id="st-1", turn_id="t1", assistant_response="All done.")
     assert [event["type"] for event in fake.enqueued] == ["response.ready"]
@@ -908,7 +908,7 @@ def test_an_unreadable_desktop_selection_never_drops_the_ready_push(home, fake, 
     def broken(*_args, **_kwargs):
         raise OSError("disk")
 
-    monkeypatch.setattr(sys.modules["conduit_push.desktop_selected"], "selected", broken)
+    monkeypatch.setattr(sys.modules["talaria_push.desktop_selected"], "selected", broken)
     plugin._pre_llm_call(session_id="rt-1", turn_id="t1")
     _reply(session_id="rt-1", turn_id="t1", assistant_response="All done.")
     assert [event["type"] for event in fake.enqueued] == ["response.ready"]
@@ -943,8 +943,8 @@ def test_child_and_silent_turns_leave_no_start_time(home, fake, monkeypatch):
 
 # --- Cron runs ---------------------------------------------------------------
 
-cron_runs = sys.modules["conduit_push.cron_runs"]
-CronStore = sys.modules["conduit_push.cron_store"].CronStore
+cron_runs = sys.modules["talaria_push.cron_runs"]
+CronStore = sys.modules["talaria_push.cron_store"].CronStore
 
 
 @pytest.fixture

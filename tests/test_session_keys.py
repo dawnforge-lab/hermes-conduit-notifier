@@ -29,9 +29,9 @@ def _load(name, path):
     return module
 
 
-calls_store = _load("conduit_calls_store_session_keys", ROOT / "calls_store.py")
-present_store = _load("conduit_present_store_session_keys", ROOT / "present_store.py")
-settings_store = _load("conduit_settings_store_session_keys", ROOT / "settings_store.py")
+calls_store = _load("talaria_calls_store_session_keys", ROOT / "calls_store.py")
+present_store = _load("talaria_present_store_session_keys", ROOT / "present_store.py")
+settings_store = _load("talaria_settings_store_session_keys", ROOT / "settings_store.py")
 
 GATEWAY_KEY_NAMES = ["matrix-group", "whatsapp-group", "profile-main", "signal-dm", "matrix-non-ascii", "api-230"]
 GATEWAY_KEYS = [

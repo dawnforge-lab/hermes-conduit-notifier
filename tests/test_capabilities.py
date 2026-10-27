@@ -7,11 +7,11 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 ROOT = Path(__file__).resolve().parents[1]
-BASE = "/api/plugins/conduit_push"
+BASE = "/api/plugins/talaria_push"
 
 
 def _load_plugin_api():
-    spec = importlib.util.spec_from_file_location("conduit_plugin_api_capabilities", ROOT / "dashboard" / "plugin_api.py")
+    spec = importlib.util.spec_from_file_location("talaria_plugin_api_capabilities", ROOT / "dashboard" / "plugin_api.py")
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
@@ -40,14 +40,14 @@ def test_capabilities_report_the_manifest_version_and_route_features():
 
 
 def test_every_capability_names_a_served_route_family():
-    # A capability is a promise Conduit acts on: each one must match a route.
+    # A capability is a promise Talaria acts on: each one must match a route.
     paths = {route.path for route in api.router.routes}
     prefixes = {
         "session-takeover": "/sessions/takeover", "e2e-notifications": "/e2e",
         "desktop-views": "/sessions/desktop-views",
         "hermes-calls": "/calls",
         "hermes-call-outcomes": "/calls/outcomes",
-        "conduit-settings": "/conduit-settings",
+        "talaria-settings": "/talaria-settings",
         "present-v1": "/present/",
         "health-sync": "/health/",
         "location-sync": "/location/",

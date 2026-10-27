@@ -2,17 +2,17 @@
 get a "reply ready" push (#115).
 
 Someone who also talks to Hermes in Desktop, a messaging app or the terminal
-gets the reply there; a push from Conduit as well is noise. The user picks,
-per profile in Conduit's Settings > Notifications, which sources notify.
+gets the reply there; a push from Talaria as well is noise. The user picks,
+per profile in Talaria's Settings > Notifications, which sources notify.
 Every source notifies until the user turns it off, so a host this file was
 never written on behaves as before.
 
 A reply's source is where the message that started its turn was sent, not
-where the chat began: a Telegram chat continued in Conduit is a Conduit turn.
+where the chat began: a Telegram chat continued in Talaria is a Talaria turn.
 Hermes' app gateway binds each turn to the connection that submitted it last
 before the turn started (a message queued meanwhile belongs to the next
 turn), so the turn's hooks read that connection:
-- Conduit's socket carries ``X-Conduit-Client``: "conduit".
+- Talaria's socket carries ``X-Talaria-Client``: "talaria".
 - A browser engine without that header (Hermes Desktop, the web dashboard):
   "desktop".
 - No app connection: the turn's ``platform`` tells. ``cli`` is the terminal;
@@ -24,7 +24,7 @@ place, or a Hermes that changed, can only let a push through.
 Only the reply-ready push follows this. Approvals, questions, failures,
 background tasks, cron runs (they have their own switch) and calls don't.
 
-The dashboard routes write ``conduit-notifications.json`` in the profile's
+The dashboard routes write ``talaria-notifications.json`` in the profile's
 home; the hooks (agent process) only read it. The dashboard loads this file
 by path, so it imports nothing from the plugin package.
 """
@@ -49,9 +49,9 @@ try:
 except ImportError:
     msvcrt = None  # type: ignore[assignment]
 
-FILE_NAME = "conduit-notifications.json"
+FILE_NAME = "talaria-notifications.json"
 VERSION = 1
-SOURCES = ("conduit", "desktop", "messaging", "terminal")
+SOURCES = ("talaria", "desktop", "messaging", "terminal")
 
 # Hermes messaging platforms (gateway.config.Platform), for a Hermes whose
 # own list can't be read. "local" is the app's own sessions, not messaging.
@@ -179,8 +179,8 @@ def turn_source(platform: Any, transport: Any = None) -> str | None:
         headers = _headers(transport)
         if headers is None:
             return None
-        if str(headers.get("x-conduit-client") or "").strip().lower() == "conduit":
-            return "conduit"
+        if str(headers.get("x-talaria-client") or "").strip().lower() == "talaria":
+            return "talaria"
         if str(headers.get("user-agent") or "").startswith("Mozilla/"):
             return "desktop"
         return None

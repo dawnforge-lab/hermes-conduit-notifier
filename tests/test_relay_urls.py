@@ -17,10 +17,10 @@ if "hermes_constants" not in sys.modules:
     _hermes_constants = types.ModuleType("hermes_constants")
     _hermes_constants.get_hermes_home = lambda: pathlib.Path(tempfile.gettempdir())
     sys.modules["hermes_constants"] = _hermes_constants
-if "conduit_push" not in sys.modules:
-    _pkg = types.ModuleType("conduit_push")
+if "talaria_push" not in sys.modules:
+    _pkg = types.ModuleType("talaria_push")
     _pkg.__path__ = [str(ROOT)]
-    sys.modules["conduit_push"] = _pkg
+    sys.modules["talaria_push"] = _pkg
 
 
 def _private_copy(name, path):
@@ -31,9 +31,9 @@ def _private_copy(name, path):
     return module
 
 
-urls = _private_copy("conduit_push._relay_urls_under_test", ROOT / "relay_urls.py")
-client = _private_copy("conduit_push._client_transport_under_test", ROOT / "client.py")
-cli = _private_copy("conduit_push._cli_under_test", ROOT / "cli.py")
+urls = _private_copy("talaria_push._relay_urls_under_test", ROOT / "relay_urls.py")
+client = _private_copy("talaria_push._client_transport_under_test", ROOT / "client.py")
+cli = _private_copy("talaria_push._cli_under_test", ROOT / "cli.py")
 
 
 @pytest.mark.parametrize("url", ["https://relay.example", "https://relay.example:8443/base", "http://127.0.0.1:8787",
@@ -172,7 +172,7 @@ def test_request_json_refuses_plain_http_off_this_machine_before_sending(monkeyp
 
 
 def _paired_client(monkeypatch, tmp_path):
-    monkeypatch.setattr(client, "state_path", lambda: tmp_path / "conduit-push.json")
+    monkeypatch.setattr(client, "state_path", lambda: tmp_path / "talaria-push.json")
 
 
 def test_cli_claim_saves_the_relays_https_url_after_a_lan_claim(monkeypatch, tmp_path):
@@ -206,7 +206,7 @@ def test_cli_claim_over_https_keeps_its_origin(monkeypatch, tmp_path):
 
 
 def test_pair_prints_one_line_instead_of_a_traceback(monkeypatch, capsys):
-    args = types.SimpleNamespace(conduit_push_action="pair", code="CODE", relay_url="http://relay.example", name="")
+    args = types.SimpleNamespace(talaria_push_action="pair", code="CODE", relay_url="http://relay.example", name="")
     assert cli.dispatch(args) == 1
     out = capsys.readouterr().out
     assert out.startswith("Pairing failed: ") and "https://" in out and "Traceback" not in out
@@ -219,7 +219,7 @@ def test_plain_http_skips_any_proxy_and_answers_are_capped(servers, monkeypatch)
     monkeypatch.setenv("HTTP_PROXY", proxy.url)
     monkeypatch.delenv("no_proxy", raising=False)
     monkeypatch.delenv("NO_PROXY", raising=False)
-    fresh = _private_copy("conduit_push._client_proxy_under_test", ROOT / "client.py")
+    fresh = _private_copy("talaria_push._client_proxy_under_test", ROOT / "client.py")
     relay = servers(lambda h: _json(h, 200, {"ok": True}))
     assert fresh.request_json(f"{relay.url}/v1/events", method="POST", credential="c", payload={}) == {"ok": True}
     assert proxy.requests == []
@@ -237,7 +237,7 @@ def test_unpair_with_a_legacy_http_url_removes_the_local_pairing_and_says_so(mon
     client.save_state({"credential": "c", "relay_url": "http://192.168.1.10:8787"})
     with pytest.raises(client.UnpairedLocally) as raised:
         client.unpair()
-    assert "Remove this gateway in Conduit" in str(raised.value)
+    assert "Remove this gateway in Talaria" in str(raised.value)
     assert client.load_state() is None
 
 
@@ -258,7 +258,7 @@ def test_https_is_recognised_in_any_case():
 def test_status_warns_about_a_saved_plain_http_relay(monkeypatch, tmp_path, capsys):
     monkeypatch.setattr(cli, "load_state", lambda: {"credential": "c", "relay_url": "http://192.168.1.10:8787"})
     monkeypatch.setattr(cli, "e2e_status", lambda state: {"enabled": False, "crypto": True})
-    assert cli.dispatch(types.SimpleNamespace(conduit_push_action="status")) == 0
+    assert cli.dispatch(types.SimpleNamespace(talaria_push_action="status")) == 0
     assert "not a usable https://" in capsys.readouterr().out
 
 
@@ -266,7 +266,7 @@ def test_test_prints_one_line_for_a_broken_saved_pairing(monkeypatch, capsys):
     def broken(event):
         raise KeyError("relay_url")
     monkeypatch.setattr(cli, "send_now", broken)
-    assert cli.dispatch(types.SimpleNamespace(conduit_push_action="test", corrupt=False)) == 1
+    assert cli.dispatch(types.SimpleNamespace(talaria_push_action="test", corrupt=False)) == 1
     assert "did not accept" in capsys.readouterr().out
 
 
@@ -286,6 +286,6 @@ def test_status_strips_control_characters(monkeypatch, capsys):
     monkeypatch.setattr(cli, "load_state", lambda: {"credential": "c", "relay_url": "https://relay.example",
                                                     "gateway_name": "box\x1b[31m"})
     monkeypatch.setattr(cli, "e2e_status", lambda state: {"enabled": False, "crypto": True})
-    assert cli.dispatch(types.SimpleNamespace(conduit_push_action="status")) == 0
+    assert cli.dispatch(types.SimpleNamespace(talaria_push_action="status")) == 0
     out = capsys.readouterr().out
     assert "\x1b" not in out and "Paired: box[31m" in out and "Warning" not in out

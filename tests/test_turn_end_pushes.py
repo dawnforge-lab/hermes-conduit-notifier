@@ -29,10 +29,10 @@ if "tools.clarify_tool" not in sys.modules:
 
     _clarify_tool.strip_recommended = _strip_recommended
     sys.modules["tools.clarify_tool"] = _clarify_tool
-if "conduit_push" not in sys.modules:
-    _pkg = types.ModuleType("conduit_push")
+if "talaria_push" not in sys.modules:
+    _pkg = types.ModuleType("talaria_push")
     _pkg.__path__ = [str(ROOT)]
-    sys.modules["conduit_push"] = _pkg
+    sys.modules["talaria_push"] = _pkg
 
 
 def _load(name, path):
@@ -45,8 +45,8 @@ def _load(name, path):
     return module
 
 
-plugin = _load("conduit_push.__init__", ROOT / "__init__.py")
-events = sys.modules["conduit_push.events"]
+plugin = _load("talaria_push.__init__", ROOT / "__init__.py")
+events = sys.modules["talaria_push.events"]
 
 
 @pytest.fixture
@@ -205,7 +205,7 @@ def test_a_background_task_that_outlives_its_turn_notifies(pushed):
     ("timeout", None, "A delegated task timeout."),
 ])
 def test_a_summaryless_background_task_lets_the_phone_word_only_a_finish(pushed, status, label, body):
-    # Conduit writes a finish's title and line in its own language (#1144);
+    # Talaria writes a finish's title and line in its own language (#1144);
     # any other ending keeps the host's words, which say how it ended.
     plugin._pre_llm_call(session_id="p", turn_id="t")
     plugin._on_session_end(session_id="p", turn_id="t", completed=True, failed=False, interrupted=False)
@@ -266,7 +266,7 @@ def delegation_flag(monkeypatch):
 
 
 def test_the_delegation_flag_marks_the_running_session_a_child(delegation_flag):
-    health = sys.modules["conduit_push.health_tool"]
+    health = sys.modules["talaria_push.health_tool"]
     delegation_flag["set"] = True
     assert health._handle({"action": "overview"}, "rotated", plugin._is_child, None)["error"] == "subagent"
     delegation_flag["set"] = False
@@ -328,7 +328,7 @@ def _compacted_child(add):
 
 def test_a_child_whose_compaction_replaced_its_id_is_still_a_child(pushed, sessions):
     _compacted_child(sessions)
-    health = sys.modules["conduit_push.health_tool"]
+    health = sys.modules["talaria_push.health_tool"]
     assert plugin._is_child("c3") and plugin._is_child("c2")
     assert health._handle({"action": "overview"}, "c3", plugin._is_child, None)["error"] == "subagent"
     assert "c3" in plugin._compacted_children, "learned, so later calls skip the store"
@@ -440,7 +440,7 @@ def test_plain_text(markdown, plain):
 @pytest.fixture
 def lock_screen(monkeypatch):
     """A real Live Activity reporter whose posts are kept; returns the ends sent."""
-    live = sys.modules["conduit_push.live_activity"]
+    live = sys.modules["talaria_push.live_activity"]
     posts = []
     reporter = live.LiveActivityReporter(post=lambda payload: posts.append(payload) or {"tracked": True},
                                          clock=lambda: 100.0, start_thread=False)

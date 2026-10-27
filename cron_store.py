@@ -1,4 +1,4 @@
-"""Cron jobs whose runs don't notify: the user's per-job choice in Conduit's
+"""Cron jobs whose runs don't notify: the user's per-job choice in Talaria's
 Cron tab.
 
 A cron run ends like any other turn, so the plugin's turn-end hooks would push
@@ -11,7 +11,7 @@ Hermes owns the jobs themselves (``cron/jobs.json``); this file only holds
 the ids the user muted, so it needs no Hermes change and survives job edits.
 A deleted job's id just stays until the list is trimmed.
 
-State lives in the profile's ``conduit-cron.json`` beside the pairing state.
+State lives in the profile's ``talaria-cron.json`` beside the pairing state.
 The hooks (agent process) and the dashboard routes (dashboard process) both
 use this module: the dashboard loads it by path, so it imports nothing from
 the plugin package.
@@ -37,7 +37,7 @@ try:
 except ImportError:  # everything but Windows
     msvcrt = None  # type: ignore[assignment]
 
-FILE_NAME = "conduit-cron.json"
+FILE_NAME = "talaria-cron.json"
 VERSION = 1
 # More muted jobs than anyone keeps; the oldest choices go first.
 MAX_MUTED = 500

@@ -31,10 +31,10 @@ if "tools.clarify_tool" not in sys.modules:
 
     _clarify_tool.strip_recommended = _strip_recommended
     sys.modules["tools.clarify_tool"] = _clarify_tool
-if "conduit_push" not in sys.modules:
-    _pkg = types.ModuleType("conduit_push")
+if "talaria_push" not in sys.modules:
+    _pkg = types.ModuleType("talaria_push")
     _pkg.__path__ = [str(ROOT)]
-    sys.modules["conduit_push"] = _pkg
+    sys.modules["talaria_push"] = _pkg
 
 
 def _load(name, path):
@@ -47,7 +47,7 @@ def _load(name, path):
     return module
 
 
-plugin = _load("conduit_push.__init__", ROOT / "__init__.py")
+plugin = _load("talaria_push.__init__", ROOT / "__init__.py")
 
 
 def _reply(**kwargs):
@@ -55,8 +55,8 @@ def _reply(**kwargs):
     plugin._post_llm_call(**kwargs)
     plugin._on_session_end(session_id=kwargs.get("session_id"), task_id=kwargs.get("task_id"),
                            turn_id=kwargs.get("turn_id"), completed=True, failed=False, interrupted=False)
-titles = _load("conduit_push.session_titles", ROOT / "session_titles.py")
-loop = _load("conduit_push.clarify_loop", ROOT / "clarify_loop.py")
+titles = _load("talaria_push.session_titles", ROOT / "session_titles.py")
+loop = _load("talaria_push.clarify_loop", ROOT / "clarify_loop.py")
 
 
 class FakeSessionDB:

@@ -39,8 +39,8 @@ from .relay_urls import check_claim_base, check_request_url, is_https, paired_re
 DEFAULT_RELAY_URL = "https://push.milim.dev"
 # Derived from PLUGIN_VERSION so a version bump updates the UA automatically
 # (no second hand-synchronized constant).
-USER_AGENT = f"Hermes-Conduit-Notifier/{PLUGIN_VERSION}"
-logger = logging.getLogger("hermes.plugins.conduit_push")
+USER_AGENT = f"Talaria-Plugin/{PLUGIN_VERSION}"
+logger = logging.getLogger("hermes.plugins.talaria_push")
 _events: queue.Queue[tuple[contextvars.Context, dict[str, Any]]] = queue.Queue(maxsize=128)
 _worker_started = False
 _worker: threading.Thread | None = None
@@ -53,7 +53,7 @@ _generation = 0
 
 
 def state_path() -> Path:
-    return get_hermes_home() / "conduit-push.json"
+    return get_hermes_home() / "talaria-push.json"
 
 
 def load_state() -> dict[str, Any] | None:
@@ -75,7 +75,7 @@ def state_lock_path(path: Path) -> Path:
 
 @contextmanager
 def state_file_lock(path: Path) -> Iterator[None]:
-    """Serializes writers of conduit-push.json across processes.
+    """Serializes writers of talaria-push.json across processes.
 
     The hooks run in the agent process and the dashboard provisions the
     encryption key from its own process; both take this lock (the dashboard
@@ -237,9 +237,9 @@ def _revoke_replaced(previous: dict[str, Any], credential: str) -> None:
         request_json(url, method="DELETE", credential=old, timeout=5.0)
     except RelayRejected as error:
         if error.status != 401:
-            logger.info("Conduit relay did not revoke the replaced pairing: %s", error)
+            logger.info("Talaria relay did not revoke the replaced pairing: %s", error)
     except Exception as error:
-        logger.info("Conduit relay did not revoke the replaced pairing: %s", type(error).__name__)
+        logger.info("Talaria relay did not revoke the replaced pairing: %s", type(error).__name__)
 
 
 class UnpairedLocally(RuntimeError):
@@ -259,7 +259,7 @@ def unpair() -> bool:
         remove_state()
         raise UnpairedLocally(
             "Removed this profile's pairing, but its saved relay URL is not https://, so the relay was not told. "
-            "Remove this gateway in Conduit to revoke it there."
+            "Remove this gateway in Talaria to revoke it there."
         ) from None
     request_json(url, method="DELETE", credential=state["credential"])
     remove_state()
@@ -281,7 +281,7 @@ def enqueue(event: dict[str, Any]) -> bool:
     if _stopped.is_set() or not state:
         return False
     if _paused_until(state) > time.monotonic():
-        logger.info("Conduit notification dropped for %s: %s", event.get("type", "event"), _pause_reason(state))
+        logger.info("Talaria notification dropped for %s: %s", event.get("type", "event"), _pause_reason(state))
         return False
     _start_worker()
     try:
@@ -291,7 +291,7 @@ def enqueue(event: dict[str, Any]) -> bool:
         # pairing, credential and encryption key, not the launch profile's.
         _events.put_nowait((contextvars.copy_context(), event))
     except queue.Full:
-        logger.warning("Conduit notification queue is full; dropping %s", event.get("type", "event"))
+        logger.warning("Talaria notification queue is full; dropping %s", event.get("type", "event"))
         return False
     return True
 
@@ -299,7 +299,7 @@ def enqueue(event: dict[str, Any]) -> bool:
 def send_now(event: dict[str, Any], timeout: float = 15.0) -> dict[str, Any]:
     state = load_state()
     if not state:
-        raise RuntimeError("This Hermes profile is not paired with Conduit.")
+        raise RuntimeError("This Hermes profile is not paired with Talaria.")
     try:
         answer = _send(event, state, timeout)
     except RelayRejected as error:
@@ -365,7 +365,7 @@ def _sealed(event: dict[str, Any], state: dict[str, Any]) -> dict[str, Any]:
             gateway_id=str(state.get("gateway_id") or ""),
         )
     except Exception as error:
-        logger.warning("Conduit notification could not be encrypted; sending it without content: %s", error)
+        logger.warning("Talaria notification could not be encrypted; sending it without content: %s", error)
     if keys is None:
         # No usable key to re-key the event id with: use the local-only
         # redaction key so the relay still never sees the plain digest.
@@ -436,7 +436,7 @@ def poll_decision(request_id: str) -> dict[str, Any]:
     """
     state = load_state()
     if not state:
-        raise RuntimeError("This Hermes profile is not paired with Conduit.")
+        raise RuntimeError("This Hermes profile is not paired with Talaria.")
     status = request_json(
         f"{state['relay_url'].rstrip('/')}/v1/decisions/{request_id}",
         method="GET",
@@ -477,7 +477,7 @@ def opened_answers(status: dict[str, Any], state: dict[str, Any], request_id: st
             }
         return opened
     except Exception as error:
-        logger.warning("Conduit rejected an answer for %s that was not sealed by the paired phone: %s", request_id, error)
+        logger.warning("Talaria rejected an answer for %s that was not sealed by the paired phone: %s", request_id, error)
         return {"status": "rejected"}
 
 
@@ -502,7 +502,7 @@ def post_event(payload: dict[str, Any], timeout: float = 15.0) -> dict[str, Any]
     """POST an already-built outgoing event (diagnostics)."""
     state = load_state()
     if not state:
-        raise RuntimeError("This Hermes profile is not paired with Conduit.")
+        raise RuntimeError("This Hermes profile is not paired with Talaria.")
     return request_json(
         f"{state['relay_url'].rstrip('/')}/v1/events",
         method="POST",
@@ -533,7 +533,7 @@ def cancel_decision(request_id: str) -> bool:
         )
         return True
     except Exception as error:
-        logger.warning("Conduit decision cancel failed for %s: %s", request_id, error)
+        logger.warning("Talaria decision cancel failed for %s: %s", request_id, error)
         return False
 
 
@@ -555,8 +555,8 @@ class RelayRejected(RuntimeError):
         # whatever the relay sent.
         detail = " ".join("".join(ch if ch.isprintable() else " " for ch in str(detail)).split())[:200]
         detail = detail or "request_rejected"
-        super().__init__(f"Conduit relay rejected the request: {detail} ({status})." if from_relay
-                         else f"Something in front of the Conduit relay refused the request ({status}).")
+        super().__init__(f"Talaria relay rejected the request: {detail} ({status})." if from_relay
+                         else f"Something in front of the Talaria relay refused the request ({status}).")
         self.status = status
         self.detail = detail
         self.from_relay = from_relay
@@ -649,7 +649,7 @@ def _start_worker() -> None:
     with _worker_lock:
         if _worker_started or _stopped.is_set():
             return
-        _worker = threading.Thread(target=_delivery_worker, args=(_generation,), name="conduit-push", daemon=True)
+        _worker = threading.Thread(target=_delivery_worker, args=(_generation,), name="talaria-push", daemon=True)
         _worker.start()
         _worker_started = True
 
@@ -683,7 +683,7 @@ def stop(timeout: float = 1.0) -> None:
         if running is not None:
             _events.put_nowait(None)  # wakes the worker; the queue was just emptied
     if dropped:
-        logger.info("Conduit dropped %d queued notification(s): the plugin was unloaded", dropped)
+        logger.info("Talaria dropped %d queued notification(s): the plugin was unloaded", dropped)
     if running is not None:
         running.join(timeout)
 
@@ -752,7 +752,7 @@ def _delivery_worker(generation: int = 0) -> None:
             context, event = item
             context.run(_deliver, event)
         except Exception as error:  # the worker thread must outlive any one event
-            logger.warning("Conduit notification delivery failed for %s: %s", event.get("type", "event"), error)
+            logger.warning("Talaria notification delivery failed for %s: %s", event.get("type", "event"), error)
         finally:
             _events.task_done()
 
@@ -761,7 +761,7 @@ def _requeue(item: Any) -> None:
     try:
         _events.put_nowait(item)
     except queue.Full:
-        logger.warning("Conduit notification queue is full; dropping %s", item[1].get("type", "event"))
+        logger.warning("Talaria notification queue is full; dropping %s", item[1].get("type", "event"))
 
 
 def _pause(seconds: float) -> None:
@@ -774,25 +774,25 @@ def _deliver(event: dict[str, Any], *, sleep: Callable[[float], None] = _pause,
     started, generation = clock(), _generation
     for delay in (*RETRY_DELAYS, None):
         if _stopped.is_set():
-            logger.info("Conduit notification dropped for %s: the plugin was unloaded", event.get("type", "event"))
+            logger.info("Talaria notification dropped for %s: the plugin was unloaded", event.get("type", "event"))
             return False
         state = load_state()
         if not state:
-            logger.warning("Conduit notification dropped for %s: this profile is no longer paired", event.get("type", "event"))
+            logger.warning("Talaria notification dropped for %s: this profile is no longer paired", event.get("type", "event"))
             return False
         paused_until, now = _paused_until(state), clock()
         if now < paused_until:
-            logger.info("Conduit notification dropped for %s: %s for %d more seconds",
+            logger.info("Talaria notification dropped for %s: %s for %d more seconds",
                         event.get("type", "event"), _pause_reason(state), paused_until - now)
             return False
         try:
             _send(event, state)
         except Exception as error:
             if delay is not None and _worth_retrying(error) and clock() - started + delay <= RETRY_BUDGET:
-                logger.info("Conduit notification delivery for %s will be retried: %s", event.get("type", "event"), error)
+                logger.info("Talaria notification delivery for %s will be retried: %s", event.get("type", "event"), error)
                 sleep(delay)
                 continue
-            logger.warning("Conduit notification delivery failed for %s: %s", event.get("type", "event"), error)
+            logger.warning("Talaria notification delivery failed for %s: %s", event.get("type", "event"), error)
             if isinstance(error, RelayRejected) and error.status in (401, 403):
                 _refused(state, error, clock(), generation)
             return False
@@ -821,14 +821,14 @@ def _refused(state: dict[str, Any], error: RelayRejected, now: float, generation
         paused_for = min(previous * 2, REFUSED_MAX_S) if previous else REFUSED_FIRST_S
         _refusals[str(state.get("credential"))] = {"paused_for": paused_for, "until": now + paused_for,
                                                    "edge_blocked": error.edge_blocked}
-    logger.warning("Conduit notifications paused for %d minute(s): %s", paused_for // 60,
+    logger.warning("Talaria notifications paused for %d minute(s): %s", paused_for // 60,
                    "something in front of the relay is blocking this host (an empty 403)" if error.edge_blocked
                    else f"the relay answered {error.status}")
     record_relay_refusal(state, error)
 
 
 def record_relay_refusal(sent_with: dict[str, Any], error: RelayRejected) -> None:
-    """What `status` (and Conduit) should say about a refusal: a 401 means the
+    """What `status` (and Talaria) should say about a refusal: a 401 means the
     relay no longer knows this gateway, a bare 403 that this host is blocked
     in front of the relay. A relay's own 403 is neither."""
     # The newest answer stands: one kind of refusal replaces the other. A 401
@@ -875,4 +875,4 @@ def _mark_relay_rejected(sent_with: dict[str, Any], rejected: bool, *, field: st
     try:
         update_state(mark)
     except OSError as error:
-        logger.warning("Conduit could not record the relay's answer for this pairing: %s", error)
+        logger.warning("Talaria could not record the relay's answer for this pairing: %s", error)

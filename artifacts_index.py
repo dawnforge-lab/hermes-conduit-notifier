@@ -1,4 +1,4 @@
-"""What Hermes made in a profile's chats, for Conduit's Artifacts screens.
+"""What Hermes made in a profile's chats, for Talaria's Artifacts screens.
 
 An artifact is anything a chat produced or carried that the user may want to
 open again:
@@ -51,7 +51,7 @@ MAX_SCAN_CHARS = 200_000
 MAX_ITEMS_PER_ROW = MAX_LIMIT
 
 KINDS = ("image", "video", "audio", "page", "document", "file", "link")
-# The chips Conduit shows, as filters on kind.
+# The chips Talaria shows, as filters on kind.
 GROUPS = {
     "images": ("image", "video"),
     "pages": ("page",),
@@ -432,7 +432,7 @@ def list_artifacts(conn: sqlite3.Connection, *, before: Optional[int] = None,
     (``session_id``/``session_ids``) reads only its own rows, up to
     ``max_scan_rows`` of them, and ignores ``window_rows``. Without
     ``include_missing``, a file no longer on disk is left out, so a history
-    of deleted files doesn't leave Conduit's pages mostly empty; links have
+    of deleted files doesn't leave Talaria's pages mostly empty; links have
     no file and always stay."""
     limit = max(1, min(int(limit), MAX_LIMIT))
     max_scan_rows = max(1, int(max_scan_rows))
@@ -441,7 +441,7 @@ def list_artifacts(conn: sqlite3.Connection, *, before: Optional[int] = None,
     message_columns = _columns(conn, "messages")
     session_columns = _columns(conn, "sessions")
     if not {"id", "session_id", "role", "content", "timestamp"} <= message_columns:
-        raise RuntimeError("This Hermes keeps messages in a shape Conduit can't read")
+        raise RuntimeError("This Hermes keeps messages in a shape Talaria can't read")
     tool_calls = "m.tool_calls" if "tool_calls" in message_columns else "NULL"
     tool_name = "m.tool_name" if "tool_name" in message_columns else "NULL"
     title = "s.title" if "title" in session_columns else "NULL"

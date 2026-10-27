@@ -14,10 +14,10 @@ if "hermes_constants" not in sys.modules:
     _hermes_constants = types.ModuleType("hermes_constants")
     _hermes_constants.get_hermes_home = lambda: pathlib.Path(tempfile.gettempdir())
     sys.modules["hermes_constants"] = _hermes_constants
-if "conduit_push" not in sys.modules:
-    _pkg = types.ModuleType("conduit_push")
+if "talaria_push" not in sys.modules:
+    _pkg = types.ModuleType("talaria_push")
     _pkg.__path__ = [str(ROOT)]
-    sys.modules["conduit_push"] = _pkg
+    sys.modules["talaria_push"] = _pkg
 
 
 def _load(name, path):
@@ -30,8 +30,8 @@ def _load(name, path):
     return module
 
 
-store_module = _load("conduit_push.present_store", ROOT / "present_store.py")
-tool = _load("conduit_push.show_tool", ROOT / "show_tool.py")
+store_module = _load("talaria_push.present_store", ROOT / "present_store.py")
+tool = _load("talaria_push.show_tool", ROOT / "show_tool.py")
 
 PresentStore = store_module.PresentStore
 PresentError = store_module.PresentError
@@ -228,7 +228,7 @@ def test_given_markdown_is_kept_beside_cards(tool_home):
 def test_cards_show_in_a_chat_without_a_call_screen(tool_home):
     assert tool.available() is False
     _exchange(PresentStore(tool_home), features=("maps-navigate", "chat-cards"))
-    assert tool.available() is True, "a Conduit that draws chat cards gets the tool"
+    assert tool.available() is True, "a Talaria that draws chat cards gets the tool"
     answer = _call({"title": "Dinner", "cards": [MAP]})
     assert answer == {"ok": True, "cards": [CLEAN_MAP], "note": tool.IN_CHAT_NOTE}
     assert _call({"title": "Forecast", "markdown": TABLE})["error"] == "no_device", \
@@ -245,10 +245,10 @@ def test_cards_that_are_all_invalid_are_refused(tool_home):
 STATS = {"type": "stats", "stats": [{"label": "Steps", "value": "8,412"}], "source": {"name": "Health"}}
 
 
-def test_information_cards_go_only_to_a_conduit_that_draws_them(tool_home):
+def test_information_cards_go_only_to_a_talaria_that_draws_them(tool_home):
     _exchange(PresentStore(tool_home), features=("chat-cards",))
     answer = _call({"title": "Today", "cards": [STATS]})
-    assert answer["ok"] is False and answer["error"] == "unsupported_cards", "an older Conduit would draw nothing"
+    assert answer["ok"] is False and answer["error"] == "unsupported_cards", "an older Talaria would draw nothing"
     answer = _call({"title": "Today", "cards": [STATS, MAP]})
     assert answer["ok"] is True and answer["cards"] == [CLEAN_MAP], "the cards it can draw still go"
     assert "can't draw stats cards" in answer["note"], "Hermes hears what was left out"
@@ -281,7 +281,7 @@ def test_each_group_of_cards_needs_its_own_feature(store):
     older = {"installation_id": "older-phone", "device": "iPhone", "app_version": "1.9", "results": [],
              "features": ["show-cards", "info-cards"]}
     [card] = store.exchange(older)["cards"]
-    assert card["cards"] == [STATS], "media and live cards wait for a Conduit that draws them"
+    assert card["cards"] == [STATS], "media and live cards wait for a Talaria that draws them"
 
 
 def test_a_live_card_replaces_the_conversations_earlier_one(store):
@@ -311,12 +311,12 @@ def test_a_live_card_leaves_the_earlier_cards_beside_it(store):
     assert shown[1]["markdown"] == "Your order, as told", "Markdown that was given stays"
 
 
-def test_cards_are_refused_where_conduit_isnt_drawing_them(tool_home, monkeypatch):
+def test_cards_are_refused_where_talaria_isnt_drawing_them(tool_home, monkeypatch):
     _exchange(PresentStore(tool_home), features=("chat-cards",))
     monkeypatch.setattr(tool, "_turn_source", lambda: "messaging")
     answer = _call({"title": "Dinner", "cards": [MAP]})
-    assert answer["ok"] is False and answer["error"] == "not_conduit"
-    monkeypatch.setattr(tool, "_turn_source", lambda: "conduit")
+    assert answer["ok"] is False and answer["error"] == "not_talaria"
+    monkeypatch.setattr(tool, "_turn_source", lambda: "talaria")
     assert _call({"title": "Dinner", "cards": [MAP]})["ok"] is True
 
 
@@ -345,7 +345,7 @@ def test_a_turn_source_lookup_that_fails_draws_no_cards(tool_home, monkeypatch):
         raise RuntimeError("no gateway")
 
     monkeypatch.setattr(tool.reply_sources, "turn_source", broken)
-    assert _call({"title": "Dinner", "cards": [MAP]})["error"] == "not_conduit"
+    assert _call({"title": "Dinner", "cards": [MAP]})["error"] == "not_talaria"
 
 
 def _bound_platform(monkeypatch, platform, transport=None):
@@ -363,11 +363,11 @@ def test_a_messaging_turn_draws_no_cards(tool_home, monkeypatch):
     _exchange(PresentStore(tool_home), features=("chat-cards",))
     _bound_platform(monkeypatch, "telegram")
     answer = _call({"title": "Dinner", "cards": [MAP]})
-    assert answer["ok"] is False and answer["error"] == "not_conduit", answer
+    assert answer["ok"] is False and answer["error"] == "not_talaria", answer
 
 
 @pytest.mark.parametrize("platform", ["", "tui", "desktop"])
-def test_conduit_app_and_cron_turns_still_draw_cards(tool_home, monkeypatch, platform):
+def test_talaria_app_and_cron_turns_still_draw_cards(tool_home, monkeypatch, platform):
     _exchange(PresentStore(tool_home), features=("chat-cards",))
     _bound_platform(monkeypatch, platform)
     assert _call({"title": "Dinner", "cards": [MAP]})["ok"] is True
@@ -382,7 +382,7 @@ def test_cards_are_left_out_when_the_schema_is_missing(store, monkeypatch):
     assert shown["markdown"] == TABLE, "everything else still works"
 
 
-def test_feature_cards_go_only_where_every_recent_conduit_draws_them(tool_home):
+def test_feature_cards_go_only_where_every_recent_talaria_draws_them(tool_home):
     store = PresentStore(tool_home)
     # A newer iPad draws stats; the iPhone also in use draws chat cards only,
     # and either may open the chat that keeps the cards.
@@ -395,7 +395,7 @@ def test_feature_cards_go_only_where_every_recent_conduit_draws_them(tool_home):
     assert answer["cards"] == [CLEAN_MAP] and "can't draw stats cards" in answer["note"]
 
 
-def test_a_conduit_not_seen_for_weeks_no_longer_holds_cards_back(tool_home):
+def test_a_talaria_not_seen_for_weeks_no_longer_holds_cards_back(tool_home):
     # Seen last weeks ago, a day before it would be forgotten altogether.
     weeks_ago = time.time() - store_module.DEVICE_TTL_S + 24 * 3600
     PresentStore(tool_home, clock=lambda: weeks_ago).exchange(
@@ -410,11 +410,11 @@ TEXT = {"type": "contact", "people": [{"name": "Mei", "detail": "Wife", "phone":
                                        "message": "Landed safe, see you soon"}]}
 
 
-def test_a_text_message_goes_only_to_a_conduit_that_offers_send_text(tool_home):
+def test_a_text_message_goes_only_to_a_talaria_that_offers_send_text(tool_home):
     _exchange(PresentStore(tool_home), features=("chat-cards", "media-cards"))
     answer = _call({"title": "Text Mei", "cards": [TEXT]})
     assert answer["ok"] is True and "message" not in answer["cards"][0]["people"][0], \
-        "an older Conduit would show no Send text"
+        "an older Talaria would show no Send text"
     assert answer["cards"][0]["people"][0]["phone"] == "+86 139 6261 8677", "the person still shows"
     assert tool.NO_TEXT_DRAFTS_NOTE in answer["note"], "Hermes hears to give the text in its reply"
     _exchange(PresentStore(tool_home), features=("chat-cards", "media-cards", tool.TEXT_DRAFTS_FEATURE))

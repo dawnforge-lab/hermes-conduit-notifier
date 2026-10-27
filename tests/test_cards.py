@@ -1,12 +1,12 @@
 """The shared card schema and its examples (cards/card-vectors.json), which
-Conduit's RichCardSchemaTests run too."""
+the Talaria app's card tests run too."""
 
 import importlib.util
 import json
 import pathlib
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
-_spec = importlib.util.spec_from_file_location("conduit_push_test_card_schema", ROOT / "card_schema.py")
+_spec = importlib.util.spec_from_file_location("talaria_push_test_card_schema", ROOT / "card_schema.py")
 card_schema = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(card_schema)
 
@@ -137,7 +137,7 @@ def test_fallback_markdown_shows_the_text_to_send():
 def test_a_done_status_reads_as_complete_whatever_progress_it_carries():
     cards = card_schema.normalize_cards([{"type": "status", "status": {"state": "Delivered", "phase": "done",
                                                                        "progress": 0.4}}])
-    assert "**Delivered** (Done) · 100%" in card_schema.fallback_markdown(cards), "as Conduit draws its bar full"
+    assert "**Delivered** (Done) · 100%" in card_schema.fallback_markdown(cards), "as Talaria draws its bar full"
 
 
 def test_a_live_name_stays_on_the_first_card_that_has_it():

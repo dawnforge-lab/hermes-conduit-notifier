@@ -4,7 +4,7 @@ __pycache__/
 .venv/
 venv/
 .DS_Store
-conduit-push.json
+talaria-push.json
 
 # Signing keys — never commit
 *.p8

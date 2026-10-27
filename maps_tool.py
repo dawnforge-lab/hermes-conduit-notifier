@@ -1,7 +1,7 @@
-"""Hermes looks things up on Google Maps: the ``conduit_maps`` tool.
+"""Hermes looks things up on Google Maps: the ``talaria_maps`` tool.
 
 This Hermes host answers with its own Google Maps Platform key (maps_google).
-"me" is the user's position as Conduit last shared it here, at the detail
+"me" is the user's position as Talaria last shared it here, at the detail
 the user chose for sharing; a saved place's coordinates stay on the phone,
 so lookups about one aren't answered.
 
@@ -34,10 +34,10 @@ from .events import push_event
 from .location_store import TRUSTED_BACKGROUND_S, TRUSTED_TALKING_S, LocationError, LocationStore, sharing_paused
 from .present_store import NAVIGATE_FEATURE, PresentError, PresentStore
 
-logger = logging.getLogger("hermes.plugins.conduit_push")
+logger = logging.getLogger("hermes.plugins.talaria_push")
 
-TOOL_NAME = "conduit_maps"
-TOOLSET = "conduit"
+TOOL_NAME = "talaria_maps"
+TOOLSET = "talaria"
 ACTIONS = ("search", "lookup", "reverse_geocode", "directions", "travel_times", "navigate")
 NAVIGATE_TTL_MINUTES = 15
 NAVIGATE_SPOKEN_YES = ("go", "let's go", "go ahead", "open maps")
@@ -62,7 +62,7 @@ _TIME = re.compile(r"^\d{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\d|3[01])T(?:[01]\d|
                    r"(?:Z|[+-](?:[01]\d|2[0-3]):[0-5]\d)?\Z")
 _CONTROL = re.compile("[\x00-\x1f\x7f-\x9f\u200b-\u200f\u2028-\u202e\u2060-\u206f\ufeff]+")
 
-_PLACE_ARG = ("Where: \"me\" (the user's current position), one of their saved place names (from conduit_location "
+_PLACE_ARG = ("Where: \"me\" (the user's current position), one of their saved place names (from talaria_location "
               "places), an address or a name (\"Heathrow Terminal 5\", \"nearest Boots\"), \"place_id:<id>\" from "
               "an earlier answer, or \"lat,lon\".")
 
@@ -127,7 +127,7 @@ def register(ctx: Any, *, is_child: Callable[[Any], bool], profile: Callable[[],
         except TypeError:
             ctx.register_tool(**tool)
     except Exception:  # noqa: BLE001
-        logger.warning("conduit_push: could not register %s", TOOL_NAME, exc_info=True)
+        logger.warning("talaria_push: could not register %s", TOOL_NAME, exc_info=True)
 
 
 def _store() -> LocationStore:
@@ -161,7 +161,7 @@ def handle(args: Any, *, session_id: Any = None, is_child: Callable[[Any], bool]
     except LocationError as error:
         return json.dumps({"ok": False, "error": error.code, "note": str(error)}, ensure_ascii=False)
     except Exception:  # noqa: BLE001 — a tool must never raise
-        logger.warning("conduit_maps failed", exc_info=True)
+        logger.warning("talaria_maps failed", exc_info=True)
         return json.dumps({"ok": False, "error": "unavailable", "note": "Maps couldn't be reached. Tell the user."})
 
 
@@ -316,7 +316,7 @@ def _request(action: str, args: dict[str, Any], view: dict[str, Any], now: float
             request["alternatives"] = args.get("alternatives") is not False
             request["steps"] = args.get("steps") is not False
     if _uses_me(request) and (not view.get("sharing") or sharing_paused(view["sharing"], now)):
-        raise _Refused("paused", "The user hasn't shared their location (or paused it) in Conduit, so \"me\" "
+        raise _Refused("paused", "The user hasn't shared their location (or paused it) in Talaria, so \"me\" "
                                  "can't be used. Ask where they are, or use a place.")
     return request
 
@@ -386,7 +386,7 @@ def _navigate(store: LocationStore, view: dict[str, Any] | None, args: dict[str,
     if "saved" in ref:
         place = ((view or {}).get("places") or {}).get(ref["saved"])
         if not place:
-            return {"ok": False, "error": "invalid", "note": "That saved place is gone. Use conduit_location places."}
+            return {"ok": False, "error": "invalid", "note": "That saved place is gone. Use talaria_location places."}
         to = label = place["name"]
     elif "place_id" in ref:
         to, label = f"place_id:{ref['place_id']}", "the place from the earlier answer"
@@ -425,12 +425,12 @@ def _navigate(store: LocationStore, view: dict[str, Any] | None, args: dict[str,
         client.enqueue(push_event("phone.changes", identifier=f"present:{prompt['id']}", profile=profile,
                                   title=prompt["title"], body="Tap Go to open Maps.", mode="alert"))
     except Exception:  # noqa: BLE001
-        logger.warning("conduit_push: could not wake the phone for navigate", exc_info=True)
+        logger.warning("talaria_push: could not wake the phone for navigate", exc_info=True)
     answer: dict[str, Any] = {
         "ok": True, "action": "navigate", "status": "sent", "prompt_id": prompt["id"], "to": label, "mode": mode,
         "note": ("Sent to the user's phone. The app opens Maps right away if they're in this chat with the app "
                  "open; otherwise it shows a Go button and a notification (they can also say \"go\" during a "
-                 "call). Say it's on their phone. conduit_present status with prompt_id says whether it opened "
+                 "call). Say it's on their phone. talaria_present status with prompt_id says whether it opened "
                  "(confirmed) or they said not now (declined). Don't read out a link."),
     }
     if link:

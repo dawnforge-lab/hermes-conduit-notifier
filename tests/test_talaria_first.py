@@ -12,10 +12,10 @@ if "hermes_constants" not in sys.modules:
     _hermes_constants = types.ModuleType("hermes_constants")
     _hermes_constants.get_hermes_home = lambda: pathlib.Path(tempfile.gettempdir())
     sys.modules["hermes_constants"] = _hermes_constants
-if "conduit_push" not in sys.modules:
-    _pkg = types.ModuleType("conduit_push")
+if "talaria_push" not in sys.modules:
+    _pkg = types.ModuleType("talaria_push")
     _pkg.__path__ = [str(ROOT)]
-    sys.modules["conduit_push"] = _pkg
+    sys.modules["talaria_push"] = _pkg
 
 
 def _load(name, path):
@@ -28,10 +28,10 @@ def _load(name, path):
     return module
 
 
-first = _load("conduit_push.conduit_first", ROOT / "conduit_first.py")
-health = _load("conduit_push.health_tool", ROOT / "health_tool.py")
-location = _load("conduit_push.location_tool", ROOT / "location_tool.py")
-phone = _load("conduit_push.phone_tool", ROOT / "phone_tool.py")
+first = _load("talaria_push.talaria_first", ROOT / "talaria_first.py")
+health = _load("talaria_push.health_tool", ROOT / "health_tool.py")
+location = _load("talaria_push.location_tool", ROOT / "location_tool.py")
+phone = _load("talaria_push.phone_tool", ROOT / "phone_tool.py")
 
 
 @pytest.fixture
@@ -55,20 +55,20 @@ def test_nothing_shared_adds_nothing(shared):
 def test_the_note_names_what_is_shared_and_says_to_use_it_first(shared):
     shared["calendar"] = shared["location"] = True
     note = first.note()
-    assert note.startswith("[Conduit: the user's iPhone shares their calendar and reminders (conduit_calendar) and "
-                           "their location (conduit_location) with you.")
-    assert "use the Conduit tool first" in note
+    assert note.startswith("[Talaria: the user's phone shares their calendar and reminders (talaria_calendar) and "
+                           "their location (talaria_location) with you.")
+    assert "use the Talaria tool first" in note
     assert "such as gog" in note
-    assert "conduit_health" not in note
+    assert "talaria_health" not in note
 
 
 def test_every_kind_is_listed(shared):
     for kind in shared:
         shared[kind] = True
     note = first.note()
-    for tool in ("conduit_calendar", "conduit_health", "conduit_location", "conduit_phone", "conduit_contacts"):
+    for tool in ("talaria_calendar", "talaria_health", "talaria_location", "talaria_phone", "talaria_contacts"):
         assert tool in note
-    assert ", their health data (conduit_health), " in note
+    assert ", their health data (talaria_health), " in note
 
 
 def test_a_turn_reuses_a_recent_look(shared):
@@ -78,7 +78,7 @@ def test_a_turn_reuses_a_recent_look(shared):
     now[0] += first.CACHE_S - 1
     assert first.note(clock=lambda: now[0]) is None
     now[0] += 1
-    assert "conduit_health" in first.note(clock=lambda: now[0])
+    assert "talaria_health" in first.note(clock=lambda: now[0])
 
 
 def test_a_failing_check_leaves_out_only_its_kind(shared, monkeypatch):
@@ -89,7 +89,7 @@ def test_a_failing_check_leaves_out_only_its_kind(shared, monkeypatch):
     first._cache.clear()
     shared["health"] = True
     note = first.note()
-    assert "conduit_health" in note and "conduit_calendar" not in note
+    assert "talaria_health" in note and "talaria_calendar" not in note
 
 
 def test_the_cache_keeps_a_few_homes(shared, monkeypatch):

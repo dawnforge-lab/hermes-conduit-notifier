@@ -17,10 +17,10 @@ if "hermes_constants" not in sys.modules:
     _hermes_constants = types.ModuleType("hermes_constants")
     _hermes_constants.get_hermes_home = lambda: pathlib.Path(tempfile.gettempdir())
     sys.modules["hermes_constants"] = _hermes_constants
-if "conduit_push" not in sys.modules:
-    _pkg = types.ModuleType("conduit_push")
+if "talaria_push" not in sys.modules:
+    _pkg = types.ModuleType("talaria_push")
     _pkg.__path__ = [str(ROOT)]
-    sys.modules["conduit_push"] = _pkg
+    sys.modules["talaria_push"] = _pkg
 
 
 def _private_copy(name, path):
@@ -30,9 +30,9 @@ def _private_copy(name, path):
     return module
 
 
-client = _private_copy("conduit_push._client_repair_under_test", ROOT / "client.py")
-cli = _private_copy("conduit_push._cli_repair_under_test", ROOT / "cli.py")
-api = _private_copy("conduit_plugin_api_repair", ROOT / "dashboard" / "plugin_api.py")
+client = _private_copy("talaria_push._client_repair_under_test", ROOT / "client.py")
+cli = _private_copy("talaria_push._cli_repair_under_test", ROOT / "cli.py")
+api = _private_copy("talaria_plugin_api_repair", ROOT / "dashboard" / "plugin_api.py")
 
 CODE = "ABCDE-FGH23"
 NEW = {"installation_id": "inst-1", "gateway_id": "gw-2", "credential": "inst-1.gw-2.new",
@@ -83,7 +83,7 @@ def test_the_revoke_runs_on_its_own_daemon_thread(tmp_path, monkeypatch):
     path = tmp_path / "s.json"
     path.write_text(json.dumps({"credential": "inst-1.gw-1.old", "relay_url": "https://relay.example"}))
     _pair(path)
-    assert threads == [("conduit-pair-revoke", True)]
+    assert threads == [("talaria-pair-revoke", True)]
     assert calls == [("DELETE", "inst-1.gw-1.old")]
 
 
@@ -164,7 +164,7 @@ def test_a_rate_limited_claim_still_says_try_again(monkeypatch):
 
 
 def _client_requests(monkeypatch, tmp_path, previous, revoke_error=None):
-    path = tmp_path / "conduit-push.json"
+    path = tmp_path / "talaria-push.json"
     if previous is not None:
         path.write_text(json.dumps(previous))
     monkeypatch.setattr(client, "state_path", lambda: path)
@@ -209,7 +209,7 @@ def test_the_cli_names_the_way_out_of_a_full_gateway_list(monkeypatch, capsys):
         raise client.RelayRejected(429, "gateway_limit_reached")
 
     monkeypatch.setattr(cli, "claim_pairing", refuse)
-    args = types.SimpleNamespace(conduit_push_action="pair", code=CODE, relay_url="https://relay.example", name="")
+    args = types.SimpleNamespace(talaria_push_action="pair", code=CODE, relay_url="https://relay.example", name="")
     assert cli.dispatch(args) == 1
     out = capsys.readouterr().out
     assert "gateway_limit_reached" in out and "turn notifications off and on" in out.lower()

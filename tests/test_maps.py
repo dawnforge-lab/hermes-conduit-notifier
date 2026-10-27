@@ -8,14 +8,14 @@ import pytest
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 
 # The location tests' phone, places and helpers (and their module loading).
-_spec = importlib.util.spec_from_file_location("conduit_maps_location_helpers", ROOT / "tests" / "test_location.py")
+_spec = importlib.util.spec_from_file_location("talaria_maps_location_helpers", ROOT / "tests" / "test_location.py")
 helpers = importlib.util.module_from_spec(_spec)
 sys.modules[_spec.name] = helpers
 _spec.loader.exec_module(helpers)
 
 location, api, Phone, NOW, BASE = helpers.location, helpers.api, helpers.Phone, helpers.NOW, helpers.BASE
 sharing, fix, FakeClient = helpers.sharing, helpers.fix, helpers.FakeClient
-maps = helpers._load("conduit_push.maps_tool", ROOT / "maps_tool.py")
+maps = helpers._load("talaria_push.maps_tool", ROOT / "maps_tool.py")
 
 DEVICE = helpers.DEVICE
 
@@ -183,7 +183,7 @@ def test_navigate_from_another_profile_is_logged_under_it(home, monkeypatch):
     work = home / "profiles" / "work"
     for path in (home, work):
         path.mkdir(parents=True, exist_ok=True)
-        (path / "conduit-push.json").write_text(json.dumps({"credential": "c", "installation_id": "installation-1"}))
+        (path / "talaria-push.json").write_text(json.dumps({"credential": "c", "installation_id": "installation-1"}))
     store, _ = _shared(work, sharing=sharing(other_profiles=True), fix=fix("significant"))
     _present(home)
     monkeypatch.setattr(maps, "client", Enqueued())
@@ -214,7 +214,7 @@ def test_navigate_refuses_what_it_cant_open(home, monkeypatch, args, error):
     assert _call(args)["error"] == error
 
 
-def test_navigate_without_a_conduit_that_opens_maps_gives_the_link(home, monkeypatch):
+def test_navigate_without_a_talaria_that_opens_maps_gives_the_link(home, monkeypatch):
     _present(home, features=())
     queue = Enqueued()
     monkeypatch.setattr(maps, "client", queue)

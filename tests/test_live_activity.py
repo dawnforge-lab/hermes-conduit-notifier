@@ -16,10 +16,10 @@ if "tools" not in sys.modules:
     _tools = types.ModuleType("tools")
     _tools.__path__ = []
     sys.modules["tools"] = _tools
-if "conduit_push" not in sys.modules:
-    _pkg = types.ModuleType("conduit_push")
+if "talaria_push" not in sys.modules:
+    _pkg = types.ModuleType("talaria_push")
     _pkg.__path__ = [str(ROOT)]
-    sys.modules["conduit_push"] = _pkg
+    sys.modules["talaria_push"] = _pkg
 
 
 def _load(name, path):
@@ -32,9 +32,9 @@ def _load(name, path):
     return module
 
 
-live = _load("conduit_push.live_activity", ROOT / "live_activity.py")
-plugin = _load("conduit_push.__init__", ROOT / "__init__.py")
-client = sys.modules["conduit_push.client"]
+live = _load("talaria_push.live_activity", ROOT / "live_activity.py")
+plugin = _load("talaria_push.__init__", ROOT / "__init__.py")
+client = sys.modules["talaria_push.client"]
 
 
 class Relay:

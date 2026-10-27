@@ -1,9 +1,9 @@
-"""Conduit routes on the Hermes dashboard, mounted at /api/plugins/conduit_push/.
+"""Talaria routes on the Hermes dashboard, mounted at /api/plugins/talaria_push/.
 
 Pairing, end-to-end encrypted notifications, chat takeover and Desktop
 views, notification and cron settings, calls from Hermes, the confirm
 prompts and settings Hermes shows on the phone, the health, location and
-phone data Conduit shares, group room files and pictures, artifacts, and
+phone data Talaria shares, group room files and pictures, artifacts, and
 the dashboard's own restart.
 
 Routes sit behind the dashboard's own auth, the same as /api/audio/*.
@@ -62,7 +62,7 @@ LIMITER_MAX_KEYS = 256
 
 
 class TokenError(Exception):
-    """A token request failed. ``status`` is the HTTP status to return to Conduit;
+    """A token request failed. ``status`` is the HTTP status to return to Talaria;
     ``code``, when set, is the store's short machine word for the refusal."""
 
     def __init__(self, status: int, message: str, code: Optional[str] = None) -> None:
@@ -154,7 +154,7 @@ def _profile_scope(profile: Optional[str]):
             raise
         if not profile:
             return nullcontext()
-        logger.warning("Cannot scope Conduit request to profile %r: profile scoping unavailable", profile)
+        logger.warning("Cannot scope Talaria request to profile %r: profile scoping unavailable", profile)
         raise TokenError(503, "This Hermes version can't resolve per-profile keys")
     return _config_profile_scope(profile or None)
 
@@ -197,11 +197,11 @@ async def _scoped_acquire(limiter: "_MintLimiter", profile: Optional[str]) -> No
         raise
     except Exception as exc:
         # A broken scope is the host's failure, named like the routes' own.
-        raise _unexpected("profile check", exc, feature="Conduit")
+        raise _unexpected("profile check", exc, feature="Talaria")
 
 
-def _unexpected(route: str, exc: Exception, feature: str = "Conduit") -> HTTPException:
-    # Name the failure so Conduit shows something more useful than a bare 500;
+def _unexpected(route: str, exc: Exception, feature: str = "Talaria") -> HTTPException:
+    # Name the failure so Talaria shows something more useful than a bare 500;
     # the message itself stays in the log since it can carry host details.
     logger.exception("%s %s route failed", feature, route)
     return HTTPException(status_code=500, detail=f"{feature} {route} failed on the host ({type(exc).__name__})",
@@ -238,14 +238,14 @@ async def _read_json_body(request: Request, max_bytes: int = 16 * 1024) -> Any:
 # Hermes lets one live surface own a chat at a time (hermes_cli.active_sessions,
 # the runtime/active_sessions.json registry). Hermes Desktop claims a chat on
 # its first turn and keeps the claim until the chat is closed there, so the
-# same chat refuses Conduit's next send with SESSION_NOT_OWNED. This route is
-# the "Take over" Conduit offers on that refusal (#304): it drops the other
+# same chat refuses Talaria's next send with SESSION_NOT_OWNED. This route is
+# the "Take over" Talaria offers on that refusal (#304): it drops the other
 # surface's claim, under the registry's own lock, so the next send claims the
-# chat for Conduit. A turn the other surface is running is never cut off: its
-# turn marker (tui_gateway.turn_marker) answers "busy" and Conduit asks again.
+# chat for Talaria. A turn the other surface is running is never cut off: its
+# turn marker (tui_gateway.turn_marker) answers "busy" and Talaria asks again.
 #
 # Only another process's claim is dropped. A claim held by this dashboard
-# process (Conduit on another device, or the web chat) is left alone: Hermes
+# process (Talaria on another device, or the web chat) is left alone: Hermes
 # already hands those over itself once their client is gone. "This process"
 # is its pid: Hermes serves the dashboard as one process (its chat runtimes
 # and turn leases live in that process's memory).
@@ -263,7 +263,7 @@ async def _read_json_body(request: Request, max_bytes: int = 16 * 1024) -> Any:
 # A timed-out request is abandoned: the worker thread can't be cancelled, but
 # it checks the abandon flag once it holds the lock and again right before it
 # writes, so a 504 almost never drops a claim after the fact (only a write
-# already under way when the timeout fires still lands). Conduit retries a
+# already under way when the timeout fires still lands). Talaria retries a
 # 504, and asking again reports the real state.
 
 TAKEOVER_MAX_BODY_BYTES = 4096
@@ -274,7 +274,7 @@ TAKEOVER_WINDOW_S = 60.0
 TAKEOVER_TIMEOUT_S = 20.0
 _takeover_limiter = _MintLimiter(TAKEOVER_LIMIT, TAKEOVER_WINDOW_S,
                                  message="Too many takeover requests; try again shortly")
-_takeover_executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="conduit-takeover")
+_takeover_executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="talaria-takeover")
 
 
 def _takeover_ids(body: Any) -> list:
@@ -375,12 +375,12 @@ def _hermes_session_api() -> Any:
     return server if sessions is not None and callable(getattr(sessions, "get", None)) else None
 
 
-# The reverse direction (hermes-conduit#1123): a chat Conduit opened here keeps
-# its claim while Conduit stays connected, so Desktop's own process is refused
-# it long after Conduit's turn ended. A sweep lets go of Conduit's claims on
-# chats that sit idle; conduit_claims.py explains when. One sweeper per
+# The reverse direction: a chat Talaria opened here keeps
+# its claim while Talaria stays connected, so Desktop's own process is refused
+# it long after Talaria's turn ended. A sweep lets go of Talaria's claims on
+# chats that sit idle; talaria_claims.py explains when. One sweeper per
 # process: a reloaded copy of this module takes over from the old one.
-_CLAIMS_SWEEPER = "_conduit_idle_claims_sweeper"
+_CLAIMS_SWEEPER = "_talaria_idle_claims_sweeper"
 
 
 def _claims_home() -> Any:
@@ -392,12 +392,12 @@ def _claims_home() -> Any:
 def _sweep_idle_claims(token: object) -> None:
     while sys.__dict__.get(_CLAIMS_SWEEPER) is token:
         try:
-            claims = _plugin_package_module("conduit_claims")
+            claims = _plugin_package_module("talaria_claims")
             time.sleep(claims.SWEEP_S)
             if sys.__dict__.get(_CLAIMS_SWEEPER) is token:
                 claims.sweep(_hermes_session_api(), _claims_home)
         except Exception:  # noqa: BLE001 — keep sweeping
-            logger.debug("Conduit: idle claim sweep failed", exc_info=True)
+            logger.debug("Talaria: idle claim sweep failed", exc_info=True)
             time.sleep(60.0)
 
 
@@ -405,14 +405,14 @@ def _start_claims_sweeper() -> None:
     token = object()
     sys.__dict__[_CLAIMS_SWEEPER] = token
     try:
-        threading.Thread(target=_sweep_idle_claims, args=(token,), name="conduit-idle-claims", daemon=True).start()
+        threading.Thread(target=_sweep_idle_claims, args=(token,), name="talaria-idle-claims", daemon=True).start()
     except RuntimeError:
         sys.__dict__.pop(_CLAIMS_SWEEPER, None)  # the next takeover tries again
-        logger.warning("Conduit: no thread to let go of idle chat claims")
+        logger.warning("Talaria: no thread to let go of idle chat claims")
 
 
 def _ensure_claims_sweeper() -> None:
-    """Starts the sweeper unless one runs: a takeover means Conduit chats here."""
+    """Starts the sweeper unless one runs: a takeover means Talaria chats here."""
     if sys.__dict__.get(_CLAIMS_SWEEPER) is None:
         _start_claims_sweeper()
 
@@ -423,10 +423,10 @@ if "hermes_cli.web_server" in sys.modules:
 
 # --- End-to-end encrypted notifications (#431) -------------------------------
 #
-# Conduit creates a per-pairing secret on the phone and hands it to this
+# Talaria creates a per-pairing secret on the phone and hands it to this
 # profile here, over the dashboard connection, so it never passes through the
 # push relay. The hooks (client.py) read it from the profile's
-# conduit-push.json, seal every notification with it and only accept clarify
+# talaria-push.json, seal every notification with it and only accept clarify
 # answers sealed by the phone. GET never returns the secret.
 
 E2E_LIMIT = 10
@@ -441,7 +441,7 @@ _e2e_lock = threading.Lock()
 def _pairing_state_path() -> Any:
     from hermes_constants import get_hermes_home
 
-    return get_hermes_home() / "conduit-push.json"
+    return get_hermes_home() / "talaria-push.json"
 
 
 def _load_pairing_state(path: Any) -> Optional[Dict[str, Any]]:
@@ -590,9 +590,9 @@ def provision_e2e(body: Any, path: Any = None) -> Dict[str, Any]:
     with _e2e_lock, _pairing_state_lock(path):
         state = _load_pairing_state(path)
         if not state:
-            raise TokenError(409, "This Hermes profile isn't paired with Conduit")
+            raise TokenError(409, "This Hermes profile isn't paired with Talaria")
         if not state.get("gateway_id"):
-            raise TokenError(409, "Pair this Hermes profile with Conduit again to turn on encryption")
+            raise TokenError(409, "Pair this Hermes profile with Talaria again to turn on encryption")
         if state.get("installation_id") != installation_id or state.get("gateway_id") != gateway_id:
             raise TokenError(409, "This Hermes profile is paired with a different device")
         state["e2e"] = {
@@ -635,13 +635,13 @@ async def post_e2e(request: Request, response: Response, profile: Optional[str] 
         raise _unexpected("key", exc, feature="Encrypted notifications")
 
 
-# --- Pairing from Conduit ----------------------------------------------------
+# --- Pairing from Talaria ----------------------------------------------------
 #
-# The same claim `hermes conduit-push pair CODE` makes, with the code handed
+# The same claim `hermes talaria pair CODE` makes, with the code handed
 # over the signed-in dashboard connection instead of typed on the host. The
 # phone creates the one-time code at its relay and posts it here with that
 # relay's URL; this route claims it and saves the credential in the requested
-# profile's conduit-push.json, which the hooks re-read on every event, so no
+# profile's talaria-push.json, which the hooks re-read on every event, so no
 # restart is needed. A re-pair keeps the profile's privacy choice, and its
 # encryption key when the same phone and gateway pair again; a new pairing
 # drops the key (the phone provisions one for it).
@@ -654,7 +654,7 @@ DEFAULT_RELAY_URL = "https://push.milim.dev"
 _PAIRING_CODE = re.compile(r"^[A-HJ-NP-Z2-9]{5}-[A-HJ-NP-Z2-9]{5}$")
 _pair_limiter = _MintLimiter(PAIR_LIMIT, PAIR_WINDOW_S, message="Too many pairing requests; try again shortly")
 # The claim waits on the relay; it gets its own threads, like the other network routes.
-_pair_executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="conduit-pair")
+_pair_executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="talaria-pair")
 
 
 def _pair_relay_url(raw: Any, state: Optional[Dict[str, Any]]) -> str:
@@ -693,7 +693,7 @@ def _relay_urls() -> Any:
     with _relay_urls_lock:
         if _relay_urls_module is None:
             path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "relay_urls.py")
-            spec = importlib.util.spec_from_file_location("conduit_push_dashboard_relay_urls", path)
+            spec = importlib.util.spec_from_file_location("talaria_push_dashboard_relay_urls", path)
             if spec is None or spec.loader is None:
                 raise TokenError(501, "This plugin install is missing relay_urls.py; update the plugin")
             module = importlib.util.module_from_spec(spec)
@@ -717,7 +717,7 @@ def _relay_request(url: str, method: str, credential: str, payload: Optional[Dic
     """One relay request: (status, JSON body). Network failures raise."""
     data = None if payload is None else json.dumps(payload, separators=(",", ":")).encode("utf-8")
     headers = {"Accept": "application/json", "Authorization": f"Bearer {credential}",
-               "User-Agent": f"Hermes-Conduit-Notifier/{_plugin_version() or 'unknown'}"}
+               "User-Agent": f"Talaria-Plugin/{_plugin_version() or 'unknown'}"}
     if data is not None:
         headers["Content-Type"] = "application/json"
     request = urllib.request.Request(url, data=data, headers=headers, method=method)
@@ -759,7 +759,7 @@ def _claim_pairing(relay_url: str, code: str, gateway_name: str) -> Dict[str, An
     unreadable = False
     request = urllib.request.Request(f"{relay_url}/v1/pairings/claim", data=data, method="POST", headers={
         "Accept": "application/json", "Content-Type": "application/json",
-        "User-Agent": f"Hermes-Conduit-Notifier/{_plugin_version() or 'unknown'}"})
+        "User-Agent": f"Talaria-Plugin/{_plugin_version() or 'unknown'}"})
     try:
         # A plain-HTTP claim (LAN or Tailscale) skips any proxy, which would see the code in clear.
         opener = _relay_opener if _relay_urls().is_https(relay_url) else _direct_relay_opener
@@ -782,19 +782,19 @@ def _claim_pairing(relay_url: str, code: str, gateway_name: str) -> Dict[str, An
     if status == 429:
         if isinstance(body, dict) and body.get("error") == "gateway_limit_reached":
             # Every pairing slot this phone has at the relay is taken: waiting won't free one.
-            raise TokenError(409, "The push relay holds too many pairings for this iPhone. Turn notifications off "
-                                  "and on again in Conduit's Settings > Notifications to start fresh, then pair again.")
+            raise TokenError(409, "The push relay holds too many pairings for this phone. Turn notifications off "
+                                  "and on again in Talaria's Settings > Notifications to start fresh, then pair again.")
         raise TokenError(429, "The push relay is rate limiting pairing; try again shortly")
     if status == 403 and not unreadable and not _looks_like_json_object(raw):
         # The relay always answers with a JSON error: a bare 403 is something
         # in front of it (a firewall, a rate limiter) blocking this host.
-        logger.warning("Conduit plugin: something in front of the push relay answered the pairing claim "
+        logger.warning("Talaria plugin: something in front of the push relay answered the pairing claim "
                        "with an empty 403: this host's address is blocked there")
         raise TokenError(502, "Something in front of the push relay is blocking this host, so pairing can't get "
                               "through. Pairing again won't help until the relay's operator lifts the block.")
     if not 200 <= status < 300 or not isinstance(body, dict):
         # The relay's own status stays in the log: the answer doesn't probe hosts.
-        logger.warning("Conduit plugin: the push relay answered the pairing claim with HTTP %s", status)
+        logger.warning("Talaria plugin: the push relay answered the pairing claim with HTTP %s", status)
         raise TokenError(502, "The push relay refused the pairing")
     credential, installation_id = body.get("credential"), body.get("installation_id")
     if not isinstance(credential, str) or not credential or not isinstance(installation_id, str) or not installation_id:
@@ -820,19 +820,19 @@ def _revoke_replaced_pairing(relay_url: str, credential: str) -> None:
         try:
             status, _body = _relay_request(url, "DELETE", credential, None, PAIR_TIMEOUT_S)
             if not 200 <= status < 300 and status != 401:
-                logger.info("Conduit plugin: the relay answered revoking the replaced pairing with HTTP %s", status)
+                logger.info("Talaria plugin: the relay answered revoking the replaced pairing with HTTP %s", status)
         except Exception as exc:
-            logger.info("Conduit plugin: the replaced pairing wasn't revoked at the relay: %s", type(exc).__name__)
+            logger.info("Talaria plugin: the replaced pairing wasn't revoked at the relay: %s", type(exc).__name__)
 
     try:
         _start_revoke_thread(revoke)
     except RuntimeError as exc:
         # Out of threads. The pairing is saved, and this doesn't undo it.
-        logger.warning("Conduit plugin: the replaced pairing wasn't revoked at the relay: %s", exc)
+        logger.warning("Talaria plugin: the replaced pairing wasn't revoked at the relay: %s", exc)
 
 
 def _start_revoke_thread(target: Callable[[], None]) -> None:
-    threading.Thread(target=target, name="conduit-pair-revoke", daemon=True).start()
+    threading.Thread(target=target, name="talaria-pair-revoke", daemon=True).start()
 
 
 def pair_profile(body: Any, profile: Optional[str] = None, path: Any = None,
@@ -916,8 +916,8 @@ async def post_pair(request: Request, response: Response, profile: Optional[str]
 
 # --- Cron notifications ------------------------------------------------------
 #
-# The user turns one cron job's notifications off in Conduit's Cron tab. The
-# muted job ids live in the profile's conduit-cron.json, shared with the
+# The user turns one cron job's notifications off in Talaria's Cron tab. The
+# muted job ids live in the profile's talaria-cron.json, shared with the
 # plugin's turn-end hooks (agent process), which skip the push for that job's
 # runs, through cron_store.py (loaded by path: this module can't import the
 # plugin package). A run that answers [SILENT] never notifies either way.
@@ -936,7 +936,7 @@ def _cron_store() -> Any:
     with _cron_store_lock:
         if _cron_store_module is None:
             path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "cron_store.py")
-            spec = importlib.util.spec_from_file_location("conduit_push_dashboard_cron_store", path)
+            spec = importlib.util.spec_from_file_location("talaria_push_dashboard_cron_store", path)
             if spec is None or spec.loader is None or not os.path.isfile(path):
                 raise TokenError(501, "This plugin install is missing cron_store.py; update the plugin")
             module = importlib.util.module_from_spec(spec)
@@ -993,9 +993,9 @@ async def put_cron_notifications(request: Request, response: Response,
 
 # --- Reply notifications by source (#115) ------------------------------------
 #
-# The user picks in Conduit which sources' replies push "reply ready": Conduit,
+# The user picks in Talaria which sources' replies push "reply ready": Talaria,
 # Hermes Desktop and the web dashboard, messaging apps, the terminal. The
-# choice lives in the profile's conduit-notifications.json, read by the
+# choice lives in the profile's talaria-notifications.json, read by the
 # plugin's turn-end hook (agent process) through reply_sources.py (loaded by
 # path: this module can't import the plugin package).
 
@@ -1009,7 +1009,7 @@ def _reply_sources() -> Any:
     with _reply_sources_lock:
         if _reply_sources_module is None:
             path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "reply_sources.py")
-            spec = importlib.util.spec_from_file_location("conduit_push_dashboard_reply_sources", path)
+            spec = importlib.util.spec_from_file_location("talaria_push_dashboard_reply_sources", path)
             if spec is None or spec.loader is None or not os.path.isfile(path):
                 raise TokenError(501, "This plugin install is missing reply_sources.py; update the plugin")
             module = importlib.util.module_from_spec(spec)
@@ -1045,9 +1045,9 @@ async def put_reply_sources(request: Request, response: Response,
                              feature="Reply notifications")
 
 
-# --- A chat Conduit has on screen (chat_on_screen.py) ------------------------
+# --- A chat Talaria has on screen (chat_on_screen.py) ------------------------
 #
-# While a turn runs in a chat open in Conduit, Conduit holds it here as on
+# While a turn runs in a chat open in Talaria, Talaria holds it here as on
 # screen, renewing the hold while the turn runs and dropping it (hold 0) when
 # the user leaves the chat or the app. A reply that lands in it then sends no
 # "reply ready" push: the user watched it arrive. The holds live in the
@@ -1068,7 +1068,7 @@ def _chat_on_screen() -> Any:
     with _chat_on_screen_lock:
         if _chat_on_screen_module is None:
             path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "chat_on_screen.py")
-            spec = importlib.util.spec_from_file_location("conduit_push_dashboard_chat_on_screen", path)
+            spec = importlib.util.spec_from_file_location("talaria_push_dashboard_chat_on_screen", path)
             if spec is None or spec.loader is None or not os.path.isfile(path):
                 raise TokenError(501, "This plugin install is missing chat_on_screen.py; update the plugin")
             module = importlib.util.module_from_spec(spec)
@@ -1105,14 +1105,13 @@ async def put_chat_on_screen(request: Request, response: Response, profile: Opti
 
 # --- Hermes calls you (#449) -------------------------------------------------
 #
-# Conduit reads and changes the per-profile call settings here. The plugin's
+# Talaria reads and changes the per-profile call settings here. The plugin's
 # turn-end hooks (agent process) and Hermes' own watches send the call
 # requests through the push relay. The watches and the settings live in the
-# profile's conduit-calls.json, shared with the hooks through calls_store.py
+# profile's talaria-calls.json, shared with the hooks through calls_store.py
 # (loaded by path: this module can't import the plugin package).
-# (hermes-conduit designs/hermes-calls-you-449.md)
 #
-# A call the user declines or doesn't answer comes back here from Conduit as
+# A call the user declines or doesn't answer comes back here from Talaria as
 # an outcome; the next turn of its chat tells Hermes (calls.outcome_note).
 
 CALLS_LIMIT = 30
@@ -1129,7 +1128,7 @@ def _calls_store() -> Any:
     with _calls_store_lock:
         if _calls_store_module is None:
             path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "calls_store.py")
-            spec = importlib.util.spec_from_file_location("conduit_push_dashboard_calls_store", path)
+            spec = importlib.util.spec_from_file_location("talaria_push_dashboard_calls_store", path)
             if spec is None or spec.loader is None:
                 raise TokenError(501, "This plugin install is missing calls_store.py; update the plugin")
             module = importlib.util.module_from_spec(spec)
@@ -1173,7 +1172,7 @@ def record_call_outcome(body: Any) -> Dict[str, Any]:
     if not isinstance(body, dict):
         raise TokenError(400, "Expected a JSON object")
     if _load_pairing_state(_pairing_state_path()) is None:
-        raise TokenError(409, "This Hermes profile isn't paired with Conduit")
+        raise TokenError(409, "This Hermes profile isn't paired with Talaria")
     try:
         return _calls_store().CallStore(_calls_home()).record_outcome(
             body.get("call_id"), body.get("session_ids"), body.get("outcome"), kind=body.get("kind"),
@@ -1213,21 +1212,21 @@ async def post_call_outcome(request: Request, response: Response, profile: Optio
     return await _calls_route(profile, response, lambda: record_call_outcome(body), "outcome")
 
 
-# --- Conduit settings Hermes may change --------------------------------------
+# --- Talaria settings Hermes may change --------------------------------------
 #
-# Each Conduit uploads the settings it lets Hermes see (and the user's "Let
+# Each Talaria uploads the settings it lets Hermes see (and the user's "Let
 # Hermes change settings" mode), reports what became of the requests it took,
-# and gets back the ones still waiting for it (settings_store.py). Conduit
+# and gets back the ones still waiting for it (settings_store.py). Talaria
 # stays the owner: it re-checks every request and asks the user as its mode
 # says.
 
-CONDUIT_SETTINGS_LIMIT = 30
-CONDUIT_SETTINGS_WINDOW_S = 60.0
+TALARIA_SETTINGS_LIMIT = 30
+TALARIA_SETTINGS_WINDOW_S = 60.0
 # Room for the store's worst case: 80 settings, each with a description and
 # up to 40 choices.
-CONDUIT_SETTINGS_MAX_BODY_BYTES = 640 * 1024
+TALARIA_SETTINGS_MAX_BODY_BYTES = 640 * 1024
 
-_conduit_settings_limiter = _MintLimiter(CONDUIT_SETTINGS_LIMIT, CONDUIT_SETTINGS_WINDOW_S,
+_talaria_settings_limiter = _MintLimiter(TALARIA_SETTINGS_LIMIT, TALARIA_SETTINGS_WINDOW_S,
                                          message="Too many settings syncs; try again shortly")
 _settings_store_module: Any = None
 
@@ -1238,7 +1237,7 @@ def _settings_store() -> Any:
     with _calls_store_lock:
         if _settings_store_module is None:
             path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "settings_store.py")
-            spec = importlib.util.spec_from_file_location("conduit_push_dashboard_settings_store", path)
+            spec = importlib.util.spec_from_file_location("talaria_push_dashboard_settings_store", path)
             if spec is None or spec.loader is None:
                 raise TokenError(501, "This plugin install is missing settings_store.py; update the plugin")
             module = importlib.util.module_from_spec(spec)
@@ -1247,11 +1246,11 @@ def _settings_store() -> Any:
         return _settings_store_module
 
 
-def sync_conduit_settings(body: Any) -> Dict[str, Any]:
+def sync_talaria_settings(body: Any) -> Dict[str, Any]:
     """The installation id names a device; it doesn't authenticate one. The
     dashboard's auth is the boundary, as on every route here."""
     if _load_pairing_state(_pairing_state_path()) is None:
-        raise TokenError(409, "This Hermes profile isn't paired with Conduit")
+        raise TokenError(409, "This Hermes profile isn't paired with Talaria")
     module = _settings_store()
     try:
         return module.SettingsStore(_calls_home()).sync(body)
@@ -1259,28 +1258,28 @@ def sync_conduit_settings(body: Any) -> Dict[str, Any]:
         raise TokenError(400, str(exc))
 
 
-@router.put("/conduit-settings")
-async def put_conduit_settings(request: Request, response: Response, profile: Optional[str] = None) -> Dict[str, Any]:
+@router.put("/talaria-settings")
+async def put_talaria_settings(request: Request, response: Response, profile: Optional[str] = None) -> Dict[str, Any]:
     response.headers["Cache-Control"] = "no-store"
-    body = await _read_json_body(request, CONDUIT_SETTINGS_MAX_BODY_BYTES)
+    body = await _read_json_body(request, TALARIA_SETTINGS_MAX_BODY_BYTES)
     try:
         return {"ok": True, **(await _run_scoped(
-            profile, _limited(_conduit_settings_limiter, profile, lambda: sync_conduit_settings(body))))}
+            profile, _limited(_talaria_settings_limiter, profile, lambda: sync_talaria_settings(body))))}
     except TokenError as exc:
         raise HTTPException(status_code=exc.status, detail=str(exc), headers={"Cache-Control": "no-store"})
     except HTTPException as exc:
         exc.headers = {**(exc.headers or {}), "Cache-Control": "no-store"}
         raise
     except Exception as exc:
-        raise _unexpected("settings", exc, feature="Conduit settings")
+        raise _unexpected("settings", exc, feature="Talaria settings")
 
 
 # --- Confirm prompts Hermes shows on the phone ---------------------------------
 #
-# Before an action the user should OK, conduit_present keeps a confirm prompt
-# (present_store.py) and wakes the phone with phone.changes. Conduit reports
+# Before an action the user should OK, talaria_present keeps a confirm prompt
+# (present_store.py) and wakes the phone with phone.changes. Talaria reports
 # what the user answered (tap or voice) and gets back the prompts still
-# waiting, with the same identity fields as /conduit-settings.
+# waiting, with the same identity fields as /talaria-settings.
 
 PRESENT_EXCHANGE_LIMIT = 60
 PRESENT_EXCHANGE_WINDOW_S = 60.0
@@ -1297,7 +1296,7 @@ def _present_store() -> Any:
     with _calls_store_lock:
         if _present_store_module is None:
             path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "present_store.py")
-            spec = importlib.util.spec_from_file_location("conduit_push_dashboard_present_store", path)
+            spec = importlib.util.spec_from_file_location("talaria_push_dashboard_present_store", path)
             if spec is None or spec.loader is None or not os.path.exists(path):
                 raise TokenError(501, "This plugin install is missing present_store.py; update the plugin")
             module = importlib.util.module_from_spec(spec)
@@ -1310,7 +1309,7 @@ def exchange_present(body: Any) -> Dict[str, Any]:
     """The installation id names a device; it doesn't authenticate one. The
     dashboard's auth is the boundary, as on every route here."""
     if _load_pairing_state(_pairing_state_path()) is None:
-        raise TokenError(409, "This Hermes profile isn't paired with Conduit")
+        raise TokenError(409, "This Hermes profile isn't paired with Talaria")
     module = _present_store()
     try:
         return module.PresentStore(_calls_home()).exchange(body)
@@ -1338,14 +1337,14 @@ async def post_present_exchange(request: Request, response: Response, profile: O
         raise _unexpected("present", exc, feature="Confirm prompts")
 
 
-# --- Health data (Apple Health shared from Conduit) ---------------------------
+# --- Health data (shared from Talaria) ---------------------------------------
 #
-# The user turns on health sharing in Conduit, per category. The phone agrees
+# The user turns on health sharing in Talaria, per category. The phone agrees
 # a key with this profile once (/health/key, X25519: only public keys cross
-# the wire) and then posts sealed batches of HealthKit totals and events
+# the wire) and then posts sealed batches of health totals and events
 # (/health/ingest) straight here, never through the push relay. The store
-# (health_store.py) keeps them in the profile's conduit-health.sqlite3 for the
-# conduit_health tool. Status reports counts and dates only and wipe
+# (health_store.py) keeps them in the profile's talaria-health.sqlite3 for the
+# talaria_health tool. Status reports counts and dates only and wipe
 # deletes; no route here returns health data.
 
 HEALTH_KEY_LIMIT = 10
@@ -1371,7 +1370,7 @@ _health_store_module: Any = None
 # Plugin modules beside this folder (health_store.py, phone_store.py, …),
 # imported as one private package (its __init__ never runs, so nothing
 # registers with Hermes here) so their relative imports stay inside it.
-DASHBOARD_PACKAGE = "conduit_push_dashboard_pkg"
+DASHBOARD_PACKAGE = "talaria_push_dashboard_pkg"
 
 
 def _plugin_package_module(name: str) -> Any:
@@ -1422,7 +1421,7 @@ async def _health_route(response: Response, profile: Optional[str], fn: Callable
 def _store_refusal(exc: TokenError) -> Any:
     """A health or location store's refusal: ``detail`` is the message as
     always, and ``code`` the store's word for it (``unknown_key``,
-    ``bad_seal``, ``too_many_devices``, ``schema``…), so Conduit can tell a
+    ``bad_seal``, ``too_many_devices``, ``schema``…), so Talaria can tell a
     lost key from a full host without reading the message."""
     if not exc.code:
         raise HTTPException(status_code=exc.status, detail=str(exc), headers={"Cache-Control": "no-store"})
@@ -1472,9 +1471,9 @@ async def post_health_wipe(request: Request, response: Response, profile: Option
     return await _health_route(response, profile, lambda: _health_call(lambda store: store.wipe(device_id)), "delete")
 
 
-# --- Location (shared from Conduit) ---------------------------------------
+# --- Location (shared from Talaria) ---------------------------------------
 #
-# The user turns on location sharing in Conduit: while they talk to Hermes,
+# The user turns on location sharing in Talaria: while they talk to Hermes,
 # and, separately, in the background. Like health, the phone agrees a key
 # with this profile once (/location/key) and then posts sealed batches
 # (/location/ingest) straight here, never through the push relay. The store
@@ -1509,7 +1508,7 @@ def _location_store() -> Any:
     with _calls_store_lock:
         if _location_store_module is None:
             path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "location_store.py")
-            spec = importlib.util.spec_from_file_location("conduit_push_dashboard_location_store", path)
+            spec = importlib.util.spec_from_file_location("talaria_push_dashboard_location_store", path)
             if spec is None or spec.loader is None:
                 raise TokenError(501, "This plugin install is missing location_store.py; update the plugin")
             module = importlib.util.module_from_spec(spec)
@@ -1525,7 +1524,7 @@ def _location_call(fn: Callable[[Any], Dict[str, Any]]) -> Dict[str, Any]:
     except module.LocationError as exc:
         raise TokenError(exc.status, str(exc), exc.code)
     except sqlite3.DatabaseError:
-        logger.warning("conduit_push: location store unreadable", exc_info=True)
+        logger.warning("talaria_push: location store unreadable", exc_info=True)
         raise TokenError(503, "The location store on this host can't be read")
 
 
@@ -1558,9 +1557,9 @@ def _start_rule_jobs(fired: Any) -> list:
             if trigger_job(job_id, extra_prompt=rule.get("prompt")):
                 started.append(rule.get("rule_id"))
             else:
-                logger.warning("conduit_push: place rule %s has no job %s", rule.get("rule_id"), job_id)
+                logger.warning("talaria_push: place rule %s has no job %s", rule.get("rule_id"), job_id)
         except Exception:  # noqa: BLE001 — the upload itself succeeded
-            logger.warning("conduit_push: could not start place rule %s", rule.get("rule_id"), exc_info=True)
+            logger.warning("talaria_push: could not start place rule %s", rule.get("rule_id"), exc_info=True)
     return started
 
 
@@ -1576,7 +1575,7 @@ def _clear_rule_jobs() -> None:
         store = _location_store().LocationStore(_calls_home())
         pending = store.pending_rule_jobs()
     except Exception:  # noqa: BLE001 — the change itself succeeded
-        logger.warning("conduit_push: place rule jobs not read", exc_info=True)
+        logger.warning("talaria_push: place rule jobs not read", exc_info=True)
         return
     gone = []
     for job_id in pending:
@@ -1586,13 +1585,13 @@ def _clear_rule_jobs() -> None:
             if cron_jobs.remove_job(job_id) or cron_jobs.get_job(job_id) is None:
                 gone.append(job_id)
             else:
-                logger.warning("conduit_push: place rule job %s not removed yet", job_id)
+                logger.warning("talaria_push: place rule job %s not removed yet", job_id)
         except Exception:  # noqa: BLE001 — the rule is gone; its job's prompt does nothing without an event
-            logger.warning("conduit_push: could not remove place rule job %s", job_id, exc_info=True)
+            logger.warning("talaria_push: could not remove place rule job %s", job_id, exc_info=True)
     try:
         store.rule_jobs_gone(gone)
     except Exception:  # noqa: BLE001 — still listed: removed again next time, which is harmless
-        logger.warning("conduit_push: removed place rule jobs not taken off the list", exc_info=True)
+        logger.warning("talaria_push: removed place rule jobs not taken off the list", exc_info=True)
 
 
 def _location_ingest(body: Any) -> Dict[str, Any]:
@@ -1620,7 +1619,7 @@ def _location_remove_rule(rule_id: str) -> Dict[str, Any]:
 @router.get("/location/status")
 async def get_location_status(response: Response, profile: Optional[str] = None,
                               device_id: Optional[str] = None) -> Dict[str, Any]:
-    # `locate` tells Conduit whether conduit_location can ask the phone for a
+    # `locate` tells Talaria whether talaria_location can ask the phone for a
     # fresh fix: the same pairing gate as the tool's own (not_paired).
     return await _location_route(response, profile, lambda: _location_call(lambda store: {
         **store.status(device_id), "crypto": _location_store().crypto_available(),
@@ -1682,19 +1681,18 @@ async def post_location_wipe(request: Request, response: Response, profile: Opti
     return await _location_route(response, profile, lambda: _location_wipe(device_id), "delete")
 
 
-# --- Calendar, Reminders, Focus and phone status (shared from Conduit) ------
+# --- Calendar, Reminders, Focus and phone status (shared from Talaria) ------
 #
-# The user turns on each kind in Conduit. The phone agrees a key with this
+# The user turns on each kind in Talaria. The phone agrees a key with this
 # profile (/phone/key, X25519, its own key: wiping this never touches health
 # or location), posts sealed batches of events, reminders, its calendars,
 # Focus and status (/phone/ingest) straight here, never through the push
 # relay, and runs a sealed exchange (/phone/exchange) to report how the
 # changes Hermes asked for went and to pick up the ones still waiting. The
-# store (phone_store.py) keeps it all in the profile's conduit-phone.sqlite3
-# for the conduit_calendar and conduit_phone tools. Status reports counts and
+# store (phone_store.py) keeps it all in the profile's talaria-phone.sqlite3
+# for the talaria_calendar and talaria_phone tools. Status reports counts and
 # dates only, wipe deletes, and the exchange answers only the device that
-# asks, sealed with that device's own key. (hermes-conduit
-# designs/phone-v1-contract.md)
+# asks, sealed with that device's own key.
 
 PHONE_KEY_LIMIT = 10
 PHONE_KEY_WINDOW_S = 60.0
@@ -1802,14 +1800,14 @@ async def post_phone_wipe(request: Request, response: Response, profile: Optiona
 # --- Desktop views (#454) ----------------------------------------------------
 #
 # Which chats Hermes Desktop (or the web dashboard) has open on this host, so
-# Conduit can count them as read without writing Hermes' own read flag (that
+# Talaria can count them as read without writing Hermes' own read flag (that
 # flag would light Desktop's unread dot on the chat it has open). Hermes has
 # no hook for "a client opened a chat", so this wraps the gateway's
 # session.activate / session.resume handlers in this process. That is an
 # unofficial seam: every attribute is feature-detected, the wrapper never
 # raises and always returns the handler's own response, and when something
 # is missing (a Hermes refactor, plugins.isolation: host) the route says
-# observing: false and Conduit keeps its own read tracking.
+# observing: false and Talaria keeps its own read tracking.
 #
 # Per chat it keeps ``opened_at`` (the newest open) and ``seen_through``: how
 # long the chat then stayed the one that Desktop connection had selected. A
@@ -1817,7 +1815,7 @@ async def post_phone_wipe(request: Request, response: Response, profile: Optiona
 # closes; the host can't tell whether anyone is looking at the window.
 
 DESKTOP_VIEW_METHODS = ("session.activate", "session.resume")
-DESKTOP_VIEWS_FILE = "conduit-desktop-views.json"
+DESKTOP_VIEWS_FILE = "talaria-desktop-views.json"
 DESKTOP_VIEWS_MAX = 2000
 DESKTOP_VIEWS_FLUSH_DELAY_S = 2.0
 DESKTOP_VIEWS_INSTALL_POLL_S = 1.0
@@ -1827,10 +1825,10 @@ DESKTOP_VIEWS_INSTALL_WINDOW_S = 600.0
 DESKTOP_VIEWS_SWEEP_S = 5.0
 # Set on each wrapper (to the handler it wraps), so a second load of this
 # module in the same process never wraps a wrapper.
-_DESKTOP_VIEW_MARKER = "__conduit_desktop_view__"
+_DESKTOP_VIEW_MARKER = "__talaria_desktop_view__"
 # The hook a wrapper reports to: the newest load of this module takes over
 # the wrappers an earlier load installed.
-_DESKTOP_VIEW_OWNER = "__conduit_desktop_view_owner__"
+_DESKTOP_VIEW_OWNER = "__talaria_desktop_view_owner__"
 
 
 def desktop_view_client(transport: Any, socket_type: Optional[type] = None) -> Optional[str]:
@@ -1838,8 +1836,8 @@ def desktop_view_client(transport: Any, socket_type: Optional[type] = None) -> O
 
     Desktop's renderer and the web dashboard open /api/ws from a browser
     engine, whose User-Agent starts with Mozilla/ (Desktop's adds Electron/).
-    Conduit's socket comes from URLSession and also names itself in
-    X-Conduit-Client. Stdio, hosted rooms and this plugin's own job transport
+    Talaria's socket comes from URLSession and also names itself in
+    X-Talaria-Client. Stdio, hosted rooms and this plugin's own job transport
     aren't WebSocket transports, so they never count: a socket is the
     gateway's when it is an instance of ``socket_type`` (Hermes'
     tui_gateway.ws.WSTransport, subclasses included), or else when its class
@@ -1853,7 +1851,7 @@ def desktop_view_client(transport: Any, socket_type: Optional[type] = None) -> O
 
 
 def _client_from_headers(headers: Optional[Dict[str, Any]]) -> Optional[str]:
-    if headers is None or headers.get("x-conduit-client") is not None:
+    if headers is None or headers.get("x-talaria-client") is not None:
         return None
     agent = str(headers.get("user-agent") or "")
     if not agent.startswith("Mozilla/"):
@@ -1930,7 +1928,7 @@ def _merge_desktop_view(current: Optional[Dict[str, Any]], newer: Dict[str, Any]
 
 
 class _DesktopViewStore:
-    """Per Hermes home, in ``<home>/conduit-desktop-views.json``. Records land
+    """Per Hermes home, in ``<home>/talaria-desktop-views.json``. Records land
     in memory at once and reach disk in one debounced write, so a chat switch
     never waits on I/O."""
 
@@ -1968,7 +1966,7 @@ class _DesktopViewStore:
                 try:
                     self._merge_to_disk(key, views)
                 except Exception:  # noqa: BLE001 — a lost write only leaves a chat unread
-                    logger.warning("Conduit: could not save Desktop views under %s", key, exc_info=True)
+                    logger.warning("Talaria: could not save Desktop views under %s", key, exc_info=True)
         finally:
             with self._lock:
                 self._inflight = [batch for batch in self._inflight if batch is not pending]
@@ -2030,7 +2028,7 @@ class _DesktopViewStore:
 
     def _merge_to_disk(self, key: str, views: Dict[str, Dict[str, Any]]) -> None:
         path = self._path(key)
-        # Path-generic: locks the sibling ".conduit-desktop-views.json.lock".
+        # Path-generic: locks the sibling ".talaria-desktop-views.json.lock".
         with _pairing_state_lock(Path(path)):
             merged = self._merged(self._load(path, for_write=True), views)
             # A fresh, exclusively created 0600 name, so nothing planted in
@@ -2056,7 +2054,7 @@ def _desktop_selected() -> Any:
     with _desktop_selected_lock:
         if _desktop_selected_module is None:
             path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "desktop_selected.py")
-            spec = importlib.util.spec_from_file_location("conduit_push_dashboard_desktop_selected", path)
+            spec = importlib.util.spec_from_file_location("talaria_push_dashboard_desktop_selected", path)
             if spec is None or spec.loader is None:
                 raise RuntimeError("This plugin install is missing desktop_selected.py; update the plugin")
             module = importlib.util.module_from_spec(spec)
@@ -2115,11 +2113,11 @@ class _DesktopViewHook:
         with self._lock:
             if self._thread is not None:
                 return
-            thread = threading.Thread(target=self._run, name="conduit-desktop-views", daemon=True)
+            thread = threading.Thread(target=self._run, name="talaria-desktop-views", daemon=True)
             try:
                 thread.start()
             except Exception:  # noqa: BLE001 — the next route call tries again
-                logger.debug("Conduit: Desktop view watcher not started", exc_info=True)
+                logger.debug("Talaria: Desktop view watcher not started", exc_info=True)
                 return
             self._thread = thread
 
@@ -2136,14 +2134,14 @@ class _DesktopViewHook:
         try:
             return self.try_install()
         except Exception:  # noqa: BLE001 — keep waiting for the gateway
-            logger.debug("Conduit: Desktop view install failed", exc_info=True)
+            logger.debug("Talaria: Desktop view install failed", exc_info=True)
             return False
 
     def _watch(self) -> None:
         deadline = time.monotonic() + DESKTOP_VIEWS_INSTALL_WINDOW_S
         while not self.try_install_quietly():
             if time.monotonic() >= deadline:
-                logger.info("Conduit: not marking chats Desktop opens as read here (%s)", self.reason)
+                logger.info("Talaria: not marking chats Desktop opens as read here (%s)", self.reason)
                 return
             time.sleep(DESKTOP_VIEWS_INSTALL_POLL_S)
         while True:
@@ -2156,7 +2154,7 @@ class _DesktopViewHook:
                     self.try_install()  # a re-install that failed earlier
                 self.sweep()
             except Exception:  # noqa: BLE001 — keep watching
-                logger.debug("Conduit: Desktop view sweep failed", exc_info=True)
+                logger.debug("Talaria: Desktop view sweep failed", exc_info=True)
 
     def verify(self) -> None:
         """Re-installs if the gateway's handlers were replaced (a reload), and
@@ -2214,7 +2212,7 @@ class _DesktopViewHook:
                     # come here, where the route reads.
                     setattr(handler, _DESKTOP_VIEW_OWNER, self)
             self.reason = None
-            logger.info("Conduit: marking chats Desktop opens as read")
+            logger.info("Talaria: marking chats Desktop opens as read")
             return True
 
     def _wrap(self, handler: Callable[..., Any], server: Any, current_transport: Callable[[], Any]) -> Callable[..., Any]:
@@ -2225,7 +2223,7 @@ class _DesktopViewHook:
                 owner = getattr(wrapper, _DESKTOP_VIEW_OWNER, self)
                 owner._observe(response, server, current_transport())
             except Exception:  # noqa: BLE001 — never fails the client's call
-                logger.debug("Conduit: Desktop view not recorded", exc_info=True)
+                logger.debug("Talaria: Desktop view not recorded", exc_info=True)
             return response
 
         setattr(wrapper, _DESKTOP_VIEW_MARKER, handler)
@@ -2241,7 +2239,7 @@ class _DesktopViewHook:
         headers = _transport_headers(transport)
         readable = headers is not None
         if readable == self.headers_unreadable:
-            logger.warning("Conduit: gateway socket headers %s",
+            logger.warning("Talaria: gateway socket headers %s",
                            "readable again" if readable else "unreadable; not marking Desktop's chats read")
         self.headers_unreadable = not readable
         if not readable:
@@ -2296,7 +2294,7 @@ class _DesktopViewHook:
         try:
             module = _desktop_selected()
         except Exception:  # noqa: BLE001 — a broken install publishes nothing; readers then push
-            logger.debug("Conduit: desktop_selected.py unavailable", exc_info=True)
+            logger.debug("Talaria: desktop_selected.py unavailable", exc_info=True)
             return
         with self._publish_lock:
             for key in set(selection) | set(self._published):
@@ -2307,7 +2305,7 @@ class _DesktopViewHook:
                 try:
                     module.publish(key, ids, now=now)
                 except Exception:  # noqa: BLE001 — readers then see nothing selected; the next sweep retries
-                    logger.debug("Conduit: could not publish Desktop's selected chats under %s", key, exc_info=True)
+                    logger.debug("Talaria: could not publish Desktop's selected chats under %s", key, exc_info=True)
                     continue
                 if ids:
                     self._published[key] = (ids, now)
@@ -2332,12 +2330,12 @@ class _DesktopViewHook:
 
 _desktop_view_store = _DesktopViewStore()
 _desktop_view_hook = _DesktopViewHook(_desktop_view_store)
-# Conduit reads every 15 s per profile while its chat list is on screen.
+# Talaria reads every 15 s per profile while its chat list is on screen.
 _desktop_views_limiter = _MintLimiter(60, 60.0, message="Too many Desktop view reads; try again shortly")
 atexit.register(_desktop_view_store.flush)
 if "hermes_cli.web_server" in sys.modules:
     # Loaded by the dashboard (not a test or the CLI): start watching for the
-    # gateway module now rather than at Conduit's first read.
+    # gateway module now rather than at Talaria's first read.
     _desktop_view_hook.ensure_started()
 
 
@@ -2377,9 +2375,9 @@ async def get_desktop_views(response: Response, profile: Optional[str] = None,
 #
 # A group chat room isn't a session, so Hermes' attach RPCs (file.attach and
 # friends), which stage into a session's workspace, can't take a file for it.
-# Conduit uploads the file here instead and puts an `@file:` reference to the
+# Talaria uploads the file here instead and puts an `@file:` reference to the
 # stored path in the room message; the room's members run on this host and read
-# it from there. Files live under <hermes home>/conduit/room-files/<id>/ and are
+# it from there. Files live under <hermes home>/talaria/room-files/<id>/ and are
 # swept a month after their upload.
 
 ROOM_FILE_MAX_BYTES = 50 * 1024 * 1024
@@ -2424,13 +2422,13 @@ def _room_file_name(raw: Any) -> str:
 def _room_files_root() -> str:
     from hermes_constants import get_hermes_home
 
-    return os.path.join(str(get_hermes_home()), "conduit", "room-files")
+    return os.path.join(str(get_hermes_home()), "talaria", "room-files")
 
 
 _room_file_last_sweep: Dict[str, float] = {}
 # Uploads wait on one another (the lock below), so they get their own
 # threads rather than the default pool other routes share.
-_room_file_executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="conduit-room-files")
+_room_file_executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="talaria-room-files")
 # Sweeps, the free-space check and the write run one at a time, so two
 # uploads can't both pass the check and then fill the disk together.
 _room_file_lock = threading.Lock()
@@ -2575,13 +2573,13 @@ async def post_room_file(request: Request, response: Response, profile: Optional
 
 # --- Room pictures -------------------------------------------------------------
 #
-# Hermes' gateway-hosted rooms (groups.*) carry no picture, so Conduit keeps a
-# room's custom picture here, under <hermes home>/conduit/room-images/: per
+# Hermes' gateway-hosted rooms (groups.*) carry no picture, so Talaria keeps a
+# room's custom picture here, under <hermes home>/talaria/room-images/: per
 # room, a small `<hash>.json` record (room id, revision, type) and the
 # picture's bytes in `<hash>.img`, named by a hash of the room id. GET
-# /room-images lists each room's revision from the records alone, so Conduit
+# /room-images lists each room's revision from the records alone, so Talaria
 # fetches only pictures it hasn't cached; GET /room-images/{room_id} returns
-# one; PUT sets it and DELETE clears it. Conduit sends a downscaled JPEG or
+# one; PUT sets it and DELETE clears it. Talaria sends a downscaled JPEG or
 # PNG. Anyone who can reach these routes is signed in to the dashboard, the
 # same trust every other route here assumes.
 
@@ -2603,13 +2601,13 @@ _ROOM_IMAGE_ID = re.compile(r"^[A-Za-z0-9._:-]{1,200}$")
 _room_image_lock = threading.Lock()
 # Writes wait on one another (the locks below), so they get their own threads
 # rather than the default pool other routes share.
-_room_image_executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="conduit-room-images")
+_room_image_executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="talaria-room-images")
 
 
 def _room_images_root() -> str:
     from hermes_constants import get_hermes_home
 
-    return os.path.join(str(get_hermes_home()), "conduit", "room-images")
+    return os.path.join(str(get_hermes_home()), "talaria", "room-images")
 
 
 def _room_image_id(raw: Any) -> str:
@@ -2892,7 +2890,7 @@ async def delete_room_image(room_id: str, response: Response) -> Dict[str, Any]:
 #
 # GET /artifacts lists what a profile's chats produced (artifacts_index.py
 # beside this folder): files Hermes sent or wrote, the HTML pages it drew,
-# files the user attached and links, newest first. Conduit's Artifacts screen
+# files the user attached and links, newest first. Talaria's Artifacts screen
 # reads every chat (no session_id) and a chat's own sheet reads one (each id
 # it's known by as a session_id, with the sessions it continues). Paged by
 # message id: pass the previous page's next_before as before. missing=hide
@@ -2907,7 +2905,7 @@ ARTIFACTS_MAX_ID_LENGTH = 200
 ARTIFACTS_TIMEOUT_S = 25.0
 _artifacts_limiter = _MintLimiter(ARTIFACTS_LIMIT, ARTIFACTS_WINDOW_S,
                                   message="Too many artifact requests; try again shortly")
-_artifacts_executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="conduit-artifacts")
+_artifacts_executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="talaria-artifacts")
 # A timed-out read keeps its worker until it ends, so a request finding both
 # busy is turned away rather than queued behind them.
 _artifacts_slots = threading.BoundedSemaphore(2)
@@ -2921,7 +2919,7 @@ def _artifacts_index() -> Any:
     with _artifacts_module_lock:
         if _artifacts_module is None:
             path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "artifacts_index.py")
-            spec = importlib.util.spec_from_file_location("conduit_push_dashboard_artifacts_index", path)
+            spec = importlib.util.spec_from_file_location("talaria_push_dashboard_artifacts_index", path)
             if spec is None or spec.loader is None or not os.path.isfile(path):
                 raise TokenError(501, "This plugin install is missing artifacts_index.py; update the plugin")
             module = importlib.util.module_from_spec(spec)
@@ -2997,13 +2995,13 @@ async def get_artifacts(response: Response, profile: Optional[str] = None, befor
     except HTTPException:
         raise
     except asyncio.TimeoutError:
-        logger.warning("Conduit artifacts list timed out after %ss", ARTIFACTS_TIMEOUT_S)
+        logger.warning("Talaria artifacts list timed out after %ss", ARTIFACTS_TIMEOUT_S)
         raise HTTPException(status_code=504, detail="Listing artifacts took too long; try again",
                             headers={"Cache-Control": "no-store"})
     except TokenError as exc:
         raise HTTPException(status_code=exc.status, detail=str(exc), headers={"Cache-Control": "no-store"})
     except sqlite3.Error as exc:
-        logger.warning("Conduit artifacts couldn't read the session store: %s", type(exc).__name__)
+        logger.warning("Talaria artifacts couldn't read the session store: %s", type(exc).__name__)
         raise HTTPException(status_code=503, detail="Hermes' session store is busy; try again shortly",
                             headers={"Cache-Control": "no-store"})
     except Exception as exc:
@@ -3013,9 +3011,9 @@ async def get_artifacts(response: Response, profile: Optional[str] = None, befor
 
 # --- Capabilities ------------------------------------------------------------
 #
-# Conduit reads this once per connection to tell which of its features this
+# Talaria reads this once per connection to tell which of its features this
 # plugin serves, and nudges an update when one it uses is missing. A plugin
-# without this route predates it, which Conduit reads as "update". Names are
+# without this route predates it, which Talaria reads as "update". Names are
 # stable feature ids, one per route family; add one with every new route.
 
 ROUTE_CAPABILITIES = (
@@ -3024,7 +3022,7 @@ ROUTE_CAPABILITIES = (
     "desktop-views",
     "hermes-calls",
     "hermes-call-outcomes",
-    "conduit-settings",
+    "talaria-settings",
     "present-v1",
     "health-sync",
     "phone-sync",
@@ -3033,7 +3031,7 @@ ROUTE_CAPABILITIES = (
     "location-sync",
     "location-locate",
     # sharing.other_profiles: the host's other profiles paired with the
-    # same iPhone read the location (location_profiles).
+    # same phone read the location (location_profiles).
     "location-profiles",
     "pairing",
     "self-restart",
@@ -3064,7 +3062,7 @@ def _plugin_version() -> Optional[str]:
 # dashboard process, so after `hermes plugins update` the version on disk
 # moves ahead of the code that is serving until the dashboard restarts.
 LOADED_VERSION = _plugin_version()
-# Changes with every dashboard process, so Conduit can tell a restart landed.
+# Changes with every dashboard process, so Talaria can tell a restart landed.
 BOOT_ID = os.urandom(8).hex()
 
 
@@ -3081,7 +3079,7 @@ async def get_capabilities(response: Response) -> Dict[str, Any]:
 #
 # After an update, Hermes' gateway restart reloads the plugin's hooks and tools
 # for the gateway, but this dashboard keeps serving the routes (and the hooks of
-# the chats it runs) it imported at start. Conduit calls this last: the process
+# the chats it runs) it imported at start. Talaria calls this last: the process
 # re-executes itself with the command line it started with, keeping its pid, so
 # systemd, launchd and a terminal launch all carry on. Refused while a chat turn
 # this process runs is still going, for the Desktop app's own backend (it
@@ -3190,7 +3188,7 @@ def _self_restart_refusal() -> Optional[Tuple[int, str]]:
 
 
 def _reexec() -> None:
-    logger.warning("Conduit plugin: restarting this dashboard to load plugin %s", _plugin_version())
+    logger.warning("Talaria plugin: restarting this dashboard to load plugin %s", _plugin_version())
     # exec skips atexit: save what this module would have saved on the way out.
     with contextlib.suppress(Exception):
         _desktop_view_store.flush()
@@ -3213,7 +3211,7 @@ def _restart_when_idle(schedule: Callable[[float, Callable[[], None]], Any],
             return
         _reexec()
     except Exception:
-        logger.exception("Conduit plugin: the dashboard restart failed; it can be asked again")
+        logger.exception("Talaria plugin: the dashboard restart failed; it can be asked again")
         with _self_restart_lock:
             _self_restart_scheduled = False
 

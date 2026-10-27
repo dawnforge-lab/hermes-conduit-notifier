@@ -1,15 +1,15 @@
-"""Hermes calls you (#449): the ``conduit_call_user`` tool.
+"""Hermes calls you (#449): the ``talaria_call_user`` tool.
 
-Hermes asks Conduit to phone the user. The call rings when the asking turn
+Hermes asks Talaria to phone the user. The call rings when the asking turn
 ends, so it opens on the finished result: the turn's final reply is in the
 chat the call opens, and the reason Hermes gives is the first thing said.
-The user's Conduit settings decide whether it may: "call when I ask" for a
+The user's Talaria settings decide whether it may: "call when I ask" for a
 call the user asked for, "Hermes decides" for one Hermes chose to make, and
 the usual limits (calls.py). A call Hermes chose to make is first checked
 against the user's own rules for such calls, when they wrote any: the tool
 hands them back, and the call goes only when Hermes asks again saying it fits
 (``fits_rules``). The bundled skill carries the full guidance
-(``skill_view("conduit_push:calling-the-user")``).
+(``skill_view("talaria_push:calling-the-user")``).
 """
 
 from __future__ import annotations
@@ -22,18 +22,18 @@ from typing import Any, Callable
 
 from . import call_watches, calls, client
 
-logger = logging.getLogger("hermes.plugins.conduit_push")
+logger = logging.getLogger("hermes.plugins.talaria_push")
 
-TOOL_NAME = "conduit_call_user"
-TOOLSET = "conduit"
+TOOL_NAME = "talaria_call_user"
+TOOLSET = "talaria"
 SKILL_NAME = "calling-the-user"
-# Opens Calls from Hermes in Conduit's Settings, from a text reply.
-SETTINGS_LINK = "[Calls from Hermes](conduit://settings/calls)"
+# Opens Calls from Hermes in Talaria's Settings, from a text reply.
+SETTINGS_LINK = "[Calls from Hermes](talaria://settings/calls)"
 
 SCHEMA: dict[str, Any] = {
     "name": TOOL_NAME,
     "description": (
-        "Phone the user through the Conduit app: their iPhone rings like a call, and when they answer, "
+        "Phone the user through the Talaria app: their phone rings like a call, and when they answer, "
         "a live voice conversation opens in this chat. The call goes out when this turn ends, so finish "
         "the work first and end the turn with the result as your final reply; the call opens with your "
         "reason and that reply. Use it when the user asked to be called, phoned or rung (\"call me when "
@@ -41,8 +41,8 @@ SCHEMA: dict[str, Any] = {
         "right away and can't wait for them to look (asked_by_user false; refused unless the user lets "
         "Hermes decide). Never for routine updates. It doesn't ring while the user is in a voice call "
         "with you. To call when something happens later (\"call me if the site goes down\"), use "
-        "conduit_call_watch instead. Before calling on your own judgment, load "
-        f"skill_view(\"conduit_push:{SKILL_NAME}\")."
+        "talaria_call_watch instead. Before calling on your own judgment, load "
+        f"skill_view(\"talaria_push:{SKILL_NAME}\")."
     ),
     "parameters": {
         "type": "object",
@@ -86,12 +86,12 @@ def register(ctx: Any, *, is_child: Callable[[Any], bool], skill_path: Any) -> N
                 # A Hermes without the display fields.
                 ctx.register_tool(**tool)
         except Exception:  # noqa: BLE001
-            logger.warning("conduit_push: could not register %s", TOOL_NAME, exc_info=True)
+            logger.warning("talaria_push: could not register %s", TOOL_NAME, exc_info=True)
     if hasattr(ctx, "register_skill"):
         try:
             ctx.register_skill(SKILL_NAME, skill_path)
         except Exception:  # noqa: BLE001
-            logger.warning("conduit_push: could not register the %s skill", SKILL_NAME, exc_info=True)
+            logger.warning("talaria_push: could not register the %s skill", SKILL_NAME, exc_info=True)
 
 
 def available() -> bool:
@@ -111,7 +111,7 @@ def handle(args: Any, *, session_id: Any = None, task_id: Any = None,
     try:
         return _answer(**_handle(args, session_id, is_child, task_id))
     except Exception:  # noqa: BLE001 — a tool must never raise
-        logger.warning("conduit_call_user failed", exc_info=True)
+        logger.warning("talaria_call_user failed", exc_info=True)
         return _answer(ok=False, error="unavailable", note="The call couldn't be set up. Tell the user in your reply instead.")
 
 
@@ -137,7 +137,7 @@ def _handle(args: Any, session_id: Any, is_child: Callable[[Any], bool],
                          "when it's time and tells you what to reply.")}
     if client.load_state() is None:
         return {"ok": False, "error": "not_paired",
-                "note": "This Hermes profile isn't paired with the Conduit app, so it can't call. Say so in your reply."}
+                "note": "This Hermes profile isn't paired with the Talaria app, so it can't call. Say so in your reply."}
     if not asked:
         settings = calls.settings()
         rules = settings["rules"] if settings["enabled"] and settings["decides"] else ""
@@ -152,8 +152,8 @@ def _handle(args: Any, session_id: Any, is_child: Callable[[Any], bool],
         calls.tool_watch(session, reason, asked=asked)
     except ValueError as error:
         if str(error) == "calls_off":
-            note = ("The user hasn't turned on calls they ask for in Conduit. Tell them in your reply, and that "
-                    f"they turn them on in Conduit's Settings, under {SETTINGS_LINK} (a link that opens it; "
+            note = ("The user hasn't turned on calls they ask for in Talaria. Tell them in your reply, and that "
+                    f"they turn them on in Talaria's Settings, under {SETTINGS_LINK} (a link that opens it; "
                     "leave the link out of anything spoken).") if asked else (
                     "The user hasn't let Hermes decide when to call. Don't call; put the news in your reply.")
             return {"ok": False, "error": "calls_off", "note": note}

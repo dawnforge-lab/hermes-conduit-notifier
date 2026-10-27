@@ -1,4 +1,4 @@
-"""Hermes lifecycle observer for Conduit push notifications."""
+"""Hermes lifecycle observer for Talaria push notifications."""
 
 from __future__ import annotations
 
@@ -13,7 +13,7 @@ from typing import Any
 
 from hermes_constants import get_hermes_home
 
-from . import (call_tool, call_watches, calls, chat_on_screen, clarify_loop, client, conduit_first, cron_runs,
+from . import (call_tool, call_watches, calls, chat_on_screen, clarify_loop, client, talaria_first, cron_runs,
                desktop_selected, health_tool, live_activity, location_tool, maps_tool, phone_tool, present_tool,
                reply_sources, room_memory, room_pushes, settings_tool, show_tool)
 from .session_titles import title as _session_title, titled as _titled
@@ -76,8 +76,8 @@ def register(ctx: Any) -> None:
     # Scheduled checks that call when something happens: the plugin keeps
     # the jobs and each one's incident, so the model only describes them.
     call_watches.register(ctx, is_child=_is_child)
-    # Hermes configures Conduit: the settings Conduit shares, changed only
-    # through requests Conduit checks and the user approves.
+    # Hermes configures Talaria: the settings Talaria shares, changed only
+    # through requests Talaria checks and the user approves.
     settings_tool.register(ctx, is_child=_is_child)
     # Hermes asks the user to OK an action on their phone (tap, or voice in
     # a call) before it does it.
@@ -85,30 +85,30 @@ def register(ctx: Any) -> None:
     # Hermes puts a table, steps or links on the screen of the user's voice
     # call instead of reading them out.
     show_tool.register(ctx, is_child=_is_child)
-    # Health data Conduit shares from Apple Health, read-only, with its skill.
+    # Health data Talaria shares from the phone, read-only, with its skill.
     health_tool.register(ctx, is_child=_is_child,
                          skill_path=Path(__file__).resolve().parent / "skills" / health_tool.SKILL_NAME / "SKILL.md")
-    # Where the user is, as Conduit shares it, with place rules and its skill.
+    # Where the user is, as Talaria shares it, with place rules and its skill.
     location_tool.register(ctx, is_child=_is_child, profile=lambda: _profile,
                            skill_path=Path(__file__).resolve().parent / "skills" / location_tool.SKILL_NAME / "SKILL.md")
     # Google Maps lookups this host answers with its own key (search,
     # directions, travel times), on top of location sharing.
     maps_tool.register(ctx, is_child=_is_child, profile=lambda: _profile)
-    # Calendar, Reminders, Focus and phone status Conduit shares, with
+    # Calendar, Reminders, Focus and phone status Talaria shares, with
     # changes the phone applies (the user approves them there), and the skill.
     phone_tool.register(ctx, is_child=_is_child, profile=lambda: _profile,
                         skill_path=Path(__file__).resolve().parent / "skills" / phone_tool.SKILL_NAME / "SKILL.md")
     try:
         ctx.register_hook("post_approval_response", _post_approval_response)
     except Exception:  # noqa: BLE001
-        logger.warning("conduit_push: post_approval_response hook unavailable", exc_info=True)
+        logger.warning("talaria_push: post_approval_response hook unavailable", exc_info=True)
     # The voice hint and the note on calls the user declined or missed are
     # extras: a Hermes that refuses the hook must not take the
     # notifications down with it.
     try:
         ctx.register_hook("pre_llm_call", _pre_llm_call)
     except Exception:  # noqa: BLE001
-        logger.warning("conduit_push: pre_llm_call hook unavailable; voice replies get no persona hint "
+        logger.warning("talaria_push: pre_llm_call hook unavailable; voice replies get no persona hint "
                        "and Hermes doesn't hear about declined calls", exc_info=True)
     # Lock Screen progress (#605): each model request and its token use.
     # Optional like the hooks above: an older Hermes without them still
@@ -117,7 +117,7 @@ def register(ctx: Any) -> None:
         try:
             ctx.register_hook(name, hook)
         except Exception:  # noqa: BLE001
-            logger.warning("conduit_push: %s hook unavailable; the Lock Screen shows less detail", name, exc_info=True)
+            logger.warning("talaria_push: %s hook unavailable; the Lock Screen shows less detail", name, exc_info=True)
     # Wrap clarify execution so a backgrounded device gets an answerable card
     # (plugin-minted id, answered through the relay). Older gateways without
     # middleware support simply keep the original clarify path.
@@ -131,11 +131,11 @@ def register(ctx: Any) -> None:
         _clarify_loop_active = True
     from .cli import dispatch, register_cli
     ctx.register_cli_command(
-        name="conduit-push",
-        help="Pair and test Hermes Conduit notifications",
+        name="talaria",
+        help="Pair and test Talaria notifications",
         setup_fn=register_cli,
         handler_fn=dispatch,
-        description="Manage the profile-scoped Conduit push notification pairing.",
+        description="Manage the profile-scoped Talaria push notification pairing.",
     )
 
 
@@ -186,11 +186,11 @@ def _post_llm_call(**kwargs: Any) -> None:
         body=plain_text(response),
     )
     # A quick reply in a chat Hermes Desktop has selected: the user most
-    # likely watched it arrive there (#87); so did one in a chat Conduit has
+    # likely watched it arrive there (#87); so did one in a chat Talaria has
     # on screen, on any device (chat_on_screen.py). A reply to a message sent
     # from a source the user turned off (Desktop, a messaging app…) arrives
     # there (#115).
-    send = (ready is not None and not _desktop_watched(session_id, started) and not _conduit_watched(session_id, started)
+    send = (ready is not None and not _desktop_watched(session_id, started) and not _talaria_watched(session_id, started)
             and _source_notifies(kwargs.get("platform")))
     # Hermes also runs this hook for a turn that failed with text (its error
     # explanation): on_session_end, right after, says which it was, so the
@@ -294,15 +294,15 @@ def _desktop_watched(session_id: str, started: float | None) -> bool:
     try:
         return desktop_selected.quick(started) and desktop_selected.selected(get_hermes_home(), session_id)
     except Exception:  # noqa: BLE001 — can't tell, so the push goes out
-        logger.debug("conduit_push: Desktop selection unreadable", exc_info=True)
+        logger.debug("talaria_push: Desktop selection unreadable", exc_info=True)
         return False
 
 
-def _conduit_watched(session_id: str, started: float | None) -> bool:
+def _talaria_watched(session_id: str, started: float | None) -> bool:
     try:
         return chat_on_screen.attended(started) and chat_on_screen.on_screen(get_hermes_home(), session_id)
     except Exception:  # noqa: BLE001 — can't tell, so the push goes out
-        logger.debug("conduit_push: Conduit's on-screen chats unreadable", exc_info=True)
+        logger.debug("talaria_push: Talaria's on-screen chats unreadable", exc_info=True)
         return False
 
 
@@ -311,7 +311,7 @@ def _source_notifies(platform: Any) -> bool:
         source = reply_sources.turn_source(platform, reply_sources.current_transport())
         return source is None or reply_sources.ReplySourcesStore(get_hermes_home()).notifies(source)
     except Exception:  # noqa: BLE001 — can't tell, so the push goes out
-        logger.debug("conduit_push: reply source unreadable", exc_info=True)
+        logger.debug("talaria_push: reply source unreadable", exc_info=True)
         return True
 
 
@@ -392,7 +392,7 @@ def _pre_approval_request(**kwargs: Any) -> None:
         session_title=room or _session_title(session_id),
         # No description: the phone writes the generic line in its language.
         body=description,
-        # Attach the structured card so Conduit can render an answerable
+        # Attach the structured card so Talaria can render an answerable
         # approval from the push payload while backgrounded. Requires both a
         # session_key (to route the choice back via approval.respond) and a
         # description (the card's display text); without either, the
@@ -438,7 +438,7 @@ def _quietly(function: Any, *args: Any) -> None:
     try:
         function(*args)
     except Exception:  # noqa: BLE001
-        logger.debug("conduit_push: Live Activity update failed", exc_info=True)
+        logger.debug("talaria_push: Live Activity update failed", exc_info=True)
 
 
 def _subagent_start(**kwargs: Any) -> None:
@@ -502,11 +502,11 @@ PERSONA_VOICE_NOTE = (
     "write will be read aloud, so write only words meant to be spoken. No stage directions or "
     "narrated actions (for example *sets down the gavel*), no sound effects, no emoji, no markdown.]"
 )
-# Added while a Conduit that shows cards is connected: what isn't spoken
+# Added while a Talaria that shows cards is connected: what isn't spoken
 # can still be seen.
 SHOW_VOICE_NOTE = (
     "[The user's phone shows a screen during this call: put anything better seen than heard (a table, steps, "
-    "a chart, code, images, links, and places as map cards) on it with conduit_show, then say in a sentence "
+    "a chart, code, images, links, and places as map cards) on it with talaria_show, then say in a sentence "
     "that it's there.]"
 )
 
@@ -536,7 +536,7 @@ def _text_parts(content: Any) -> list[str]:
 def _pre_llm_call(**kwargs: Any) -> dict[str, str] | None:
     """Context for this turn: calls from Hermes the user declined or missed
     since the last turn of this chat (#449), the voice persona hint, and
-    which of the user's data Conduit shares here, to use before other
+    which of the user's data Talaria shares here, to use before other
     routes."""
     session_id = _text(kwargs.get("session_id"))
     child = _is_child(session_id)
@@ -548,7 +548,7 @@ def _pre_llm_call(**kwargs: Any) -> dict[str, str] | None:
         None if child else calls.outcome_note(session_id),
         _voice_persona_note(kwargs.get("conversation_history")),
         # Subagents can't use the shared data (each tool refuses them).
-        None if child else conduit_first.note(),
+        None if child else talaria_first.note(),
     ]
     context = "\n\n".join(note for note in notes if note)
     return {"context": context} if context else None
@@ -642,10 +642,10 @@ def _inside_delegated_child() -> bool:
 
             _delegated_child_check = is_delegated_child_context
         except ImportError:
-            logger.info("conduit_push: this Hermes has no delegation flag; subagents are found by session id")
+            logger.info("talaria_push: this Hermes has no delegation flag; subagents are found by session id")
             _delegated_child_check = False  # an older Hermes: ids and lineage answer
         except Exception:  # noqa: BLE001 — a broken module must not break every hook
-            logger.warning("conduit_push: Hermes' delegation context failed to load", exc_info=True)
+            logger.warning("talaria_push: Hermes' delegation context failed to load", exc_info=True)
             _delegated_child_check = False
     if _delegated_child_check is False:
         return False
@@ -654,7 +654,7 @@ def _inside_delegated_child() -> bool:
     except Exception:  # noqa: BLE001
         if not _delegated_check_failed:
             _delegated_check_failed = True
-            logger.warning("conduit_push: Hermes' delegation check failed; using session ids", exc_info=True)
+            logger.warning("talaria_push: Hermes' delegation check failed; using session ids", exc_info=True)
         return False
 
 
@@ -746,10 +746,10 @@ def _lineage_unread(message: str) -> None:
     global _lineage_unread_count
     _lineage_unread_count += 1
     if _lineage_unread_count % 100 == 1:
-        logger.warning("conduit_push: %s (%d times so far); a compacted subagent may not be recognised",
+        logger.warning("talaria_push: %s (%d times so far); a compacted subagent may not be recognised",
                        message, _lineage_unread_count, exc_info=True)
     else:
-        logger.debug("conduit_push: %s", message, exc_info=True)
+        logger.debug("talaria_push: %s", message, exc_info=True)
 
 
 def _text(value: Any) -> str:
