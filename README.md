@@ -1,12 +1,12 @@
 # Talaria plugin
 
-Talaria plugin is the open-source Hermes plugin that connects a Hermes host to the [Hermes Talaria](https://github.com/kaishi00/hermes-talaria) iPhone, iPad and Apple Watch app. It started as the notification sender and now carries most of what Talaria needs from the host:
+The Talaria plugin is the open-source Hermes plugin that connects a Hermes host to the Talaria Android app. It started as the notification sender and now carries most of what Talaria needs from the host:
 
-- **Notifications and calls**: approval, input, reply, failure and background-task notifications, Hermes calling you (CallKit on the phone and Watch), and Lock Screen progress while a turn runs, all delivered through the Talaria push relay, end-to-end encrypted where APNs allows.
-- **Phone data the user opts into**: Apple Health, location, maps, calendar, reminders, Focus, phone status, contacts and alarms, sent by the phone straight to this host and sealed end to end, with the `talaria_health`, `talaria_location`, `talaria_maps`, `talaria_calendar`, `talaria_phone` and `talaria_contacts` tools for the agent.
+- **Notifications and calls**: approval, input, reply, failure and background-task notifications, and Hermes calling you, all delivered through the Talaria push relay, end-to-end encrypted.
+- **Phone data the user opts into**: health data, location, maps, calendar, reminders, Focus, phone status, contacts and alarms, sent by the phone straight to this host and sealed end to end, with the `talaria_health`, `talaria_location`, `talaria_maps`, `talaria_calendar`, `talaria_phone` and `talaria_contacts` tools for the agent.
 - **Talaria extras**: rich cards and on-screen cards during calls, Artifacts, group pictures, chat takeover, cron notification settings, Talaria settings the agent can change, and one-tap pairing and updates from the app.
 
-Every route sits behind the Hermes dashboard's own auth. The plugin holds no Apple Push Notification service key and no dashboard credentials: Apple credentials stay on the push relay, so self-hosted users never need to copy a shared signing key onto their gateway, and provider keys and sign-ins never leave this host. What each party can see is in the [privacy policy](https://kaishi00.github.io/talaria-plugin/privacy/).
+Every route sits behind the Hermes dashboard's own auth. The plugin holds no push service key and no dashboard credentials: push credentials stay on the push relay, so self-hosted users never need to copy a shared signing key onto their gateway, and provider keys and sign-ins never leave this host. What each party can see is under [Privacy](#privacy).
 
 ## Install
 
@@ -17,7 +17,7 @@ hermes plugins install dawnforge-lab/talaria-plugin --enable
 hermes gateway restart
 ```
 
-In Hermes Talaria, open **Settings > Notifications**, enable notifications, and create a pairing code. Claim it from the matching Hermes profile:
+In Talaria, open **Settings > Notifications**, enable notifications, and create a pairing code. Claim it from the matching Hermes profile:
 
 ```bash
 hermes talaria pair XXXXX-XXXXX
@@ -27,7 +27,7 @@ Pair additional profiles independently:
 
 ```bash
 hermes -p coder plugins enable talaria_push
-hermes -p coder talaria-push pair YYYYY-YYYYY
+hermes -p coder talaria pair YYYYY-YYYYY
 ```
 
 Pairing codes expire after ten minutes and can only be claimed once.
@@ -102,7 +102,7 @@ The iOS app controls which categories are enabled, whether notification previews
 - Disabling or reloading the plugin (on a Hermes with plugin unload callbacks) stops its background work: notifications still queued and replies waiting for their turn's end are dropped, the delivery and Lock Screen threads end, and a call held until your call ends is kept for the next load instead of going out.
 - The health, location, maps, calendar, phone, contacts, calls and display tools refuse delegated subagents, including one whose session id a compaction replaced (`compression.in_place: false`): the plugin asks Hermes' delegation flag (Hermes 0.22+) and follows the compaction links in Hermes' session store back to the subagent it was (plugin 0.51.6+).
 - Event titles and bodies are length-limited before delivery.
-- Lock Screen previews are disabled by default in Hermes Talaria.
+- Lock Screen previews are disabled by default in Talaria.
 - **End-to-end encryption** (plugin 0.5+, relay 0.5+, a Talaria build with encrypted notifications): Talaria creates a secret for each pairing on the phone and hands it to this profile over your Hermes dashboard connection, so it never passes through the relay. From then on every notification's title, body, profile, session and decision card is sealed with it (ChaCha20-Poly1305, keys derived with HKDF-SHA256), the phone decrypts it in a Notification Service Extension, and clarify answers come back sealed for this profile. The relay and APNs see only routing data: the event type, opaque ids, a keyed thread token and timing. A pairing that has a key never sends plaintext content again, and only accepts clarify answers sealed by the phone. `hermes talaria status` shows whether it's on; Talaria turns it on by itself when it connects to this host. Run `hermes talaria test --corrupt` to check that the phone shows only generic text for a push it can't verify. The secret is only as private in transit as your dashboard connection (HTTPS or a private tunnel is recommended).
 - `hermes talaria redact on` keeps chat content from leaving the gateway: events carry no title or body text, approval cards say "Hermes needs your approval. Open Talaria for details.", and clarify cards replace question text with generic copy. The fields needed to answer stay (session key or request id, question ids, choice labels), so cards raised while the app is backgrounded remain recoverable and answerable. Clarify choice labels still transit the relay because the answer is one of them. `status` shows the current setting; `redact off` restores full content, including for events still waiting in the local delivery queue.
 
@@ -969,7 +969,7 @@ host has a fixed address, to that address), and set a budget alert: Google
 bills the key's project. Each host makes at most 200 calls a day. `navigate`
 to a `place_id` from a Google answer sends the place's coordinates, which any
 phone's Maps opens, and the link for a text chat is a Google Maps one. A
-phone that turned on "Keep maps lookups on this iPhone" turns the tool off
+phone that turned on "Keep maps lookups on this phone" turns the tool off
 for that profile.
 
 ## Calendar, Reminders, Focus and phone status from Talaria (plugin 0.27+)
@@ -1111,12 +1111,29 @@ restart the dashboard by hand once.
 Every version is listed in [CHANGELOG.md](CHANGELOG.md), which Talaria's update
 notice reads.
 
-## Talaria support and privacy
+## Privacy
 
-The repository also hosts the public Hermes Talaria support and privacy pages:
+What the plugin sends, and where:
 
-- [Hermes Talaria support](https://kaishi00.github.io/talaria-plugin/support/)
-- [Hermes Talaria privacy policy](https://kaishi00.github.io/talaria-plugin/privacy/)
+- **To the push relay** (over HTTPS): notifications, call pushes and Lock
+  Screen progress for the profiles you paired. With end-to-end encryption on
+  (Talaria turns it on when it connects), every title, body, profile,
+  session and decision card is sealed with a key only this profile and your
+  phone hold; the relay sees only routing data (the event type, opaque ids, a
+  keyed thread token and timing). Lock Screen progress carries a phase, a
+  tool category from a fixed list, a tool count and a context percentage,
+  never chat text. `hermes talaria redact on` keeps chat text out of
+  notifications altogether.
+- **Never through the relay**: health, location, calendar, phone and contacts
+  data. Your phone sends them straight to this host over your signed-in
+  dashboard connection, sealed end to end, and only when you turn sharing on.
+  What the tools read goes to your model like any tool result.
+- **To Google**, only when you put `GOOGLE_MAPS_API_KEY` in Hermes' `.env`:
+  the maps lookups the agent makes, with your last shared location at the
+  detail you shared it. The key stays on this host.
+- **Kept on this host**: the pairing credential (`talaria-push.json`, mode
+  `0600`) and the plugin's other `talaria-*` files in the profile's Hermes
+  home. Credentials are never logged or printed by `status`.
 
 ## Development
 

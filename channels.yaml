@@ -1,14 +1,14 @@
-# Which plugin version Talaria's App Store builds ask users to update to.
+# Which plugin version Talaria's release builds ask users to update to.
 #
-# TestFlight builds ask for every version on main (plugin.yaml). App Store
-# builds only show the update notice when a host is below the plugin version
-# on main when that Talaria build was archived (Talaria records it at archive
-# time), so a plugin merge between App Store releases doesn't nag everyone.
-# `stable` can raise that between builds, never lower it: raise it when App
-# Store users need a plugin fix before the next Talaria release.
+# Test builds ask for every version on main (plugin.yaml). Release builds
+# only show the update notice when a host is below the plugin version on
+# main when that Talaria build was made (Talaria records it at build time),
+# so a plugin merge between releases doesn't nag everyone. `stable` can
+# raise that between builds, never lower it: raise it when users of a
+# release need a plugin fix before the next Talaria release.
 # Tapping Update still installs main. Users can switch in Talaria under
 # Settings > Talaria plugin > Update notices.
 #
 # Must be a dotted number no newer than plugin.yaml's version
 # (tests/test_channels.py).
-stable: 0.65.2
+stable: 1.0.0

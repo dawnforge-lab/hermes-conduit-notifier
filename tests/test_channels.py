@@ -1,4 +1,4 @@
-"""channels.yaml tells Talaria's App Store builds which plugin version to
+"""channels.yaml tells Talaria's release builds which plugin version to
 ask for. Talaria reads it from main, so a version main doesn't have would
 keep the update notice up after every update."""
 
