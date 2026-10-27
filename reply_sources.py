@@ -12,8 +12,7 @@ where the chat began: a Telegram chat continued in Conduit is a Conduit turn.
 Hermes' app gateway binds each turn to the connection that submitted it last
 before the turn started (a message queued meanwhile belongs to the next
 turn), so the turn's hooks read that connection:
-- Conduit's socket carries ``X-Conduit-Client`` (and the plugin's own Watch
-  jobs say so on their transport): "conduit".
+- Conduit's socket carries ``X-Conduit-Client``: "conduit".
 - A browser engine without that header (Hermes Desktop, the web dashboard):
   "desktop".
 - No app connection: the turn's ``platform`` tells. ``cli`` is the terminal;
@@ -176,8 +175,6 @@ def _exclusive(handle: Any) -> Iterator[None]:
 
 def turn_source(platform: Any, transport: Any = None) -> str | None:
     """Where the message this turn answers was sent, or None when unknown."""
-    if getattr(transport, "conduit_client", None) == "conduit":
-        return "conduit"
     if _is_app_socket(transport):
         headers = _headers(transport)
         if headers is None:

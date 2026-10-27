@@ -7,21 +7,17 @@ voice conversation. The agent's turn-end hooks fire it: the first turn end of
 any of its sessions consumes it, under the file lock, so a replayed hook finds
 nothing and the user is called at most once per watch.
 
-While the call is still going the watch is held: Conduit renews a short hold
-during the call and releases it at hang-up. A job that ends while held is
-told in the call itself (Conduit then removes the watch), or, when the call
-ends without that, at release (Conduit tells the user itself) or once the
-hold runs out because the phone went away (the hooks' delivery calls then).
-So the call never depends on the phone reaching the host after hanging up.
+While the call is still going the watch is held for the hold it was
+registered with. A job that ends while held is told in the call itself
+(Conduit then removes the watch), or once the hold runs out (the hooks'
+delivery calls then). So the call never depends on the phone reaching the
+host after hanging up.
 
 Hermes can also ask for a call itself (the ``conduit_call_user`` tool): a
 watch on the asking session that calls when its turn ends, with the reason
 Hermes gave. With "approval, question and failure calls" on, a request for
 the user's approval or answer that goes unanswered for a minute calls too
 (an alert: a watch that is already due), and so does a failed turn.
-
-While the user is in a Live Voice call (Conduit renews a presence hold),
-nothing rings: a call that would go out then sends the usual push instead.
 
 A call the user declines, or that goes unanswered, comes back from Conduit
 as an outcome on the call's sessions; the next turn of one of them takes it,
@@ -104,7 +100,7 @@ WATCH_TTL_S = 24 * 3600
 MAX_WATCHES = 20
 MAX_WATCH_SESSIONS = 4
 MAX_TITLE_CHARS = 120
-# A hold covers a running call between Conduit's renewals.
+# A hold covers the call a watch was registered in.
 MAX_HOLD_S = 600
 # Turn ends remembered so a watch that arrives just after its job ended still
 # calls (the user hung up as the job finished). Only kept while calls are on.
@@ -331,44 +327,6 @@ class CallStore:
             state["seeded"] = [*state["seeded"], {"id": watch["id"], "status": result["status"], "at": now}][-MAX_SEEDED:]
             return result
 
-    # --- Presence -----------------------------------------------------------
-
-    def set_presence(self, hold_s: Any) -> dict[str, Any]:
-        """The user is in a Live Voice call for ``hold_s`` more seconds
-        (Conduit renews it during the call), or not (0, at hang-up): nothing
-        rings meanwhile."""
-        hold = _seconds(hold_s, "hold_s", MAX_HOLD_S)
-        if not hold and not self.path.exists():
-            return {"status": "away"}
-        with self._locked() as state:
-            state["presence_until"] = self.clock() + hold if hold else 0.0
-            return {"status": "present" if hold else "away"}
-
-    def hold(self, watch_id: Any, hold_s: Any) -> dict[str, Any]:
-        """Renews a watch's hold for ``hold_s`` seconds while the call goes
-        on, or releases it with 0 at hang-up. Releasing a watch whose job
-        ended during the hold answers ``{"status": "ended", "outcome"}`` and
-        consumes it: the caller tells the user itself. Otherwise
-        ``{"status": "watching"}``, or ``{"status": "gone"}`` for a watch that
-        no longer exists (fired, removed or expired)."""
-        hold = _seconds(hold_s, "hold_s", MAX_HOLD_S)
-        if not isinstance(watch_id, str) or not watch_id or not self.path.exists():
-            return {"status": "gone"}
-        with self._locked() as state:
-            now = self.clock()
-            index = next((i for i, watch in enumerate(state["watches"]) if watch["id"] == watch_id), None)
-            if index is None:
-                return {"status": "gone"}
-            watch = state["watches"][index]
-            if hold:
-                watch["hold_until"] = now + hold
-                return {"status": "watching"}
-            if watch["pending"] is not None:
-                state["watches"].pop(index)
-                return {"status": "ended", "outcome": watch["pending"]["outcome"]}
-            watch["hold_until"] = 0.0
-            return {"status": "watching"}
-
     def remove_watch(self, watch_id: Any) -> bool:
         if not isinstance(watch_id, str) or not watch_id:
             return False
@@ -580,7 +538,7 @@ def _decide(state: dict[str, Any], watch: dict[str, Any], outcome: str, now: flo
     result: dict[str, Any] = {"watch": watch, "outcome": outcome}
     if not _allowed(settings, watch):
         return {**result, "status": "off"}
-    if state["presence_until"] > now or (watch["origin"] != "conduit" and _in_call(state, now)):
+    if watch["origin"] != "conduit" and _in_call(state, now):
         # The user is talking to Hermes right now: no ringing over it.
         return {**result, "status": "busy"}
     if place_blocked is not None and (settings["avoid_places"] or settings["avoid_unknown_place"]):
@@ -603,11 +561,9 @@ def _decide(state: dict[str, Any], watch: dict[str, Any], outcome: str, now: flo
 
 
 def _in_call(state: dict[str, Any], now: float) -> bool:
-    """Conduit holds a watch through the call it was asked for in (an app
-    without presence too). Not for a held watch's own call: its siblings in
-    that call run out moments apart once the phone has gone away. A call
-    with no held watch (one a ringing call opened) is covered by presence
-    alone."""
+    """Conduit holds a watch through the call it was asked for in. Not for a
+    held watch's own call: its siblings in that call run out moments apart
+    once the phone has gone away."""
     return any(watch["origin"] == "conduit" and watch["hold_until"] > now for watch in state["watches"])
 
 
@@ -691,10 +647,8 @@ def _normalized(raw: Any, now: float) -> dict[str, Any]:
                 and isinstance(entry.get("at"), (int, float)) and not isinstance(entry.get("at"), bool)
                 and now - entry["at"] < OUTCOME_TTL_S):
             told.append({"id": entry["id"], "at": float(entry["at"])})
-    presence = raw.get("presence_until", 0.0)
-    presence_until = float(presence) if isinstance(presence, (int, float)) and not isinstance(presence, bool) and presence > now else 0.0
     return {"v": VERSION, "settings": settings, "watches": watches, "history": history,
-            "ends": ends[-MAX_RECENT_ENDS:], "seeded": seeded[-MAX_SEEDED:], "presence_until": presence_until,
+            "ends": ends[-MAX_RECENT_ENDS:], "seeded": seeded[-MAX_SEEDED:],
             "outcomes": outcomes[-MAX_OUTCOMES:], "told": told[-MAX_TOLD:]}
 
 

@@ -132,8 +132,6 @@ def test_a_new_device_key_starts_with_no_history(store, phone):
         db.execute("INSERT INTO visits VALUES(?,?,?,?,?,?,?,?,?)",
                    (phone.device_id, "v_1", "arrive", "p_home", "Home", None, NOW - 60, "2026-10-13T06:57:00+01:00",
                     NOW))
-        db.execute("INSERT INTO maps(id, device, requested_at, expires_at, cache, request) VALUES(?,?,?,?,?,?)",
-                   ("m_1", phone.device_id, NOW, NOW + 60, "k", "{}"))
         watermark = db.execute("SELECT last_sent FROM devices").fetchone()[0]
     assert watermark is not None
     # The same key again (a lost answer) keeps everything.
@@ -147,11 +145,8 @@ def test_a_new_device_key_starts_with_no_history(store, phone):
     with store._write() as db:
         for table in ("fixes", "visits", "places"):
             assert db.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0] == 0, table
-        # The lookup still counts against the budget, but nothing of it is left.
-        assert db.execute("SELECT cache, request, answer FROM maps").fetchall() == [("", "", None)]
         last_seen, last_sent, sharing = db.execute("SELECT last_seen, last_sent, sharing FROM devices").fetchone()
     assert last_sent is None and last_seen is not None and sharing is not None
-    assert store.maps_answer("m_1") is None
 
 
 def test_a_sealed_fix_lands_at_the_detail_the_user_chose(store, phone):
@@ -255,8 +250,12 @@ def test_an_older_store_upgrades_and_still_takes_batches(store, phone, version):
     store.ingest(phone.seal(phone.batch(fix=fix())))
     db = sqlite3.connect(store.path)
     db.execute("ALTER TABLE devices DROP COLUMN last_sent")
-    if version == "1":
-        db.execute("DROP TABLE maps")
+    if version == "2":
+        # Schema 2 kept maps lookups on the phone in their own table. Nothing
+        # reads it any more; a store that has it opens as before.
+        db.execute("CREATE TABLE maps(id TEXT PRIMARY KEY, device TEXT NOT NULL, requested_at REAL NOT NULL,"
+                   " expires_at REAL NOT NULL, cache TEXT NOT NULL, request TEXT NOT NULL, fetched_at REAL,"
+                   " answered_at REAL, answer TEXT)")
     db.execute("UPDATE meta SET value=? WHERE key='schema'", (version,))
     db.commit()
     db.close()
@@ -592,12 +591,6 @@ def test_a_places_only_fix_the_settings_no_longer_explain_blames_nothing():
     view = {"sharing": sharing(background_precision="places"), "places": {}}
     note = tool._no_distance_note(view, {"precision": "places", "source": "message", "place_id": None}, {"name": "Home"})
     assert "the user chose" not in note
-
-
-def test_a_spoken_no_distance_note_leaves_out_locate():
-    # Voice calls have no locate action.
-    answer = tool._spoken({"ok": False, "note": "The last fix carried no distances." + tool.LOCATE_HINT + " Otherwise."})
-    assert "locate" not in answer["note"]
 
 
 def test_a_paused_user_is_never_guessed(home):
@@ -1135,42 +1128,3 @@ def test_a_content_free_locate_carries_only_a_valid_id():
     event = {"type": "location.requested", "event_id": "e1", "locate": {"id": "l_" + "a" * 20}}
     assert e2e.content_free(event)["locate"] == {"id": "l_" + "a" * 20}
     assert "locate" not in e2e.content_free({**event, "locate": {"id": "bad\n"}})
-
-
-# --- Voice reads (the store's side) -------------------------------------------------
-
-
-def test_shared_location_voice_vector_matches_conduit():
-    # ConduitTests checks the same values.
-    voice_vector = VECTOR["voice"]
-    host_private = location.unb64u(VECTOR["host_private"])
-    device_private = location.unb64u(VECTOR["device_private"])
-    raw = (serialization.Encoding.Raw, serialization.PublicFormat.Raw)
-    host_public = X25519PrivateKey.from_private_bytes(host_private).public_key().public_bytes(*raw)
-    device_public = X25519PrivateKey.from_private_bytes(device_private).public_key().public_bytes(*raw)
-    kid = location.key_id(device_public, host_public)
-    shared = location.agree(host_private, device_public)
-    request_key = location.derive_key(shared, VECTOR["device_id"], device_public, host_public,
-                                      location.INFO_VOICE_REQUEST)
-    answer_key = location.derive_key(shared, VECTOR["device_id"], device_public, host_public,
-                                     location.INFO_VOICE_ANSWER)
-    request_aad = location.voice_aad("request", "conduit_location", kid, VECTOR["device_id"], voice_vector["call_id"])
-    answer_aad = location.voice_aad("answer", "conduit_location", kid, VECTOR["device_id"], voice_vector["call_id"])
-    assert (request_key.hex(), answer_key.hex()) == (voice_vector["request_key"], voice_vector["answer_key"])
-    assert (request_aad.decode(), answer_aad.decode()) == (voice_vector["request_aad"], voice_vector["answer_aad"])
-    assert location.seal(request_key, voice_vector["request"].encode(), request_aad,
-                         nonce=bytes(12))[1] == voice_vector["request_ct"]
-    assert location.seal(answer_key, voice_vector["answer"].encode(), answer_aad,
-                         nonce=bytes(12))[1] == voice_vector["answer_ct"]
-
-
-def test_a_local_live_read_is_logged_as_a_local_live_call():
-    logged = []
-
-    class Store:
-        def log_read(self, action, session, title):
-            logged.append((action, session, title))
-
-    tool._log_voice(Store(), "now", "local-live")
-    tool._log_voice(Store(), "now", "something-new")
-    assert logged == [("now", "", "Local Live call"), ("now", "", "Voice call")]

@@ -1368,9 +1368,9 @@ _health_wipe_limiter = _MintLimiter(HEALTH_WIPE_LIMIT, HEALTH_WIPE_WINDOW_S,
 _health_store_module: Any = None
 
 
-# health_store.py and health_tool.py beside this folder, imported as one
-# private package (its __init__ never runs, so nothing registers with Hermes
-# here) so the tool's relative import finds the same store module.
+# Plugin modules beside this folder (health_store.py, phone_store.py, …),
+# imported as one private package (its __init__ never runs, so nothing
+# registers with Hermes here) so their relative imports stay inside it.
 DASHBOARD_PACKAGE = "conduit_push_dashboard_pkg"
 
 

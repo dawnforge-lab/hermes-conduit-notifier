@@ -225,7 +225,7 @@ def test_recent_ends_are_not_recorded_while_calls_are_off(tmp_path):
 def test_a_job_that_ends_during_the_call_waits_for_the_hold(tmp_path):
     clock = Clock()
     store = _store(tmp_path, clock=clock, enabled=True)
-    watch_id = store.add_watch(["rt-1", "st-1"], "Check the server", hold_s=180)["id"]
+    store.add_watch(["rt-1", "st-1"], "Check the server", hold_s=180)
     held = store.fire("st-1", "done")
     assert held["status"] == "held"
     assert held["until"] == clock.now + 180
@@ -234,24 +234,6 @@ def test_a_job_that_ends_during_the_call_waits_for_the_hold(tmp_path):
     assert store.watch_count() == 1
     assert store.fire_due() == []
     assert store.next_due() == clock.now + 180
-    assert store.hold(watch_id, 180) == {"status": "watching"}  # still on the call
-
-
-def test_released_at_hang_up_after_the_job_ended_answers_ended(tmp_path):
-    store = _store(tmp_path, enabled=True)
-    watch_id = store.add_watch(["rt-1"], "Check the server", hold_s=180)["id"]
-    store.fire("rt-1", "failed")
-    assert store.hold(watch_id, 0) == {"status": "ended", "outcome": "failed"}
-    assert store.watch_count() == 0
-    assert store.hold(watch_id, 0) == {"status": "gone"}
-    assert store.fire_due() == []
-
-
-def test_released_before_the_job_ends_calls_when_it_does(tmp_path):
-    store = _store(tmp_path, enabled=True)
-    watch_id = store.add_watch(["rt-1"], "Check the server", hold_s=180)["id"]
-    assert store.hold(watch_id, 0) == {"status": "watching"}
-    assert store.fire("rt-1", "done")["status"] == "call"
 
 
 def test_a_hold_that_runs_out_calls_for_a_job_that_ended_during_it(tmp_path):
@@ -271,17 +253,6 @@ def test_a_hold_that_runs_out_calls_for_a_job_that_ended_during_it(tmp_path):
     assert store.next_due() is None
 
 
-def test_a_renewed_hold_keeps_waiting(tmp_path):
-    clock = Clock()
-    store = _store(tmp_path, clock=clock, enabled=True)
-    watch_id = store.add_watch(["rt-1"], "Check the server", hold_s=180)["id"]
-    store.fire("rt-1", "done")
-    clock.now += 120
-    store.hold(watch_id, 180)
-    clock.now += 120
-    assert store.fire_due() == []
-
-
 def test_a_due_call_still_obeys_the_limits(tmp_path):
     clock = Clock()
     store = _store(tmp_path, clock=clock, enabled=True)
@@ -298,14 +269,14 @@ def test_a_due_call_still_obeys_the_limits(tmp_path):
 def test_a_correction_during_the_call_is_not_the_job_ending(tmp_path):
     clock = Clock()
     store = _store(tmp_path, clock=clock, enabled=True)
-    watch_id = store.add_watch(["rt-1"], "Check the server", hold_s=90)["id"]
+    store.add_watch(["rt-1"], "Check the server", hold_s=90)
     # The call interrupts the job to put a correction into it.
     held = store.fire("rt-1", "stopped")
     assert held["status"] == "held"
     assert held["outcome"] is None
     assert store.next_due() is None
-    # Hang-up while the corrected turn runs: still watching.
-    assert store.hold(watch_id, 0) == {"status": "watching"}
+    # The hold runs out while the corrected turn runs: still watching.
+    clock.now += 91
     assert store.fire("rt-1", "done")["status"] == "call"
 
 
@@ -340,14 +311,6 @@ def test_a_hold_is_whole_seconds_within_bounds(tmp_path, hold_s):
     store = _store(tmp_path, enabled=True)
     with pytest.raises(ValueError, match="hold_s"):
         store.add_watch(["rt-1"], "Job", hold_s=hold_s)
-    watch_id = store.add_watch(["rt-1"], "Job")["id"]
-    with pytest.raises(ValueError, match="hold_s"):
-        store.hold(watch_id, hold_s)
-
-
-def test_holding_an_unknown_watch_is_gone(tmp_path):
-    store = _store(tmp_path, enabled=True)
-    assert store.hold("0" * 24, 60) == {"status": "gone"}
 
 
 def test_watches_expire_after_a_day(tmp_path):
@@ -580,26 +543,10 @@ def test_a_failed_turn_alert_counts_against_the_limits(tmp_path):
     assert store.watch_count() == 0
 
 
-def test_nothing_rings_while_the_user_is_in_a_call(tmp_path):
-    clock = Clock()
-    store = _store(tmp_path, clock=clock, enabled=True, alerts=True)
-    store.add_watch(["st-1"], "Check the server")
-    assert store.set_presence(90) == {"status": "present"}
-    assert store.fire("st-1", "done")["status"] == "busy"
-    assert store.alert_now("st-2", "failed", "")["status"] == "busy"
-    clock.now += 91
-    assert store.alert_now("st-3", "failed", "")["status"] == "call", "a presence that ran out rings again"
-    store.set_presence(90)
-    assert store.set_presence(0) == {"status": "away"}
-    clock.now += 200
-    store.add_watch(["st-4"], "Check the server")
-    assert store.fire("st-4", "done")["status"] == "call"
-
-
 def test_a_watch_held_through_a_call_keeps_hermes_calls_from_ringing_over_it(tmp_path):
     clock = Clock()
     store = _store(tmp_path, clock=clock, enabled=True, alerts=True)
-    # An app without presence holds the watch it registered in the call.
+    # The app holds the watch it registered in the call.
     store.add_watch(["st-1"], "Check the server", hold_s=180)
     store.add_watch(["st-2"], "Check the logs", hold_s=185)
     assert store.alert_now("st-3", "failed", "")["status"] == "busy"
@@ -611,14 +558,6 @@ def test_a_watch_held_through_a_call_keeps_hermes_calls_from_ringing_over_it(tmp
     assert store.fire("st-2", "done")["status"] == "held"
     clock.now += 181
     assert [result["status"] for result in store.fire_due()] == ["call"]
-
-
-def test_presence_released_before_any_state_writes_nothing(tmp_path):
-    store = CallStore(tmp_path, clock=Clock())
-    assert store.set_presence(0) == {"status": "away"}
-    assert not store.path.exists()
-    with pytest.raises(ValueError):
-        store.set_presence(601)
 
 
 def test_watches_from_an_older_plugin_read_as_conduit_watches(tmp_path):

@@ -371,8 +371,6 @@ def test_conduit_app_and_cron_turns_still_draw_cards(tool_home, monkeypatch, pla
     _exchange(PresentStore(tool_home), features=("chat-cards",))
     _bound_platform(monkeypatch, platform)
     assert _call({"title": "Dinner", "cards": [MAP]})["ok"] is True
-    _bound_platform(monkeypatch, platform, transport=types.SimpleNamespace(conduit_client="conduit"))
-    assert _call({"title": "Dinner", "cards": [MAP]})["ok"] is True
 
 
 def test_cards_are_left_out_when_the_schema_is_missing(store, monkeypatch):

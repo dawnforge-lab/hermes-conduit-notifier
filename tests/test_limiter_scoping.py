@@ -88,22 +88,6 @@ def test_a_broken_scope_is_a_named_host_failure(client, monkeypatch):
     assert response.json()["detail"] == "Conduit profile check failed on the host (RuntimeError)"
 
 
-def test_voice_shared_reads_the_calling_location_device_alone():
-    from test_location import tool
-
-    asked = []
-
-    class Store:
-        def snapshot(self, device_id=None):
-            asked.append(device_id)
-            return {"device": "iphone"} if device_id in (None, "iphone") else None
-
-    assert tool.voice_shared(Store()) is True
-    assert tool.voice_shared(Store(), "iphone") is True
-    assert tool.voice_shared(Store(), "ipad") is False
-    assert asked == [None, "iphone", "ipad"]
-
-
 def test_manifest_mounts_the_api_under_the_plugin_name():
     manifest = json.loads((ROOT / "dashboard" / "manifest.json").read_text())
     assert manifest["name"] == "conduit_push"

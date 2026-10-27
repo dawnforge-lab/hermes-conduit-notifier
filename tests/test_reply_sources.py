@@ -101,7 +101,6 @@ def test_an_unreadable_file_reads_as_everything_on(tmp_path):
     ("telegram", WSTransport({"x-conduit-client": "conduit"}), "conduit"),
     ("desktop", WSTransport({"user-agent": ELECTRON}), "desktop"),
     ("tui", WSTransport({"user-agent": SAFARI}), "desktop"),
-    ("desktop", types.SimpleNamespace(conduit_client="conduit"), "conduit"),
     ("telegram", None, "messaging"),
     ("Discord", None, "messaging"),
     ("cli", None, "terminal"),

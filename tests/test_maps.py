@@ -1,11 +1,9 @@
 import importlib.util
 import json
 import pathlib
-import sqlite3
 import sys
 
 import pytest
-from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PublicKey
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 
@@ -18,197 +16,16 @@ _spec.loader.exec_module(helpers)
 location, api, Phone, NOW, BASE = helpers.location, helpers.api, helpers.Phone, helpers.NOW, helpers.BASE
 sharing, fix, FakeClient = helpers.sharing, helpers.fix, helpers.FakeClient
 maps = helpers._load("conduit_push.maps_tool", ROOT / "maps_tool.py")
-events = helpers._load("conduit_push.events", ROOT / "events.py")
-e2e = helpers._load("conduit_push.e2e", ROOT / "e2e.py")
 
 DEVICE = helpers.DEVICE
 
 
-class MapsPhone(Phone):
-    """Conduit's side of a maps lookup, as the Swift code does it."""
-
-    def keys(self, store):
-        with sqlite3.connect(store.path) as db:
-            host_public = bytes(db.execute("SELECT host_public FROM devices WHERE id=?", (self.device_id,)).fetchone()[0])
-        shared = self.private.exchange(X25519PublicKey.from_public_bytes(host_public))
-        return (location.derive_key(shared, self.device_id, self.public, host_public, location.INFO_MAPS_REQUEST),
-                location.derive_key(shared, self.device_id, self.public, host_public, location.INFO_MAPS_ANSWER))
-
-    def open_request(self, store, sealed, request_id):
-        request_key, _ = self.keys(store)
-        return json.loads(location.open_sealed(request_key, sealed["nonce"], sealed["ct"],
-                                               location.maps_aad("request", self.kid, self.device_id, request_id)))
-
-    def seal_answer(self, store, request_id, answer):
-        _, answer_key = self.keys(store)
-        nonce, ct = location.seal(answer_key, json.dumps(answer).encode(),
-                                  location.maps_aad("answer", self.kid, self.device_id, request_id))
-        return {"v": 1, "device_id": self.device_id, "kid": self.kid, "nonce": nonce, "ct": ct}
-
-
-def maps_sharing(**changes):
-    return sharing(features=["maps"], **changes)
-
-
-@pytest.fixture()
-def store(tmp_path):
-    return location.LocationStore(tmp_path, clock=lambda: NOW)
-
-
-def test_shared_maps_vector_matches_conduit():
-    # ConduitTests' testLocationMapsSealingMatchesTheVector checks the same
-    # keys, AAD and ciphertexts.
-    vector = helpers.VECTOR
-    maps_vector = vector["maps"]
-    host_private = location.unb64u(vector["host_private"])
-    host_public = location.unb64u(vector["host_public"])
-    device_public = location.unb64u(vector["device_public"])
-    shared = location.agree(host_private, device_public)
-    request_key = location.derive_key(shared, vector["device_id"], device_public, host_public, location.INFO_MAPS_REQUEST)
-    answer_key = location.derive_key(shared, vector["device_id"], device_public, host_public, location.INFO_MAPS_ANSWER)
-    assert (request_key.hex(), answer_key.hex()) == (maps_vector["request_key"], maps_vector["answer_key"])
-    request_aad = location.maps_aad("request", vector["kid"], vector["device_id"], maps_vector["id"])
-    answer_aad = location.maps_aad("answer", vector["kid"], vector["device_id"], maps_vector["id"])
-    assert (request_aad.decode(), answer_aad.decode()) == (maps_vector["request_aad"], maps_vector["answer_aad"])
-    assert location.seal(request_key, maps_vector["request"].encode(), request_aad, nonce=bytes(12)) == \
-        (maps_vector["nonce"], maps_vector["request_ct"])
-    assert location.seal(answer_key, maps_vector["answer"].encode(), answer_aad, nonce=bytes(12)) == \
-        (maps_vector["nonce"], maps_vector["answer_ct"])
-    # The host opens the phone's answer only under its own lookup's id.
-    assert location.open_sealed(answer_key, maps_vector["nonce"], maps_vector["answer_ct"], answer_aad) == \
-        maps_vector["answer"].encode()
-    with pytest.raises(location.LocationError):
-        location.open_sealed(answer_key, maps_vector["nonce"], maps_vector["answer_ct"],
-                             location.maps_aad("answer", vector["kid"], vector["device_id"], "m_another0123456789abc"))
-
-
 def _phone(store, **batch):
-    phone = MapsPhone()
+    phone = Phone()
     phone.accept(store.register_key(phone.key_request()))
-    batch.setdefault("sharing", maps_sharing())
+    batch.setdefault("sharing", sharing())
     store.ingest(phone.seal(phone.batch(**batch)))
     return phone
-
-
-# --- The store ---------------------------------------------------------------
-
-
-def test_only_a_phone_that_says_it_can_answers(store):
-    phone = MapsPhone()
-    phone.accept(store.register_key(phone.key_request()))
-    store.ingest(phone.seal(phone.batch(sharing=sharing())))
-    assert store.maps_device() is None, "an older Conduit doesn't list maps"
-    store.ingest(phone.seal(phone.batch(sharing=sharing(features=["maps", "teleport"]))))
-    assert store.maps_device()["device_id"] == DEVICE
-    assert store.snapshot()["sharing"]["features"] == ["maps"]
-    store.ingest(phone.seal(phone.batch(sharing=maps_sharing(background=False), fix=fix())))
-    assert store.maps_device() is None, "it needs background sharing (the wake)"
-
-
-def test_a_lookup_goes_sealed_to_its_phone_and_the_answer_comes_back(store):
-    phone = _phone(store)
-    request_id = store.start_maps(DEVICE, {"action": "search", "query": "pharmacy", "near": {"me": True}})["id"]
-    sealed = store.maps_request(request_id, DEVICE, phone.kid)
-    opened = phone.open_request(store, sealed, request_id)
-    assert opened["query"] == "pharmacy" and opened["id"] == request_id and opened["expires_at"]
-    answer = {"id": request_id, "ok": True, "result": {"places": [{"name": "Boots"}]}}
-    store.answer_maps(request_id, phone.seal_answer(store, request_id, answer))
-    assert store.maps_answer(request_id) == answer
-    with pytest.raises(location.LocationError) as error:
-        store.maps_request(request_id, DEVICE, phone.kid)
-    assert error.value.code == "unknown", "an answered lookup can't be fetched again"
-
-
-def test_another_device_or_a_late_fetch_gets_nothing(store):
-    phone = _phone(store)
-    request_id = store.start_maps(DEVICE, {"action": "lookup", "query": "Heathrow"})["id"]
-    ipad = MapsPhone("ipad-device-02")
-    ipad.accept(store.register_key(ipad.key_request()))
-    with pytest.raises(location.LocationError) as error:
-        store.maps_request(request_id, ipad.device_id, ipad.kid)
-    assert error.value.status == 404
-    store.clock = lambda: NOW + location.MAPS_TTL_S + 1
-    with pytest.raises(location.LocationError):
-        store.maps_request(request_id, DEVICE, phone.kid)
-
-
-def test_an_answer_for_another_lookup_is_refused(store):
-    phone = _phone(store)
-    first = store.start_maps(DEVICE, {"action": "lookup", "query": "a"})["id"]
-    second = store.start_maps(DEVICE, {"action": "lookup", "query": "b"})["id"]
-    swapped = phone.seal_answer(store, first, {"id": second, "ok": True, "result": {}})
-    with pytest.raises(location.LocationError):
-        store.answer_maps(second, swapped)
-    with pytest.raises(location.LocationError) as error:
-        store.answer_maps(first, swapped)
-    assert error.value.code == "malformed"
-
-
-def test_a_repeat_is_answered_from_the_last_answer_and_the_budget_holds(store):
-    clock = [NOW]
-    store.clock = lambda: clock[0]
-    phone = _phone(store)
-    question = {"action": "travel_times", "from": {"me": True}, "to": [{"saved": "p_work"}], "mode": "driving"}
-    request_id = store.start_maps(DEVICE, question)["id"]
-    answer = {"id": request_id, "ok": True, "result": {"results": []}}
-    store.answer_maps(request_id, phone.seal_answer(store, request_id, answer))
-    assert store.start_maps(DEVICE, dict(question)) == {"cached": answer}
-    clock[0] += location.MAPS_CACHE_S + 1
-    assert "id" in store.start_maps(DEVICE, question)
-    for index in range(location.MAPS_PER_HOUR - 2):
-        store.start_maps(DEVICE, {**question, "mode": "walking", "n": index})
-    with pytest.raises(location.LocationError) as error:
-        store.start_maps(DEVICE, {**question, "n": "one more"})
-    assert error.value.code == "too_soon"
-
-
-def test_cancelled_lookups_dont_count_and_old_questions_are_forgotten(store):
-    clock = [NOW]
-    store.clock = lambda: clock[0]
-    _phone(store)
-    request_id = store.start_maps(DEVICE, {"action": "lookup", "query": "the clinic on Elm St"})["id"]
-    store.cancel_maps(request_id)
-    other = store.start_maps(DEVICE, {"action": "lookup", "query": "the dentist"})["id"]
-    clock[0] += location.MAPS_TTL_S + location.MAPS_CACHE_S + 1
-    store.start_maps(DEVICE, {"action": "lookup", "query": "later"})
-    with sqlite3.connect(store.path) as db:
-        rows = dict(db.execute("SELECT id, request FROM maps").fetchall())
-    assert request_id not in rows and rows[other] == ""
-
-
-def test_wipe_takes_the_lookups_too(store):
-    _phone(store)
-    ipad = MapsPhone("ipad-device-02")
-    ipad.accept(store.register_key(ipad.key_request()))  # keeps the file
-    store.start_maps(DEVICE, {"action": "lookup", "query": "x"})
-    store.wipe(DEVICE)
-    with sqlite3.connect(store.path) as db:
-        assert db.execute("SELECT COUNT(*) FROM maps").fetchone()[0] == 0
-
-
-def test_a_schema_1_store_gains_the_maps_table(tmp_path):
-    store = location.LocationStore(tmp_path, clock=lambda: NOW)
-    _phone(store)
-    with sqlite3.connect(store.path) as db:
-        db.execute("DROP TABLE maps")
-        db.execute("ALTER TABLE devices DROP COLUMN last_sent")  # schema 1 had neither
-        db.execute("UPDATE meta SET value='1' WHERE key='schema'")
-    assert store.maps_device() is not None
-    store.start_maps(DEVICE, {"action": "lookup", "query": "x"})
-    with sqlite3.connect(store.path) as db:
-        assert db.execute("SELECT value FROM meta WHERE key='schema'").fetchone()[0] == str(location.SCHEMA_VERSION)
-
-
-# --- The push ---------------------------------------------------------------
-
-
-def test_the_push_carries_only_the_lookup_id_sealed():
-    event = events.push_event("location.requested", identifier="maps:m_x", profile="work",
-                              maps={"id": "m_" + "a" * 20})
-    assert event["maps"] == {"id": "m_" + "a" * 20} and "locate" not in event
-    assert "maps" in e2e.INNER_FIELDS
-    assert events.push_event("location.requested", identifier="x", maps={"id": "bad"}).get("maps") is None
-    assert "maps-v1" in events.PLUGIN_CAPABILITIES
 
 
 # --- The tool ---------------------------------------------------------------
@@ -287,11 +104,6 @@ def test_a_saved_place_gets_a_labelled_guess(home, google):
     assert "rough guess" in answer["note"]
 
 
-def test_a_content_free_push_keeps_the_lookup_id():
-    event = events.push_event("location.requested", identifier="maps:m_x", maps={"id": "m_" + "b" * 20})
-    assert e2e.content_free(event, None)["maps"] == {"id": "m_" + "b" * 20}
-
-
 def test_impossible_times_are_refused_before_a_lookup(home, google):
     _shared(home, fix=fix("significant"))
     assert _call({"action": "directions", "to": "Home", "depart_at": "2026-10-15T99:99+99:99"})["error"] == "invalid"
@@ -328,21 +140,6 @@ def test_a_usage_file_that_cant_be_opened_refuses_the_lookup(tmp_path):
 def test_the_phones_result_cant_replace_the_envelope():
     answer = maps._shaped({"ok": True, "result": {"ok": False, "action": "x", "places": []}}, {"action": "search"})
     assert answer["ok"] is True and answer["action"] == "search"
-
-
-def test_a_late_answer_is_refused_and_old_lookups_go_on_upload(store):
-    clock = [NOW]
-    store.clock = lambda: clock[0]
-    phone = _phone(store)
-    request_id = store.start_maps(DEVICE, {"action": "lookup", "query": "the dentist"})["id"]
-    clock[0] += location.MAPS_TTL_S + 1
-    with pytest.raises(location.LocationError) as error:
-        store.answer_maps(request_id, phone.seal_answer(store, request_id, {"id": request_id, "ok": True, "result": {}}))
-    assert error.value.status == 404
-    clock[0] += location.MAPS_CACHE_S
-    store.ingest(phone.seal(phone.batch(sharing=maps_sharing())))
-    with sqlite3.connect(store.path) as db:
-        assert db.execute("SELECT request FROM maps WHERE id=?", (request_id,)).fetchone()[0] == ""
 
 
 # --- Navigate ----------------------------------------------------------------
@@ -387,7 +184,7 @@ def test_navigate_from_another_profile_is_logged_under_it(home, monkeypatch):
     for path in (home, work):
         path.mkdir(parents=True, exist_ok=True)
         (path / "conduit-push.json").write_text(json.dumps({"credential": "c", "installation_id": "installation-1"}))
-    store, _ = _shared(work, sharing=maps_sharing(other_profiles=True), fix=fix("significant"))
+    store, _ = _shared(work, sharing=sharing(other_profiles=True), fix=fix("significant"))
     _present(home)
     monkeypatch.setattr(maps, "client", Enqueued())
     answer = _call({"action": "navigate", "to": "Heathrow Terminal 5"}, profile="default", session_id="session-1")
@@ -509,7 +306,7 @@ def google(home, monkeypatch):
 def _phone_without_maps(home, **batch):
     """A phone that shares its location but answers no lookups (the Android app)."""
     store = location.LocationStore(home, clock=lambda: NOW)
-    phone = MapsPhone()
+    phone = Phone()
     phone.accept(store.register_key(phone.key_request()))
     batch.setdefault("sharing", sharing())
     batch.setdefault("fix", fix("significant"))
@@ -625,7 +422,7 @@ def test_a_key_google_refuses_reads_plainly(home, google):
 
 
 def test_keep_maps_off_the_host_turns_google_off(home, google):
-    _shared(home, sharing=maps_sharing(maps_host=False), fix=fix("significant"))
+    _shared(home, sharing=sharing(maps_host=False), fix=fix("significant"))
     assert maps.available() is False
     assert _call({"action": "lookup", "query": "Heathrow"})["error"] == "unavailable"
     assert google.calls == []

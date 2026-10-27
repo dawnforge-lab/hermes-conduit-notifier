@@ -380,18 +380,6 @@ def test_a_hold_that_runs_out_calls_without_a_second_push(home, fake, clock, mon
     assert fake.enqueued == []
 
 
-def test_a_hold_released_at_hang_up_leaves_the_call_to_conduit(home, fake, clock, monkeypatch):
-    watch_id = _held_watch(home, "rt-1")
-
-    def sleep(seconds, wake=None):
-        # Conduit hung up and released the watch while the waiter slept.
-        assert calls._store(home).hold(watch_id, 0) == {"status": "ended", "outcome": "done"}
-        clock[0] += seconds
-    monkeypatch.setattr(calls, "_sleep", sleep)
-    calls.turn_ended("rt-1", "done", profile="default", fallback=READY)
-    assert fake.sent == []
-
-
 def test_a_watch_removed_during_the_call_never_calls(home, fake, clock, monkeypatch):
     watch_id = _held_watch(home, "rt-1")
 
@@ -779,15 +767,6 @@ def test_a_failed_turn_calls_in_place_of_its_push_with_alerts_on(home, fake):
     assert [event["type"] for event in fake.enqueued] == ["turn.failed"]
 
 
-def test_nothing_rings_during_a_live_voice_call(home, fake, paired):
-    _settings(home)
-    _tool({"reason": "Done.", "asked_by_user": True})
-    calls._store(home).set_presence(90)
-    _reply(session_id="st-1", turn_id="t1", assistant_response="Done.")
-    assert fake.sent == []
-    assert [event["type"] for event in fake.enqueued] == ["response.ready"]
-
-
 def test_a_question_left_unanswered_calls_and_an_answer_stops_it(home, fake, clock, monkeypatch, paired):
     loop = sys.modules["conduit_push.clarify_loop"]
     _settings(home, alerts=True)
@@ -886,7 +865,6 @@ def test_an_unreadable_store_says_nothing_and_never_raises(home, monkeypatch):
     assert plugin._pre_llm_call(session_id="rt-1") is None
 
 
-
 def _desktop_selects(home, monkeypatch, *ids):
     monkeypatch.setattr(plugin, "get_hermes_home", lambda: home)
     sys.modules["conduit_push.desktop_selected"].publish(home, ids)
@@ -961,7 +939,6 @@ def test_child_and_silent_turns_leave_no_start_time(home, fake, monkeypatch):
     _reply(session_id="st-1", turn_id="s1", assistant_response="[Silent]")
     assert plugin._turn_started == {}
     plugin._subagent_stop(child_session_id="child-9", parent_session_id="st-1")
-
 
 
 # --- Cron runs ---------------------------------------------------------------

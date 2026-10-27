@@ -106,23 +106,3 @@ def test_each_shared_tool_says_to_use_it_first():
     assert phone.PHONE_SCHEMA["description"].endswith(first.PHONE_FIRST)
     assert health.SCHEMA["description"].endswith(first.HEALTH_FIRST)
     assert location.SCHEMA["description"].endswith(first.LOCATION_FIRST)
-
-
-def test_voice_calls_get_no_routing_sentence():
-    # A live voice model has no other route to choose from.
-    assert first.HEALTH_FIRST not in health.voice_description()
-    assert first.LOCATION_FIRST not in location.voice_description()
-    texts = [tool["description"] for tool in phone.voice_tools(_SharingStore()).values()]
-    assert texts
-    for sentence in (first.CALENDAR_FIRST, first.CONTACTS_FIRST, first.PHONE_FIRST):
-        assert all(sentence not in text for text in texts)
-    # Deleting is the phone's own tool too, so a call doesn't ask Hermes.
-    calendar = phone.voice_tools(_SharingStore())[phone.CALENDAR_TOOL]["description"]
-    assert "add or delete an event or reminder, use the phone's own add or remove tool" in calendar
-
-
-class _SharingStore:
-    """A phone store where one device shares everything voice can read."""
-
-    def devices(self):
-        return [{"sharing": {"calendar": "full", "reminders": True, "status": True, "focus": True, "alarms": True}}]

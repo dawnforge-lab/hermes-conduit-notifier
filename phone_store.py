@@ -87,9 +87,8 @@ KID_TAG = b"conduit-phone-kid\n"
 NONCE_BYTES = 12
 KEY_BYTES = 32
 
-# Exchange operations this host answers: "changes" at /phone/exchange,
-# "voice" (a live voice call's read) at /voice-tools/call (contract section 5).
-EXCHANGE_OPS = ("changes", "voice")
+# Exchange operations this host answers: "changes" at /phone/exchange.
+EXCHANGE_OPS = ("changes",)
 
 CALENDAR_SHARING = ("full", "write_only", "off")
 # Sharing switches that take changes away when on: Hermes reads what's
@@ -732,8 +731,7 @@ class PhoneStore:
         if op not in EXCHANGE_OPS:
             raise PhoneError("unknown_op", f"op must be one of {', '.join(EXCHANGE_OPS)}")
         if op not in ops:
-            raise PhoneError("unknown_op", "Voice reads go to /voice-tools/call" if op == "voice"
-                             else f"This route takes op {', '.join(ops)}")
+            raise PhoneError("unknown_op", f"This route takes op {', '.join(ops)}")
         if not crypto_available():
             raise PhoneError("no_crypto", "Calendar sharing needs the cryptography package on this host", status=501)
         with self._read() as db:
@@ -764,16 +762,6 @@ class PhoneStore:
         device_id, _, request, seal_answer = self.open_exchange(envelope, ops=("changes",))
         changes = self.exchange_changes(device_id, request.get("results"), kid=envelope["kid"])
         return {"v": 1, **seal_answer({"changes": changes})}
-
-    def open_voice_request(self, envelope: Any) -> tuple[str, dict[str, Any], Callable[[dict[str, Any]], dict[str, str]]]:
-        """A live voice call's sealed read (``op: "voice"``): the device it
-        covers, the opened request ``{call_id, tool, args, provider}``, and the
-        sealer for its answer. Only the device can ask, and only about itself.
-        A replayed request isn't refused (like health voice reads): it only
-        re-runs a read whose answer is sealed to the device, so whoever replays
-        it learns nothing, and the route's rate limit caps the load."""
-        device_id, _, request, seal_answer = self.open_exchange(envelope, ops=("voice",))
-        return device_id, request, seal_answer
 
     def exchange_changes(self, device_id: str, results: Any, *, kid: str) -> list[dict[str, Any]]:
         """Records the phone's outcomes for its changes, then answers every
@@ -1022,15 +1010,13 @@ class PhoneStore:
 
     @contextlib.contextmanager
     def reader(self, need: str, device: Any = None,
-               exact: bool = False, for_change: bool = False
-               ) -> Iterator[tuple[sqlite3.Connection, dict[str, Any]] | None]:
+               for_change: bool = False) -> Iterator[tuple[sqlite3.Connection, dict[str, Any]] | None]:
         """A read connection and the device to read: the one named, else the
         one that synced last sharing ``need`` (see ``shares``: "events",
         "reminders", "status", "focus", "calendars", "phone", "phone_tool",
         "alarms", "contacts" or "any"). None when nothing is shared.
         Raises PhoneError ``not_shared`` when the named device doesn't share
-        it. ``exact``: ``device`` is an id and only that device is read (a
-        voice read), never another device by name. ``for_change``: the device
+        it. ``for_change``: the device
         is the one a change will go to, so a device still setting up after a
         new key isn't replaced by another (PhoneError ``device_not_ready``)."""
         with self._read() as db:
@@ -1038,10 +1024,10 @@ class PhoneStore:
                 yield None
                 return
             try:
-                device_id, name, sharing = _pick_device(db, device, need, exact=exact,
+                device_id, name, sharing = _pick_device(db, device, need,
                                                         now=int(self.clock()) if for_change else None)
             except PhoneError as error:
-                if error.code == "nothing_shared" and not exact:
+                if error.code == "nothing_shared":
                     yield None
                     return
                 raise
@@ -1447,26 +1433,13 @@ def _read_only(sharing: dict[str, Any], need: str) -> PhoneError | None:
 
 
 def _pick_device(db: sqlite3.Connection, wanted: Any, need: str,
-                 exact: bool = False, now: int | None = None) -> tuple[str, str, dict[str, Any]]:
+                 now: int | None = None) -> tuple[str, str, dict[str, Any]]:
     """The device a read or a change is for. Unnamed, it's the device in use:
     the one that checked in (``status``) or uploaded most recently. ``now``
     (for a change) also refuses to stand another device in for one that is
     still setting up after a new key."""
     rows = [(row[0], row[1], _decode(row[2], {})) for row in db.execute(
         f"SELECT id, name, sharing FROM devices WHERE last_seen IS NOT NULL ORDER BY {_IN_TOUCH_ORDER}")]
-    if exact:
-        # Another device's name must never stand in for this one.
-        named = [row for row in rows if row[0] == wanted]
-        if not named:
-            raise PhoneError("nothing_shared", "This iPhone hasn't shared anything yet")
-        if need in ("events", "events_change") and named[0][2].get("calendar") == "write_only":
-            raise PhoneError("write_only", "The user lets Hermes add events but not read their calendar")
-        refusal = _read_only(named[0][2], need)
-        if refusal is not None:
-            raise refusal
-        if not shares(named[0][2], need):
-            raise PhoneError("not_shared", f"{named[0][1]} doesn't share {_NEED_WORDS.get(need, need)} with Hermes")
-        return named[0]
     if isinstance(wanted, str) and wanted.strip():
         wanted = wanted.strip()
         named = [row for row in rows if row[0] == wanted] or [

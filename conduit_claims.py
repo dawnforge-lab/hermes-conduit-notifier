@@ -16,9 +16,8 @@ as before when nobody else took the chat, and meets the usual refusal and
 takeover when Desktop did. Nothing running is interrupted; the runtime stays.
 
 Only runtimes whose clients are all Conduit count: Conduit's sockets name
-themselves in X-Conduit-Client, and this plugin's own job transports carry
-``conduit_client``. A chat Desktop or the web dashboard also has open in this
-process keeps its claim, and Bot Chats keep theirs (some Hermes versions route
+themselves in X-Conduit-Client. A chat Desktop or the web dashboard also has
+open in this process keeps its claim, and Bot Chats keep theirs (some Hermes versions route
 bot deliveries to the claim's holder).
 
 X-Conduit-Client is the client's own claim, made by a client that already
@@ -86,8 +85,6 @@ def clients(server: Any, transport: Any) -> Optional[bool]:
     isn't (or can't be told), None when it has no client left."""
     if transport is None or transport is getattr(server, "_detached_ws_transport", None):
         return None
-    if getattr(transport, "conduit_client", None) == "conduit":
-        return True
     peers = getattr(transport, "transports", None)
     if callable(peers):  # Hermes' FanoutTransport: one runtime shown to several clients
         try:

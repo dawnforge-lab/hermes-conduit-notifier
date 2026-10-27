@@ -51,10 +51,6 @@ class FanoutTransport:
         return list(self.peers)
 
 
-class JobTransport:
-    conduit_client = "conduit"
-
-
 def conduit(closed=False):
     return WSTransport({"X-Conduit-Client": "conduit", "User-Agent": "Conduit/2.0"}, closed=closed)
 
@@ -160,12 +156,6 @@ def test_a_chat_desktop_has_open_in_this_process_keeps_it():
 def test_a_viewer_that_left_does_not_count():
     server = Server()
     chat(server, transport=FanoutTransport(conduit(), desktop(closed=True)))
-    assert sweep(server) == 1
-
-
-def test_the_plugins_own_jobs_count_as_conduit():
-    server = Server()
-    chat(server, transport=JobTransport())
     assert sweep(server) == 1
 
 

@@ -1103,17 +1103,12 @@ def test_malformed_results_are_refused(store, iphone, results):
         store.exchange(iphone.exchange_request(results))
 
 
-def test_an_unknown_op_is_refused(store, iphone):
-    with pytest.raises(phone.PhoneError) as error:
-        store.exchange(iphone.exchange_request(op="other"))
-    assert error.value.code == "unknown_op"
-
-
-def test_a_voice_read_is_refused_before_opening(store, iphone, monkeypatch):
+@pytest.mark.parametrize("op", ["other", "voice"])
+def test_an_unknown_op_is_refused_before_opening(store, iphone, monkeypatch, op):
     opened = []
     monkeypatch.setattr(phone, "open_sealed", lambda *args: opened.append(args))
     with pytest.raises(phone.PhoneError) as error:
-        store.exchange(iphone.exchange_request(op="voice"))
+        store.exchange(iphone.exchange_request(op=op))
     assert error.value.code == "unknown_op" and opened == []
 
 
@@ -1375,7 +1370,7 @@ def test_the_rate_limit_answers_429(client, monkeypatch):
     assert response.status_code == 429 and response.headers["cache-control"] == "no-store"
 
 
-# --- Live voice reads ---------------------------------------------------------------
+# --- Exchanges across a new key ----------------------------------------------------
 
 
 def _exchange_re_keyed_meanwhile(store, monkeypatch, replacement, then=lambda: None):
