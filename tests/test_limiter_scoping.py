@@ -1,16 +1,21 @@
 import contextlib
+import importlib.util
+import json
 import sys
-import threading
 import types
-from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
 
 import pytest
 from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
 
-from test_gemini_live import api
+ROOT = Path(__file__).resolve().parents[1]
+BASE = "/api/plugins/talaria_push"
 
-BASE = "/api/plugins/conduit_push"
+# The dashboard imports plugin_api.py by file path, not as a package.
+_spec = importlib.util.spec_from_file_location("talaria_plugin_api", ROOT / "dashboard" / "plugin_api.py")
+api = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(api)
 
 
 @pytest.fixture()
@@ -55,13 +60,12 @@ def test_a_full_limiter_turns_new_keys_away():
 
 
 @pytest.mark.parametrize("method, path, limiter", [
-    ("put", "/conduit-settings", "_conduit_settings_limiter"),
+    ("put", "/talaria-settings", "_talaria_settings_limiter"),
     ("get", "/cron/notifications", "_cron_limiter"),
     ("get", "/calls", "_calls_limiter"),
     ("post", "/health/key", "_health_key_limiter"),
     ("post", "/phone/key", "_phone_key_limiter"),
     ("post", "/location/key", "_location_key_limiter"),
-    ("get", "/voice-tools", "_voice_tools_limiter"),
     ("post", "/e2e", "_e2e_limiter"),
 ])
 def test_an_unknown_profile_gets_no_rate_limit_bucket(client, hermes_scope, monkeypatch, method, path, limiter):
@@ -74,70 +78,6 @@ def test_an_unknown_profile_gets_no_rate_limit_bucket(client, hermes_scope, monk
     assert fresh._mints == {}
 
 
-def test_a_hung_gpt_live_status_never_wedges_later_checks(client, hermes_scope, monkeypatch):
-    release = threading.Event()
-    inside = threading.Semaphore(0)
-    hung = {"left": 2}
-    hung_lock = threading.Lock()
-
-    def status():
-        with hung_lock:
-            hangs = hung["left"] > 0
-            hung["left"] -= hangs
-        if hangs:
-            inside.release()
-            release.wait(10)
-        return {"available": True}
-
-    monkeypatch.setattr(api, "gpt_live_status", status)
-    # Long enough that each read is running (holding its slot) when it times out.
-    monkeypatch.setattr(api, "GPT_LIVE_REQUEST_TIMEOUT_S", 1.0)
-    monkeypatch.setattr(api, "_gpt_live_status_executor", ThreadPoolExecutor(max_workers=2))
-    monkeypatch.setattr(api, "_gpt_live_status_slots", threading.BoundedSemaphore(2))
-    try:
-        assert client.get(f"{BASE}/gpt-live/status").status_code == 504
-        assert client.get(f"{BASE}/gpt-live/status").status_code == 504
-        assert inside.acquire(timeout=5) and inside.acquire(timeout=5), "both reads hold a worker"
-        # Both workers are still held: turned away at once, not queued.
-        busy = client.get(f"{BASE}/gpt-live/status")
-        assert busy.status_code == 503 and busy.headers["cache-control"] == "no-store"
-    finally:
-        release.set()
-        api._gpt_live_status_executor.shutdown(wait=True)
-    recovered = ThreadPoolExecutor(max_workers=2)
-    monkeypatch.setattr(api, "_gpt_live_status_executor", recovered)
-    try:
-        assert client.get(f"{BASE}/gpt-live/status").json() == {"ok": True, "available": True}
-    finally:
-        recovered.shutdown(wait=True)
-
-
-def test_a_hung_local_live_key_rotation_times_out(client, hermes_scope, monkeypatch):
-    release = threading.Event()
-    monkeypatch.setattr(api, "_local_live_start_auth", lambda: None)
-    monkeypatch.setattr(api, "_local_live_auth_state", {"ready": True})
-    monkeypatch.setattr(api, "_local_live_profile_can_carry_key", lambda profile: True)
-    monkeypatch.setattr(api, "local_live_key", lambda profile, rotate=False: release.wait(10) and "key")
-    monkeypatch.setattr(api, "SPEECH_SERVER_SETUP_TIMEOUT_S", 0.2)
-    pool = ThreadPoolExecutor(max_workers=2)
-    monkeypatch.setattr(api, "_speech_server_executor", pool)
-    try:
-        response = client.post(f"{BASE}/local-live/key")
-        assert response.status_code == 504 and response.headers["cache-control"] == "no-store"
-        release.set()
-        # An unknown profile is Hermes' own 404, not a host failure.
-        assert client.post(f"{BASE}/local-live/key?profile=ghost").status_code == 404
-    finally:
-        release.set()
-        pool.shutdown(wait=True)
-
-
-def test_made_up_local_live_key_profiles_never_fill_the_check_limiter():
-    # The total budget bounds its live keys, so the key cap never turns a
-    # real profile's first check away.
-    assert api._local_live_key_check_limiter.max_keys > api.LOCAL_LIVE_KEY_CHECK_TOTAL_LIMIT
-
-
 def test_a_broken_scope_is_a_named_host_failure(client, monkeypatch):
     def broken(profile):
         raise RuntimeError("scope exploded")
@@ -145,20 +85,76 @@ def test_a_broken_scope_is_a_named_host_failure(client, monkeypatch):
     monkeypatch.setattr(api, "_profile_scope", broken)
     response = client.post(f"{BASE}/health/key?profile=coder", json={})
     assert response.status_code == 500 and response.headers["cache-control"] == "no-store"
-    assert response.json()["detail"] == "Conduit profile check failed on the host (RuntimeError)"
+    assert response.json()["detail"] == "Talaria profile check failed on the host (RuntimeError)"
 
 
-def test_voice_shared_reads_the_calling_location_device_alone():
-    from test_location import tool
+def test_manifest_mounts_the_api_under_the_plugin_name():
+    manifest = json.loads((ROOT / "dashboard" / "manifest.json").read_text())
+    assert manifest["name"] == "talaria_push"
+    assert manifest["api"] == "plugin_api.py"
+    assert manifest["tab"]["hidden"] is True
+    assert (ROOT / "dashboard" / manifest["entry"]).exists()
 
-    asked = []
 
-    class Store:
-        def snapshot(self, device_id=None):
-            asked.append(device_id)
-            return {"device": "iphone"} if device_id in (None, "iphone") else None
+def test_a_limiter_frees_slots_after_the_window():
+    now = [0.0]
+    limiter = api._MintLimiter(1, 60.0, clock=lambda: now[0])
+    limiter.acquire("default")
+    with pytest.raises(api.TokenError) as raised:
+        limiter.acquire("default")
+    assert raised.value.status == 429
+    limiter.acquire("coder")  # each profile has its own budget
+    now[0] = 61.0
+    limiter.acquire("default")
 
-    assert tool.voice_shared(Store()) is True
-    assert tool.voice_shared(Store(), "iphone") is True
-    assert tool.voice_shared(Store(), "ipad") is False
-    assert asked == [None, "iphone", "ipad"]
+
+def test_current_profile_aliases_share_one_budget():
+    assert {api._limiter_key(p) for p in (None, "", " ", "current", "Current")} == {""}
+    assert api._limiter_key(" coder ") == "coder"
+
+
+def test_requests_without_a_profile_still_enter_hermes_scope(client, hermes_scope, monkeypatch):
+    # Once the dashboard hosts several profiles, an unscoped secret read raises
+    # (UnscopedSecretError), so the no-profile path must enter the scope too.
+    entered = []
+
+    @contextlib.contextmanager
+    def scope(profile):
+        entered.append(profile)
+        yield
+
+    monkeypatch.setattr(sys.modules["hermes_cli.web_server_profiles"], "_config_profile_scope", scope)
+    monkeypatch.setattr(api, "calls_status", lambda: {})
+    assert client.get(f"{BASE}/calls").status_code == 200
+    assert client.get(f"{BASE}/calls?profile=coder").status_code == 200
+    assert entered == [None, "coder"]
+
+
+def test_a_requested_profile_fails_closed_when_it_cannot_be_scoped(client, monkeypatch):
+    # No hermes_cli here, so profile scoping is unavailable: the request must
+    # not fall back to the default profile.
+    monkeypatch.setattr(api, "calls_status", lambda: {})
+    assert client.get(f"{BASE}/calls?profile=coder").status_code == 503
+
+
+def test_hermes_without_the_scope_helper_fails_closed_for_named_profiles(client, monkeypatch):
+    # The module exists but the private helper was renamed: plain ImportError.
+    monkeypatch.setitem(sys.modules, "hermes_cli", types.ModuleType("hermes_cli"))
+    monkeypatch.setitem(sys.modules, "hermes_cli.web_server_profiles", types.ModuleType("hermes_cli.web_server_profiles"))
+    monkeypatch.setattr(api, "calls_status", lambda: {})
+    assert client.get(f"{BASE}/calls?profile=coder").status_code == 503
+
+
+def test_an_oversized_body_is_refused(client):
+    response = client.put(f"{BASE}/calls", content=b'{"settings":"' + b"x" * 20000 + b'"}',
+                          headers={"Content-Type": "application/json"})
+    assert response.status_code == 413
+
+
+def test_an_oversized_chunked_body_is_refused(client):
+    def chunks():
+        for _ in range(40):
+            yield b"x" * 1024
+
+    response = client.put(f"{BASE}/calls", content=chunks(), headers={"Content-Type": "application/json"})
+    assert response.status_code == 413

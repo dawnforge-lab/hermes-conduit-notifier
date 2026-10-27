@@ -1,7 +1,6 @@
 """Dropping another process's claim on a chat (Hermes' active-session
-registry), shared by the dashboard's takeover route (dashboard/plugin_api.py,
-which explains the rules) and Pulse, which takes over its own chat when Hermes
-Desktop holds it (pulse_host.py).
+registry), for the dashboard's takeover route (dashboard/plugin_api.py, which
+explains the rules).
 
 Raises ``TakeoverError`` with an HTTP-style status: 501 for a Hermes that
 can't hand a chat over, 503 when the registry can't be read, 504 when the
@@ -20,12 +19,12 @@ from typing import Any, Optional
 logger = logging.getLogger(__name__)
 
 TURN_MARKER_SURFACES = frozenset({"desktop", "tui"})
-# The route's workers and Pulse take over in the same process; Hermes' file
-# lock may not exclude threads of one process, so they also take this one.
-# The dashboard loads this file as conduit_push_dashboard_pkg.chat_takeover
-# and Pulse as conduit_push.chat_takeover, so the lock lives on sys, which
-# both copies share (dict.setdefault is atomic).
-_in_process = sys.__dict__.setdefault("_conduit_chat_takeover_lock", threading.Lock())
+# The route's workers take over in the same process; Hermes' file lock may
+# not exclude threads of one process, so they also take this one. The
+# dashboard loads this file as talaria_push_dashboard_pkg.chat_takeover and
+# the plugin as talaria_push.chat_takeover, so the lock lives on sys, which
+# every copy shares (dict.setdefault is atomic).
+_in_process = sys.__dict__.setdefault("_talaria_chat_takeover_lock", threading.Lock())
 
 
 class TakeoverError(Exception):
@@ -144,7 +143,7 @@ def _owner_alive(registry: Any, entry: dict[str, Any]) -> Optional[bool]:
         return None
 
 
-def take_over_session(session_ids: list, *, registry: Any, turn_marker: Any, home: Any, by: str = "Conduit",
+def take_over_session(session_ids: list, *, registry: Any, turn_marker: Any, home: Any, by: str = "Talaria",
                       own_pid: Optional[int] = None,
                       abandoned: Optional[threading.Event] = None) -> dict[str, Any]:
     """Drop other processes' claims on the chat. ``session_ids`` are the ids
@@ -203,7 +202,7 @@ def take_over_session(session_ids: list, *, registry: Any, turn_marker: Any, hom
                     if str(entry.get("surface") or "").strip().lower() not in TURN_MARKER_SURFACES]
         if unmarked:
             # This dashboard's own claim would refuse the send anyway, so say
-            # that rather than have Conduit wait on a worker it can't outlast.
+            # that rather than have Talaria wait on a worker it can't outlast.
             if own:
                 return {"status": "same_host", "surface": str(own[0].get("surface") or "")}
             return {"status": "busy", "surface": str(unmarked[0].get("surface") or "")}

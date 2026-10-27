@@ -1,5 +1,5 @@
-"""CHANGELOG.md is what Conduit's update notice shows: the entries between
-the host's version and the one an update installs. Conduit reads it from
+"""CHANGELOG.md is what Talaria's update notice shows: the entries between
+the host's version and the one an update installs. Talaria reads it from
 main with a fixed parser, so a version bump without an entry, or an entry
 it can't read, shows nothing for that version."""
 
@@ -9,7 +9,8 @@ import re
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 VERSION = re.compile(r"^version:\s*[\"']?([0-9]+(?:\.[0-9]+)*)", re.MULTILINE)
-HEADING = re.compile(r"^## ([0-9]+\.[0-9]+\.[0-9]+) \((\d{4}-\d{2}-\d{2})\)$")
+# The top entry may say "unreleased" until the day it reaches main.
+HEADING = re.compile(r"^## ([0-9]+\.[0-9]+\.[0-9]+) \((\d{4}-\d{2}-\d{2}|unreleased)\)$")
 SECTIONS = ["Security", "Fixes", "New and improved"]
 # A version bump changes these together, with a new entry on top of CHANGELOG.md.
 VERSION_FILES = "plugin.yaml, events.py, dashboard/manifest.json and tests/test_clarify_loop.py"
@@ -25,7 +26,7 @@ def _entries():
     for line in (ROOT / "CHANGELOG.md").read_text(encoding="utf-8").splitlines():
         if line.startswith("## "):
             match = HEADING.match(line)
-            assert match, f"heading must read `## X.Y.Z (YYYY-MM-DD)`: {line!r}"
+            assert match, f"heading must read `## X.Y.Z (YYYY-MM-DD)` or `## X.Y.Z (unreleased)`: {line!r}"
             entries.append((match.group(1), match.group(2), []))
         elif not entries:
             continue
@@ -62,7 +63,10 @@ def test_entries_are_newest_first_and_dated():
         "its entry twice, drop one.")
     parts = [_parts(version) for version in versions]
     assert parts == sorted(parts, reverse=True), "CHANGELOG.md entries go newest first"
-    for version, date, _ in entries:
+    for index, (version, date, _) in enumerate(entries):
+        if date == "unreleased":
+            assert index == 0, f"{version}: only the top entry can be unreleased"
+            continue
         datetime.date.fromisoformat(date)
 
 

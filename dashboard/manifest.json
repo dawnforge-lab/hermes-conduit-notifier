@@ -1,10 +1,10 @@
 {
-  "name": "conduit_push",
-  "label": "Conduit",
-  "description": "Routes the Hermes Conduit iOS app calls on this host (Gemini Live tokens, GPT-Live subscription sessions, the Grok Live relay, voice lookups, memory and personality, voice call transcripts).",
+  "name": "talaria_push",
+  "label": "Talaria",
+  "description": "Routes the Talaria app calls on this host (pairing, notification settings, chat takeover, calls, shared phone data, group rooms, artifacts).",
   "icon": "Puzzle",
-  "version": "0.69.2",
-  "tab": { "path": "/conduit", "hidden": true },
+  "version": "1.0.0",
+  "tab": { "path": "/talaria", "hidden": true },
   "entry": "dist/index.js",
   "api": "plugin_api.py"
 }

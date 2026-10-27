@@ -37,17 +37,17 @@ if "tools.clarify_tool" not in sys.modules:
 
 # The repo directory name is hyphenated, so import the plugin modules under a
 # synthetic package (the same trick Hermes's plugin loader performs).
-if "conduit_push" not in sys.modules:
-    _pkg = types.ModuleType("conduit_push")
+if "talaria_push" not in sys.modules:
+    _pkg = types.ModuleType("talaria_push")
     _pkg.__path__ = [str(ROOT)]
-    sys.modules["conduit_push"] = _pkg
-if "conduit_push.clarify_loop" not in sys.modules:
-    _spec = importlib.util.spec_from_file_location("conduit_push.clarify_loop", ROOT / "clarify_loop.py")
+    sys.modules["talaria_push"] = _pkg
+if "talaria_push.clarify_loop" not in sys.modules:
+    _spec = importlib.util.spec_from_file_location("talaria_push.clarify_loop", ROOT / "clarify_loop.py")
     _module = importlib.util.module_from_spec(_spec)
-    sys.modules["conduit_push.clarify_loop"] = _module
+    sys.modules["talaria_push.clarify_loop"] = _module
     _spec.loader.exec_module(_module)
 
-import conduit_push.clarify_loop as loop  # noqa: E402
+import talaria_push.clarify_loop as loop  # noqa: E402
 
 
 class _FakeState:
@@ -164,7 +164,7 @@ def test_queue_full_drop_uses_the_native_path_immediately_without_polling():
     }))
     assert result == "native result"
     # Deterministic regression proof: on the pre-fix code next_call ran on
-    # the spawned "conduit-push-clarify" daemon thread; with the fix it runs
+    # the spawned "talaria-push-clarify" daemon thread; with the fix it runs
     # synchronously on the caller's thread.
     assert threads == [threading.current_thread().name]
     assert len(dropped) == 1, "the clarify event was attempted exactly once"
@@ -278,7 +278,7 @@ def test_relay_answer_wins_and_formats_like_the_builtin_tool():
     assert event["body"] == "Which color?"
     decision = event["decision"]
     assert decision["kind"] == "clarify"
-    assert decision["request_id"].startswith("conduit-push-")
+    assert decision["request_id"].startswith("talaria-push-")
     assert decision["question"] == "Which color?"
     assert decision["choices"] == ["Red", "Blue"]
     # A legacy scalar invocation pushes the SCALAR decision: no questions[],
@@ -682,7 +682,7 @@ def test_batch_push_preserves_every_question_and_relay_completion_wins():
     # The pushed decision carried the FULL batch with gateway-style qids.
     event = fake.enqueued[0]
     decision = event["decision"]
-    assert decision["request_id"].startswith("conduit-push-")
+    assert decision["request_id"].startswith("talaria-push-")
     assert [(q["qid"], q["question"]) for q in decision["questions"]] == [
         ("q0", "Which environment?"),
         ("q1", "Which tests should run?"),
@@ -716,7 +716,7 @@ def test_native_answer_wins_and_releases_the_batch_decision():
     result = loop.middleware(**_kwargs(original, _batch_args()))
     assert json.loads(result)["responses"][0]["question"] == "native"
     assert len(fake.cancelled_ids) == 1, "the parked decision is released so late device answers are rejected"
-    assert fake.cancelled_ids[0].startswith("conduit-push-")
+    assert fake.cancelled_ids[0].startswith("talaria-push-")
 
 
 def test_batch_legacy_collapsed_answer_formats_absences():
@@ -784,8 +784,8 @@ def test_single_question_decision_never_cancels_when_relay_wins():
 def test_user_agent_derives_from_the_plugin_version():
     # One source of truth: bumping PLUGIN_VERSION updates the relay UA
     # automatically instead of leaving a stale hand-written constant.
-    assert loop.client.USER_AGENT == f"Hermes-Conduit-Notifier/{loop.client.PLUGIN_VERSION}"
-    assert loop.client.PLUGIN_VERSION == "0.69.2"
+    assert loop.client.USER_AGENT == f"Talaria-Plugin/{loop.client.PLUGIN_VERSION}"
+    assert loop.client.PLUGIN_VERSION == "1.0.0"
 
 
 def test_send_now_redacts_only_when_the_profile_opts_in(monkeypatch, tmp_path):
@@ -793,7 +793,7 @@ def test_send_now_redacts_only_when_the_profile_opts_in(monkeypatch, tmp_path):
     sent = []
     monkeypatch.setattr(client, "request_json", lambda url, **kwargs: sent.append(kwargs["payload"]) or {})
     # Redacting mints a redact_key and saves it with the pairing.
-    monkeypatch.setattr(client, "state_path", lambda: tmp_path / "conduit-push.json")
+    monkeypatch.setattr(client, "state_path", lambda: tmp_path / "talaria-push.json")
     event = {"event_id": "approval:12345678", "type": "approval.needed", "body": "Run rm -rf build"}
 
     monkeypatch.setattr(client, "load_state", lambda: {"relay_url": "https://relay", "credential": "x"})
@@ -808,10 +808,10 @@ def test_send_now_redacts_only_when_the_profile_opts_in(monkeypatch, tmp_path):
 def test_enqueued_events_are_redacted_once_on_delivery(monkeypatch, tmp_path):
     # Other tests replace loop.client.enqueue with a fake for good, so load a
     # private copy of the real client module to exercise the real queue.
-    spec = importlib.util.spec_from_file_location("conduit_push._client_under_test", ROOT / "client.py")
+    spec = importlib.util.spec_from_file_location("talaria_push._client_under_test", ROOT / "client.py")
     client = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(client)
-    monkeypatch.setattr(client, "state_path", lambda: tmp_path / "conduit-push.json")
+    monkeypatch.setattr(client, "state_path", lambda: tmp_path / "talaria-push.json")
     sent = []
     monkeypatch.setattr(client, "request_json", lambda url, **kwargs: sent.append(kwargs["payload"]) or {})
     monkeypatch.setattr(client, "load_state", lambda: {"relay_url": "https://relay", "credential": "x", "redact_content": True})
@@ -819,7 +819,7 @@ def test_enqueued_events_are_redacted_once_on_delivery(monkeypatch, tmp_path):
         "event_id": "input:12345678",
         "type": "input.needed",
         "body": "Deploy to prod?",
-        "decision": {"kind": "clarify", "request_id": "conduit-push-abc123", "question": "Deploy to prod?", "choices": ["Yes", "No"]},
+        "decision": {"kind": "clarify", "request_id": "talaria-push-abc123", "question": "Deploy to prod?", "choices": ["Yes", "No"]},
     }
 
     assert client.enqueue(event)
@@ -846,10 +846,10 @@ def test_redacted_event_ids_are_keyed_but_stable(monkeypatch):
 
 
 def test_set_redact_content_and_repairing_keep_the_flag(monkeypatch, tmp_path):
-    spec = importlib.util.spec_from_file_location("conduit_push._client_state_under_test", ROOT / "client.py")
+    spec = importlib.util.spec_from_file_location("talaria_push._client_state_under_test", ROOT / "client.py")
     client = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(client)
-    monkeypatch.setattr(client, "state_path", lambda: tmp_path / "conduit-push.json")
+    monkeypatch.setattr(client, "state_path", lambda: tmp_path / "talaria-push.json")
 
     assert client.set_redact_content(True) is False  # unpaired: nothing to configure
 
@@ -868,10 +868,10 @@ def test_set_redact_content_and_repairing_keep_the_flag(monkeypatch, tmp_path):
 
 
 def test_missing_redact_key_is_minted_once_and_reused(monkeypatch, tmp_path):
-    spec = importlib.util.spec_from_file_location("conduit_push._client_key_under_test", ROOT / "client.py")
+    spec = importlib.util.spec_from_file_location("talaria_push._client_key_under_test", ROOT / "client.py")
     client = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(client)
-    monkeypatch.setattr(client, "state_path", lambda: tmp_path / "conduit-push.json")
+    monkeypatch.setattr(client, "state_path", lambda: tmp_path / "talaria-push.json")
     client.save_state({"relay_url": "https://relay", "credential": "c", "redact_content": True})
     sent = []
     monkeypatch.setattr(client, "request_json", lambda url, **kwargs: sent.append(kwargs["payload"]) or {})
@@ -888,7 +888,7 @@ def _client_racing(monkeypatch, tmp_path, name, meanwhile):
     spec = importlib.util.spec_from_file_location(name, ROOT / "client.py")
     client = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(client)
-    monkeypatch.setattr(client, "state_path", lambda: tmp_path / "conduit-push.json")
+    monkeypatch.setattr(client, "state_path", lambda: tmp_path / "talaria-push.json")
     other = threading.Thread(target=meanwhile, args=(client,))
     real_token_hex = client.secrets.token_hex
 
@@ -907,7 +907,7 @@ def _repair(client):
 
 
 def test_the_redaction_switch_keeps_a_pairing_replaced_meanwhile(monkeypatch, tmp_path):
-    client, other = _client_racing(monkeypatch, tmp_path, "conduit_push._client_switch_repaired", _repair)
+    client, other = _client_racing(monkeypatch, tmp_path, "talaria_push._client_switch_repaired", _repair)
     client.save_state({"relay_url": "https://relay", "credential": "old", "installation_id": "phone-A"})
     assert client.set_redact_content(True) is True
     other.join(5)
@@ -916,7 +916,7 @@ def test_the_redaction_switch_keeps_a_pairing_replaced_meanwhile(monkeypatch, tm
 
 
 def test_the_redaction_switch_doesnt_restore_a_pairing_removed_meanwhile(monkeypatch, tmp_path):
-    client, other = _client_racing(monkeypatch, tmp_path, "conduit_push._client_switch_unpaired",
+    client, other = _client_racing(monkeypatch, tmp_path, "talaria_push._client_switch_unpaired",
                                    lambda client: client.remove_state())
     client.save_state({"relay_url": "https://relay", "credential": "revoked", "installation_id": "phone-A"})
     client.set_redact_content(True)
@@ -925,7 +925,7 @@ def test_the_redaction_switch_doesnt_restore_a_pairing_removed_meanwhile(monkeyp
 
 
 def test_a_minted_redact_key_doesnt_restore_a_pairing_replaced_meanwhile(monkeypatch, tmp_path):
-    client, other = _client_racing(monkeypatch, tmp_path, "conduit_push._client_key_repaired", _repair)
+    client, other = _client_racing(monkeypatch, tmp_path, "talaria_push._client_key_repaired", _repair)
     client.save_state({"relay_url": "https://relay", "credential": "old", "installation_id": "phone-A",
                        "redact_content": True})
     sent = []

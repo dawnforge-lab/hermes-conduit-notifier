@@ -1,8 +1,8 @@
-"""End-to-end encryption of Conduit notification content (#431).
+"""End-to-end encryption of Talaria notification content (#431).
 
-Conduit creates a per-pairing root secret on the phone and hands it to this
+Talaria creates a per-pairing root secret on the phone and hands it to this
 profile through the dashboard connection (dashboard/plugin_api.py), so it
-never passes through the push relay or APNs. From that secret both sides
+never passes through the push relay or Google. From that secret both sides
 derive separate keys with HKDF-SHA256:
 
 * push:   gateway -> device notification content (ChaCha20-Poly1305)
@@ -37,21 +37,21 @@ _LOCATE_ID = re.compile(r"^l_[A-Za-z0-9_-]{16,64}\Z")
 _MAPS_ID = re.compile(r"^m_[A-Za-z0-9_-]{16,64}\Z")
 
 VERSION = 1
-SALT = b"conduit-e2e-v1"
-INFO_PUSH = b"conduit-e2e-v1 push gateway-to-device"
-INFO_ANSWER = b"conduit-e2e-v1 answer device-to-gateway"
-INFO_META = b"conduit-e2e-v1 metadata"
-AAD_TAG = "conduit-e2e/1"
+SALT = b"talaria-e2e-v1"
+INFO_PUSH = b"talaria-e2e-v1 push gateway-to-device"
+INFO_ANSWER = b"talaria-e2e-v1 answer device-to-gateway"
+INFO_META = b"talaria-e2e-v1 metadata"
+AAD_TAG = "talaria-e2e/1"
 ANSWER_PREFIX = "e2e1."
 NONCE_BYTES = 12
 SECRET_BYTES = 32
-# The ciphertext has to fit an APNs payload (4 KB) next to the relay's alert,
-# routing stub and envelope fields; the relay rejects anything longer.
+# The ciphertext has to fit FCM's 4 KB of data next to the relay's alert,
+# routing and envelope fields; the relay rejects anything longer.
 MAX_CT_CHARS = 2600
 # Fields that carry content. Everything else on an event stays visible to the
 # relay because it routes on it.
 INNER_FIELDS = ("title", "body", "session_id", "profile", "gateway", "stored_session_id", "decision", "call",
-                "locate", "maps", "title_label", "session_title", "count")
+                "locate", "title_label", "session_title")
 
 KID_PATTERN = re.compile(r"^[0-9a-f]{32}\Z")
 _B64URL_PATTERN = re.compile(r"^[A-Za-z0-9_-]*\Z")
@@ -310,7 +310,7 @@ def open_event(outgoing: dict[str, Any], keys: Keys, *, installation_id: str, ga
 
 def seal_answer(answer: str, keys: Keys, *, installation_id: str, gateway_id: str,
                 request_id: str, question_id: str = "") -> str:
-    """Device-side answer sealing; used by tests (Conduit does this on the phone)."""
+    """Device-side answer sealing; used by tests (Talaria does this on the phone)."""
     nonce = os.urandom(NONCE_BYTES)
     aad = answer_aad(kid=keys.kid, installation_id=installation_id, gateway_id=gateway_id,
                      request_id=request_id, question_id=question_id)

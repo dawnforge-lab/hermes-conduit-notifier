@@ -25,7 +25,7 @@ MAX_CACHED = 256
 
 _cache: dict[tuple[str, str], tuple[float, str]] = {}
 
-# Conduit's Bot Mode finds each bot's one chat by this exact title, so every
+# Talaria's Bot Mode finds each bot's one chat by this exact title, so every
 # bot's chat carries it and can't be renamed. A push from one is titled with
 # the bot's profile instead, so it says which bot replied (#650).
 BOT_CHAT_TITLE = "Bot Chat"

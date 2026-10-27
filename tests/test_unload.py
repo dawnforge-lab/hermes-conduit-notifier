@@ -32,10 +32,10 @@ if "tools.clarify_tool" not in sys.modules:
 
     _clarify_tool.strip_recommended = _strip_recommended
     sys.modules["tools.clarify_tool"] = _clarify_tool
-if "conduit_push" not in sys.modules:
-    _pkg = types.ModuleType("conduit_push")
+if "talaria_push" not in sys.modules:
+    _pkg = types.ModuleType("talaria_push")
     _pkg.__path__ = [str(ROOT)]
-    sys.modules["conduit_push"] = _pkg
+    sys.modules["talaria_push"] = _pkg
 
 
 def _load(name, path):
@@ -56,7 +56,7 @@ def _private_copy(name, path):
     return module
 
 
-plugin = _load("conduit_push.__init__", ROOT / "__init__.py")
+plugin = _load("talaria_push.__init__", ROOT / "__init__.py")
 calls = plugin.calls
 live_activity = plugin.live_activity
 
@@ -69,8 +69,8 @@ def _ctx(unloads):
 
 @pytest.fixture
 def client(tmp_path, monkeypatch):
-    module = _private_copy("conduit_push._client_unload_under_test", ROOT / "client.py")
-    path = tmp_path / "conduit-push.json"
+    module = _private_copy("talaria_push._client_unload_under_test", ROOT / "client.py")
+    path = tmp_path / "talaria-push.json"
     path.write_text(json.dumps({"relay_url": "https://relay.example", "credential": "c", "installation_id": "i"}))
     monkeypatch.setattr(module, "state_path", lambda: path)
     yield module
@@ -185,7 +185,7 @@ def test_a_held_calls_waiter_ends_without_calling(unloaded_plugin, monkeypatch):
                                   fire_due=lambda: fired.append(True) or [])
     monkeypatch.setattr(calls, "_store", lambda home: store)
     calls._wait_for_holds("home-1", "default")
-    [waiter] = [thread for thread in threading.enumerate() if thread.name == "conduit-call"]
+    [waiter] = [thread for thread in threading.enumerate() if thread.name == "talaria-call"]
 
     unloaded_plugin()
 

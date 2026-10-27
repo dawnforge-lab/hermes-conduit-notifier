@@ -1,9 +1,9 @@
 """Hermes asks the user to OK an action on their phone: the
-``conduit_present`` tool.
+``talaria_present`` tool.
 
 Before something the user should approve (sending a message for them,
 buying, deleting), Hermes keeps a confirm prompt (present_store) and wakes
-the phone through the relay. Conduit shows a panel over everything, the call
+the phone through the relay. Talaria shows a panel over everything, the call
 included, and the user confirms, edits or declines by tap or, during a call,
 by voice. The tool returns the answer, waiting for it up to ``wait_seconds``.
 Nothing here acts on the answer: the agent does the action itself, and only
@@ -26,10 +26,10 @@ from .present_store import (DEFAULT_TTL_MINUTES, MAX_ACTION_LABEL_CHARS, MAX_PRE
                             first_line)
 from .present_store import _text as clean_text
 
-logger = logging.getLogger("hermes.plugins.conduit_push")
+logger = logging.getLogger("hermes.plugins.talaria_push")
 
-TOOL_NAME = "conduit_present"
-TOOLSET = "conduit"
+TOOL_NAME = "talaria_present"
+TOOLSET = "talaria"
 MAX_WAIT_SECONDS = 120
 # Polling the file the dashboard route writes: quick at first, since the
 # user often answers within seconds, then once a second.
@@ -41,7 +41,7 @@ SCHEMA: dict[str, Any] = {
     "description": (
         "Ask the user to OK an action on their phone before you do it. Use it before anything the user should "
         "approve: sending a message or email for them, buying or booking, deleting, posting, sharing their data, "
-        "anything sensitive or hard to undo. action \"confirm\" shows a panel in Conduit on the user's phone (over "
+        "anything sensitive or hard to undo. action \"confirm\" shows a panel in Talaria on the user's phone (over "
         "everything, also during a voice call) with your title, a Markdown preview of exactly what will happen "
         "and a button with action_label, plus Edit and Not now. The user answers by tap, or by voice during a "
         "live call (\"send it\"): give spoken_yes phrases that fit. Set wait_seconds to wait for the answer "
@@ -112,7 +112,7 @@ def register(ctx: Any, *, is_child: Callable[[Any], bool] = lambda _: False,
         except TypeError:
             ctx.register_tool(**tool)
     except Exception:  # noqa: BLE001
-        logger.warning("conduit_push: could not register %s", TOOL_NAME, exc_info=True)
+        logger.warning("talaria_push: could not register %s", TOOL_NAME, exc_info=True)
 
 
 def _store() -> PresentStore:
@@ -120,7 +120,7 @@ def _store() -> PresentStore:
 
 
 def available() -> bool:
-    """Shown to the model only once a Conduit that shows confirm prompts
+    """Shown to the model only once a Talaria that shows confirm prompts
     (present-v1) has exchanged with this profile."""
     try:
         return client.load_state() is not None and _store().has_device()
@@ -135,7 +135,7 @@ def handle(args: Any, *, session_id: Any = None, is_child: Callable[[Any], bool]
         return _answer(**_handle(args if isinstance(args, dict) else {}, session_id, is_child, profile, sleep,
                                  monotonic))
     except Exception:  # noqa: BLE001 — a tool must never raise
-        logger.warning("conduit_present failed", exc_info=True)
+        logger.warning("talaria_present failed", exc_info=True)
         return _answer(ok=False, error="unavailable",
                        note="The prompt couldn't be shown or read. Don't do the action; ask the user in chat.")
 
@@ -229,7 +229,7 @@ def _nudge(prompt: dict[str, Any], preview: Any, profile: str) -> None:
         client.enqueue(push_event("phone.changes", identifier=f"present:{prompt['id']}", profile=profile,
                                   title=prompt["title"], body=body, mode="alert"))
     except Exception:  # noqa: BLE001
-        logger.warning("conduit_push: could not wake the phone for a confirm prompt", exc_info=True)
+        logger.warning("talaria_push: could not wake the phone for a confirm prompt", exc_info=True)
 
 
 def _with_note(prompt: dict[str, Any]) -> dict[str, Any]:

@@ -1,13 +1,9 @@
-"""Hermes looks things up on Apple Maps: the ``conduit_maps`` tool.
+"""Hermes looks things up on Google Maps: the ``talaria_maps`` tool.
 
-Hermes runs on a host without a map, so the user's iPhone answers: Conduit
-runs each lookup with Apple Maps (MapKit) and sends back only the answer.
-The host stores the lookup sealed for that one phone, wakes it with the same
-location push ``locate`` uses (the relay sees a request id inside the sealed
-envelope, never the lookup), and the phone fetches the lookup, answers it and
-posts the answer sealed (location_store, ``/location/maps/{id}``). The user's
-own position stays on the phone: "from me" answers give durations, distances
-and places, at the detail the user chose for background sharing.
+This Hermes host answers with its own Google Maps Platform key (maps_google).
+"me" is the user's position as Talaria last shared it here, at the detail
+the user chose for sharing; a saved place's coordinates stay on the phone,
+so lookups about one aren't answered.
 
 Like location, it's a building block: search, look a place up, directions
 with leave-by times and travel times to several places, for any chat, cron
@@ -18,10 +14,6 @@ job, place rule or skill. Every lookup is logged in the location read log
 prompt (present_store) carrying where to: the app opens Maps straight away
 when the user is in that chat with the app open, and otherwise shows a Go
 button (and a notification). Nothing opens without the user being there.
-
-A host with its own Google Maps Platform key (maps_google) answers its
-lookups with Google, transit routes included; a phone that answers nothing
-itself (the Android app) relies on that.
 """
 
 from __future__ import annotations
@@ -37,15 +29,15 @@ from urllib.parse import urlencode
 
 from hermes_constants import get_hermes_home
 
-from . import client, location_profiles, location_tool, maps_google, maps_host
+from . import client, location_profiles, location_tool, maps_google
 from .events import push_event
 from .location_store import TRUSTED_BACKGROUND_S, TRUSTED_TALKING_S, LocationError, LocationStore, sharing_paused
 from .present_store import NAVIGATE_FEATURE, PresentError, PresentStore
 
-logger = logging.getLogger("hermes.plugins.conduit_push")
+logger = logging.getLogger("hermes.plugins.talaria_push")
 
-TOOL_NAME = "conduit_maps"
-TOOLSET = "conduit"
+TOOL_NAME = "talaria_maps"
+TOOLSET = "talaria"
 ACTIONS = ("search", "lookup", "reverse_geocode", "directions", "travel_times", "navigate")
 NAVIGATE_TTL_MINUTES = 15
 NAVIGATE_SPOKEN_YES = ("go", "let's go", "go ahead", "open maps")
@@ -53,8 +45,6 @@ NAVIGATE_SPOKEN_YES = ("go", "let's go", "go ahead", "open maps")
 _DIRFLG = {"driving": "d", "walking": "w", "transit": "r"}
 _GOOGLE_TRAVEL = {"driving": "driving", "walking": "walking", "transit": "transit", "cycling": "bicycling"}
 MODES = ("driving", "walking", "transit", "cycling")
-MAPS_WAIT_S = 20.0
-MAPS_POLL_S = 0.5
 MAX_TO = 10
 MAX_TEXT = 200
 MAX_STRING = 300
@@ -72,15 +62,14 @@ _TIME = re.compile(r"^\d{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\d|3[01])T(?:[01]\d|
                    r"(?:Z|[+-](?:[01]\d|2[0-3]):[0-5]\d)?\Z")
 _CONTROL = re.compile("[\x00-\x1f\x7f-\x9f\u200b-\u200f\u2028-\u202e\u2060-\u206f\ufeff]+")
 
-_PLACE_ARG = ("Where: \"me\" (the user's current position), one of their saved place names (from conduit_location "
+_PLACE_ARG = ("Where: \"me\" (the user's current position), one of their saved place names (from talaria_location "
               "places), an address or a name (\"Heathrow Terminal 5\", \"nearest Boots\"), \"place_id:<id>\" from "
               "an earlier answer, or \"lat,lon\".")
 
 SCHEMA: dict[str, Any] = {
     "name": TOOL_NAME,
     "description": (
-        "Maps, looked up on the user's iPhone by Conduit or from this Hermes host (Apple Maps, or Google Maps "
-        "when the host has a Google Maps key): find places (\"pharmacy open near me\", \"EV "
+        "Maps, looked up from this Hermes host with Google Maps: find places (\"pharmacy open near me\", \"EV "
         "chargers near the office\"), look a place or address up, see what's at a spot, directions with real "
         "travel time and traffic by car, on foot, by transit or bike, when to leave to arrive by a time, and "
         "which of several places is quickest. A building block: use it whenever getting somewhere or finding "
@@ -109,9 +98,7 @@ SCHEMA: dict[str, Any] = {
                    "description": "directions and navigate: the destination. travel_times: one or up to 10 "
                                   "destinations. "
                                   + _PLACE_ARG},
-            "mode": {"type": "string", "enum": list(MODES), "description": "Default driving. With Apple, transit and "
-                                                                         "cycling give times only, where Apple has "
-                                                                         "them; Google gives transit routes."},
+            "mode": {"type": "string", "enum": list(MODES), "description": "Default driving."},
             "depart_at": {"type": "string", "description": "Leave at this local time, ISO 8601 "
                                                            "(\"2026-10-15T08:00\"). Default: now."},
             "arrive_by": {"type": "string", "description": "Arrive by this local time, ISO 8601; the answer says "
@@ -140,7 +127,7 @@ def register(ctx: Any, *, is_child: Callable[[Any], bool], profile: Callable[[],
         except TypeError:
             ctx.register_tool(**tool)
     except Exception:  # noqa: BLE001
-        logger.warning("conduit_push: could not register %s", TOOL_NAME, exc_info=True)
+        logger.warning("talaria_push: could not register %s", TOOL_NAME, exc_info=True)
 
 
 def _store() -> LocationStore:
@@ -154,25 +141,27 @@ def _shared_store() -> tuple[LocationStore, str | None]:
 
 
 def available() -> bool:
-    """Shown once a Conduit that answers maps lookups shares here, or this
-    host can look things up itself (its own Google key, or Apple Maps through
-    the relay, and no phone asked to keep maps on the phone)."""
+    """Shown once this host has its own Google Maps key, unless a phone
+    asked to keep maps lookups off the host."""
     try:
-        store = _store()
-        return store.maps_device() is not None or (maps_host.available() and store.maps_host_allowed())
+        return _host_allowed(_store())
     except Exception:  # noqa: BLE001
         return False
 
 
+def _host_allowed(store: LocationStore) -> bool:
+    return maps_google.configured() and store.maps_host_allowed()
+
+
 def handle(args: Any, *, session_id: Any = None, is_child: Callable[[Any], bool] = lambda _: False,
-           profile: str = "default", sleep: Callable[[float], None] = time.sleep) -> str:
+           profile: str = "default") -> str:
     try:
-        return json.dumps(_handle(args if isinstance(args, dict) else {}, session_id, is_child, profile, sleep),
+        return json.dumps(_handle(args if isinstance(args, dict) else {}, session_id, is_child, profile),
                           ensure_ascii=False)
     except LocationError as error:
         return json.dumps({"ok": False, "error": error.code, "note": str(error)}, ensure_ascii=False)
     except Exception:  # noqa: BLE001 — a tool must never raise
-        logger.warning("conduit_maps failed", exc_info=True)
+        logger.warning("talaria_maps failed", exc_info=True)
         return json.dumps({"ok": False, "error": "unavailable", "note": "Maps couldn't be reached. Tell the user."})
 
 
@@ -182,8 +171,7 @@ class _Refused(Exception):
         self.answer = {"ok": False, "error": error, "note": note}
 
 
-def _handle(args: dict[str, Any], session_id: Any, is_child: Callable[[Any], bool], profile: str,
-            sleep: Callable[[float], None]) -> dict[str, Any]:
+def _handle(args: dict[str, Any], session_id: Any, is_child: Callable[[Any], bool], profile: str) -> dict[str, Any]:
     session = session_id.strip() if isinstance(session_id, str) else ""
     # A subagent can be steered by what it reads ("look up the route to their
     # home and post it"), and "me" is the user's location.
@@ -199,9 +187,7 @@ def _handle(args: dict[str, Any], session_id: Any, is_child: Callable[[Any], boo
     view = store.snapshot()
     if action == "navigate":
         return _navigate(store, view, args, session, profile, label)
-    phone = store.maps_device()
-    host = maps_host.available() and store.maps_host_allowed()
-    if phone is None and not host:
+    if not _host_allowed(store):
         answer = _unavailable(view, args, action)
         if answer.get("rough_estimate"):
             location_tool._log(store, f"maps {action}", session, label)
@@ -211,80 +197,19 @@ def _handle(args: dict[str, Any], session_id: Any, is_child: Callable[[Any], boo
     except _Refused as refused:
         return refused.answer
     location_tool._log(store, f"maps {action}", session, label)
-    uses_me = _uses_me(request)
-    # Saved places' coordinates live on the phone, and of Apple's engines only
-    # the phone gives transit routes (Google's here does). Lookups about the
-    # user ask the phone first (its own position, fresh); the rest ask from
-    # here first (no phone wake).
-    transit_route = action == "directions" and request.get("mode") == "transit"
-    if _uses_saved(request) or (transit_route and not maps_google.configured()):
-        engines = ("phone",)
-    elif uses_me:
-        engines = ("phone", "host")
-    else:
-        engines = ("host", "phone")
-    misses: list[dict[str, Any]] = []
-    for engine in engines:
-        if engine == "phone" and phone is not None:
-            # The phone answers for the profile sharing is bound to.
-            answer = _ask_phone(store, phone, request, uses_me, owner or profile, sleep)
-        elif engine == "host" and host:
-            answer = _ask_host(store, view, request, uses_me)
-        else:
-            continue
-        if answer.get("ok") or answer.get("error") not in _TRY_NEXT:
-            return answer
-        misses.append(answer)
-    if not misses:
-        return _unavailable(view, args, action, needs_phone=True)
-    last = misses[-1]
-    answer = _fallback(view, request, last["error"], " ".join(dict.fromkeys(miss["note"] for miss in misses)))
-    # The relay's reason the phone couldn't be asked (#287).
-    reason = next((miss["reason"] for miss in misses if isinstance(miss.get("reason"), str)), None)
-    return {**answer, "reason": reason} if reason else answer
+    # Saved places' coordinates live on the phone: the host knows only their names.
+    if _uses_saved(request):
+        return _unavailable(view, args, action, saved=True)
+    answer = _ask_host(store, view, request, _uses_me(request))
+    if answer.get("ok") or answer.get("error") not in _TRY_NEXT:
+        return answer
+    return _fallback(view, request, answer["error"], answer["note"])
 
 
-# A miss another engine (or the guess) may make up for; anything else (not
-# found, no route, private) is the answer.
+# A miss the guess may make up for; anything else (not found, no route,
+# private) is the answer.
 _TRY_NEXT = frozenset({"unreachable", "not_set_up", "timeout", "too_soon", "daily_limit", "unavailable", "throttled",
                        "failed", "detail", "stale"})
-
-
-def _ask_phone(store: LocationStore, phone: dict[str, Any], request: dict[str, Any], uses_me: bool, profile: str,
-               sleep: Callable[[float], None]) -> dict[str, Any]:
-    detail = phone["sharing"].get("background_precision")
-    if uses_me and detail not in ("area", "precise"):
-        return {"ok": False, "error": "detail",
-                "note": "The user shares only which saved place they're at, so lookups from their position aren't "
-                        "allowed. Ask where they are, or use a place."}
-    request = {**request, "detail": detail if uses_me else "area"}
-    try:
-        started = store.start_maps(phone["device_id"], request)
-    except LocationError as error:
-        return {"ok": False, "error": error.code, "note": str(error)}
-    if "cached" in started:
-        return _shaped(started["cached"], request)
-    request_id = started["id"]
-    event = push_event("location.requested", identifier=f"maps:{request_id}", profile=profile,
-                       maps={"id": request_id})
-    try:
-        sent = client.send_now(event)
-    except Exception as error:  # noqa: BLE001
-        logger.warning("Conduit maps request failed: %s", error)
-        store.cancel_maps(request_id)
-        return {"ok": False, "error": "unreachable", "note": "The phone couldn't be asked just now."}
-    if isinstance(sent, dict) and sent.get("delivered") is False:
-        store.cancel_maps(request_id)
-        return location_tool.not_delivered("maps", sent, "maps lookups")
-    waited = 0.0
-    while waited < MAPS_WAIT_S:
-        sleep(MAPS_POLL_S)
-        waited += MAPS_POLL_S
-        answer = store.maps_answer(request_id)
-        if answer is not None:
-            return _shaped(answer, request)
-    return {"ok": False, "error": "timeout",
-            "note": "The phone didn't answer in time (it may be off, offline or out of its daily allowance)."}
 
 
 def _ask_host(store: LocationStore, view: dict[str, Any] | None, request: dict[str, Any],
@@ -296,12 +221,12 @@ def _ask_host(store: LocationStore, view: dict[str, Any] | None, request: dict[s
             return {"ok": False, "error": "stale",
                     "note": "This host has no recent enough position for the user to look up from."}
     zone = location_tool._zone(((view or {}).get("sharing") or {}).get("time_zone"))
-    engine = maps_host.engine(get_hermes_home(), zone=zone)
+    engine = maps_google.Engine(get_hermes_home(), zone=zone)
     try:
         result = engine.answer(request, me)
-    except maps_host.NeedsPhone:
+    except maps_google.NeedsPhone:
         return {"ok": False, "error": "unavailable", "note": "Only the user's phone can answer that."}
-    except maps_host.HostUnavailable as error:
+    except maps_google.HostUnavailable as error:
         return {"ok": False, "error": error.error, "note": str(error)}
     answer = _shaped({"ok": True, "result": result}, request)
     answer["source"] = f"{engine.name}, from this Hermes host"
@@ -391,7 +316,7 @@ def _request(action: str, args: dict[str, Any], view: dict[str, Any], now: float
             request["alternatives"] = args.get("alternatives") is not False
             request["steps"] = args.get("steps") is not False
     if _uses_me(request) and (not view.get("sharing") or sharing_paused(view["sharing"], now)):
-        raise _Refused("paused", "The user hasn't shared their location (or paused it) in Conduit, so \"me\" "
+        raise _Refused("paused", "The user hasn't shared their location (or paused it) in Talaria, so \"me\" "
                                  "can't be used. Ask where they are, or use a place.")
     return request
 
@@ -461,7 +386,7 @@ def _navigate(store: LocationStore, view: dict[str, Any] | None, args: dict[str,
     if "saved" in ref:
         place = ((view or {}).get("places") or {}).get(ref["saved"])
         if not place:
-            return {"ok": False, "error": "invalid", "note": "That saved place is gone. Use conduit_location places."}
+            return {"ok": False, "error": "invalid", "note": "That saved place is gone. Use talaria_location places."}
         to = label = place["name"]
     elif "place_id" in ref:
         to, label = f"place_id:{ref['place_id']}", "the place from the earlier answer"
@@ -500,12 +425,12 @@ def _navigate(store: LocationStore, view: dict[str, Any] | None, args: dict[str,
         client.enqueue(push_event("phone.changes", identifier=f"present:{prompt['id']}", profile=profile,
                                   title=prompt["title"], body="Tap Go to open Maps.", mode="alert"))
     except Exception:  # noqa: BLE001
-        logger.warning("conduit_push: could not wake the phone for navigate", exc_info=True)
+        logger.warning("talaria_push: could not wake the phone for navigate", exc_info=True)
     answer: dict[str, Any] = {
         "ok": True, "action": "navigate", "status": "sent", "prompt_id": prompt["id"], "to": label, "mode": mode,
         "note": ("Sent to the user's phone. The app opens Maps right away if they're in this chat with the app "
                  "open; otherwise it shows a Go button and a notification (they can also say \"go\" during a "
-                 "call). Say it's on their phone. conduit_present status with prompt_id says whether it opened "
+                 "call). Say it's on their phone. talaria_present status with prompt_id says whether it opened "
                  "(confirmed) or they said not now (declined). Don't read out a link."),
     }
     if link:
@@ -539,7 +464,7 @@ def _google_place(place_id: str) -> dict[str, Any] | None:
         return None
     try:
         shown = maps_google._place(maps_google.Engine(get_hermes_home()).place(place_id), None, None)
-    except (maps_host.HostUnavailable, ValueError):
+    except (maps_google.HostUnavailable, ValueError):
         return None
     return shown if "lat" in shown else None
 
@@ -552,34 +477,17 @@ def _clip(text: str, limit: int) -> str:
 
 
 def _shaped(answer: dict[str, Any], request: dict[str, Any]) -> dict[str, Any]:
-    """The phone's answer, cleaned (it carries Apple Maps text: names,
+    """The engine's answer, cleaned (it carries Google's text: names,
     addresses, step instructions) with readable durations added."""
-    if not answer.get("ok"):
-        error = answer.get("error")
-        error = _clean(error, 40) if isinstance(error, str) and error.strip() else "failed"
-        note = answer.get("note")
-        note = _clean(note, MAX_STRING) if isinstance(note, str) else None
-        return {"ok": False, "error": error, "note": note or _ERROR_NOTES.get(error, "The lookup failed.")}
     result = _clean(answer.get("result"), MAX_STRING)
     if not isinstance(result, dict):
-        return {"ok": False, "error": "failed", "note": "The phone's answer was empty."}
+        return {"ok": False, "error": "failed", "note": "The lookup's answer was empty."}
     for route in result.get("routes") or []:
         _durations(route)
     for item in result.get("results") or []:
         _durations(item)
-    # The envelope comes last: nothing in the phone's result can replace it.
-    return {**result, "ok": True, "action": request["action"], "source": "Apple Maps, from the user's iPhone"}
-
-
-_ERROR_NOTES = {
-    "not_found": "Apple Maps found nothing for that. Try other words or a fuller address.",
-    "no_route": "Apple Maps has no route for that.",
-    "no_transit": "Apple Maps has no transit times there; try driving or walking.",
-    "throttled": "Apple Maps is limiting lookups from the phone for a minute; try again shortly.",
-    "private": "The user is at a private place, so lookups from their position aren't shared.",
-    "paused": "The user has paused location sharing, so \"me\" can't be used.",
-    "no_location": "The phone couldn't get its position just now.",
-}
+    # The envelope comes last: nothing in the engine's result can replace it.
+    return {**result, "ok": True, "action": request["action"]}
 
 
 def _durations(item: Any) -> None:
@@ -601,7 +509,7 @@ def _minutes(seconds: float) -> str:
 
 
 def _clean(value: Any, limit: int, depth: int = 0) -> Any:
-    """Apple Maps text with control and invisible characters out and every
+    """Maps text with control and invisible characters out and every
     string, list and level capped."""
     if depth > 6:
         return None
@@ -619,15 +527,15 @@ def _clean(value: Any, limit: int, depth: int = 0) -> Any:
     return None
 
 
-# --- When the phone can't answer --------------------------------------------------------
+# --- When the host can't answer ---------------------------------------------------------
 
 
 def _unavailable(view: dict[str, Any] | None, args: dict[str, Any], action: str,
-                 needs_phone: bool = False) -> dict[str, Any]:
-    note = ("That lookup needs the user's iPhone (saved places, and transit routes without a Google key, live "
-            "there), which needs " if needs_phone else "Maps lookups need the user's iPhone, which needs ")
-    note += ("Conduit's background location sharing on (Conduit's "
-             f"{location_tool.SETTINGS_LINK}; leave the link out of anything spoken).")
+                 saved: bool = False) -> dict[str, Any]:
+    note = ("That lookup uses a saved place, whose location stays on the user's phone, so it can't be looked up "
+            "here. Ask for its address, or use another place." if saved else
+            "Maps lookups aren't set up on this Hermes host: it needs a Google Maps Platform key "
+            "(GOOGLE_MAPS_API_KEY in Hermes' .env).")
     if view is not None and action in ("directions", "travel_times"):
         try:
             request = _request(action, args, view, time.time())

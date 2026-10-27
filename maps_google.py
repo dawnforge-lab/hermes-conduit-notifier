@@ -1,17 +1,15 @@
-"""conduit_maps' Google engine: Google Maps Platform, called from this host.
+"""talaria_maps' engine: Google Maps Platform, called from this host.
 
-When the host has its own Google Maps Platform key (``GOOGLE_MAPS_API_KEY`` in
-Hermes' .env), lookups the host answers go to Google instead of Apple: Places
-API (New) for search and places, the Routes API for directions and travel
-times, and the Geocoding API for what's at a spot. The key never leaves this
-host: no phone and no relay sees it, and an app built from this code ships
-none. Answers have the same shapes as the Apple engine's (and the phone's), so
-the tool reads them the same way.
+With the host's own Google Maps Platform key (``GOOGLE_MAPS_API_KEY`` in
+Hermes' .env), lookups go to Google: Places API (New) for search and places,
+the Routes API for directions and travel times (transit routes included),
+and the Geocoding API for what's at a spot. The key never leaves this host:
+no phone and no relay sees it, and an app built from this code ships none.
 
-Google also routes transit, so transit directions don't need the user's
-phone here. Saved places still do: the host knows only their names. Calls
-count against the same daily share as Apple's, which keeps a runaway model
-from running up the key's bill.
+Saved places can't be looked up here: their coordinates live on the phone and
+the host knows only their names (``NeedsPhone``). "me" is the host's last
+fix, at the detail it was shared at. Calls count against a daily share,
+which keeps a runaway model from running up the key's bill.
 """
 
 from __future__ import annotations
@@ -19,19 +17,20 @@ from __future__ import annotations
 import json
 import logging
 import math
+import os
 import re
+import threading
 import time
 import urllib.error
 import urllib.parse
 import urllib.request
-from datetime import timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Callable
 
-from . import maps_host
-from .maps_host import HostUnavailable, NeedsPhone
+from . import client
 
-logger = logging.getLogger("hermes.plugins.conduit_push")
+logger = logging.getLogger("hermes.plugins.talaria_push")
 
 KEY_ENV = "GOOGLE_MAPS_API_KEY"
 NAME = "Google Maps"
@@ -52,6 +51,26 @@ MAX_PAGE = 20
 # A key is a header value: Google's are letters, digits, '-' and '_'.
 _KEY = re.compile(r"[A-Za-z0-9_-]{20,200}")
 _DURATION = re.compile(r"^(\d+(?:\.\d+)?)s$")
+DAILY_CALLS = 200
+USAGE_FILE = "talaria-maps-usage.json"
+TIMEOUT_S = 10.0
+MAX_LOOKUP = 5
+MAX_ANSWER_BYTES = 512 * 1024
+
+
+class NeedsPhone(Exception):
+    """This lookup can only be answered by the phone."""
+
+
+class HostUnavailable(Exception):
+    """The host can't answer now (no key, quota, Google refused)."""
+
+    def __init__(self, error: str, note: str) -> None:
+        super().__init__(note)
+        self.error = error
+
+
+_usage_lock = threading.Lock()
 
 
 def _env_value(name: str) -> str | None:
@@ -76,15 +95,67 @@ def configured() -> bool:
     return _key() is not None
 
 
-class Engine(maps_host.Engine):
-    """The Apple engine's lookups, answered by Google. ``fetch(method, url,
+def _spend(home: Path) -> None:
+    """One Google call against this host's daily share of what its key may
+    spend.
+
+    The count is read and rewritten in place under a file lock, so gateway
+    and dashboard processes sharing a home count together. The file is
+    owner-only from the first byte and never followed through a symlink.
+    """
+    path = Path(home) / USAGE_FILE
+    flags = os.O_RDWR | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        with _usage_lock, os.fdopen(os.open(path, flags, 0o600), "r+b") as handle, client._exclusive(handle):
+            _count_one(handle)
+    except OSError:
+        raise HostUnavailable("unavailable", "This Hermes host can't keep count of its maps lookups.") from None
+
+
+def _count_one(handle: Any) -> None:
+    # A crash mid-write leaves a partial record, read back as a fresh day:
+    # at worst one day's count restarts.
+    if hasattr(os, "fchmod"):
+        os.fchmod(handle.fileno(), 0o600)
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    handle.seek(0)
+    try:
+        usage = json.loads(handle.read(4096) or b"{}")
+    except ValueError:
+        usage = {}
+    if not isinstance(usage, dict):
+        usage = {}
+    count = usage.get("count", 0) if usage.get("day") == today else 0
+    if not isinstance(count, int) or isinstance(count, bool) or count < 0:
+        count = 0
+    if count >= DAILY_CALLS:
+        raise HostUnavailable("daily_limit", "Today's maps lookups from this host are used up.")
+    handle.seek(0)
+    handle.truncate()
+    handle.write(json.dumps({"day": today, "count": count + 1}).encode())
+    handle.flush()
+    os.fsync(handle.fileno())
+
+
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, *args: Any, **kwargs: Any) -> None:
+        return None
+
+
+_OPENER = urllib.request.build_opener(_NoRedirect)
+
+
+class Engine:
+    """talaria_maps' lookups, answered by Google. ``fetch(method, url,
     headers, body)`` is the HTTP call, replaced in tests."""
 
     name = NAME
 
     def __init__(self, home: Path, fetch: Callable[[str, str, dict[str, str], Any], Any] | None = None,
                  zone: Any = timezone.utc, clock: Callable[[], float] = time.time) -> None:
-        super().__init__(home, zone=zone, clock=clock)
+        self.home = home
+        self.zone = zone
+        self.clock = clock
         self.call = fetch or self._call_google
 
     # --- Google -----------------------------------------------------------------------
@@ -93,9 +164,9 @@ class Engine(maps_host.Engine):
         data = None if body is None else json.dumps(body).encode()
         request = urllib.request.Request(url, data=data, headers=headers, method=method)
         # No redirects (the key stays with Google) and a capped body.
-        with maps_host._OPENER.open(request, timeout=maps_host.TIMEOUT_S) as response:
-            answer = response.read(maps_host.MAX_ANSWER_BYTES + 1)
-        if len(answer) > maps_host.MAX_ANSWER_BYTES:
+        with _OPENER.open(request, timeout=TIMEOUT_S) as response:
+            answer = response.read(MAX_ANSWER_BYTES + 1)
+        if len(answer) > MAX_ANSWER_BYTES:
             raise HostUnavailable("failed", "Google Maps sent more than this host reads.")
         return json.loads(answer or b"{}")
 
@@ -114,7 +185,7 @@ class Engine(maps_host.Engine):
             headers["X-Goog-FieldMask"] = fields
         if body is not None:
             headers["Content-Type"] = "application/json"
-        maps_host._spend(self.home)
+        _spend(self.home)
         try:
             return self.call(method, url, headers, body)
         except urllib.error.HTTPError as error:
@@ -142,11 +213,25 @@ class Engine(maps_host.Engine):
 
     # --- Lookups ----------------------------------------------------------------------
 
+    def answer(self, request: dict[str, Any], me: dict[str, Any] | None) -> dict[str, Any]:
+        """``me``: {"lat", "lon", "detail", "label"} from the host's last fix,
+        or None when the request doesn't use it."""
+        action = request["action"]
+        if action == "search":
+            return self._search(request, me)
+        if action == "lookup":
+            return self._lookup(request, me)
+        if action == "reverse_geocode":
+            return self._reverse(request, me)
+        if action == "directions":
+            return self._directions(request, me)
+        return self._travel_times(request, me)
+
     def _point(self, ref: dict[str, Any], me: dict[str, Any] | None, hint: tuple[float, float] | None
                ) -> tuple[tuple[float, float], dict[str, Any]]:
         if ref.get("me"):
             assert me is not None
-            return (me["lat"], me["lon"]), maps_host._me_place(me)
+            return (me["lat"], me["lon"]), _me_place(me)
         if "saved" in ref:
             raise NeedsPhone()
         if "lat" in ref:
@@ -170,7 +255,7 @@ class Engine(maps_host.Engine):
         return (shown["lat"], shown["lon"]), shown
 
     def _search(self, request: dict[str, Any], me: dict[str, Any] | None) -> dict[str, Any]:
-        centre, _ = self._point(request["near"], me, maps_host._mine(me))
+        centre, _ = self._point(request["near"], me, _mine(me))
         limit = request.get("limit", 10)
         found = self._search_text(request["query"], centre, limit)
         detail = me["detail"] if me and request["near"].get("me") else "precise"
@@ -182,11 +267,11 @@ class Engine(maps_host.Engine):
     def _lookup(self, request: dict[str, Any], me: dict[str, Any] | None) -> dict[str, Any]:
         hint = None
         if request.get("near"):
-            hint, _ = self._point(request["near"], me, maps_host._mine(me))
+            hint, _ = self._point(request["near"], me, _mine(me))
         elif me:
-            hint = maps_host._mine(me)
-        found = self._search_text(request["query"], hint, maps_host.MAX_LOOKUP)
-        places = [_place(item, None, None) for item in found[:maps_host.MAX_LOOKUP]]
+            hint = _mine(me)
+        found = self._search_text(request["query"], hint, MAX_LOOKUP)
+        places = [_place(item, None, None) for item in found[:MAX_LOOKUP]]
         if not places:
             raise HostUnavailable("not_found", "Google Maps found nothing for that.")
         return {"places": places}
@@ -194,9 +279,9 @@ class Engine(maps_host.Engine):
     def _reverse(self, request: dict[str, Any], me: dict[str, Any] | None) -> dict[str, Any]:
         if request["near"].get("me") and me and me["detail"] != "precise":
             # Around a 1 km cell, the area name is the honest answer.
-            return {"places": [maps_host._me_place(me)]}
+            return {"places": [_me_place(me)]}
         point, _ = self._point(request["near"], me, None)
-        answer = self._google("GET", f"{GEOCODE}?{urllib.parse.urlencode({'latlng': maps_host._pair(point)})}",
+        answer = self._google("GET", f"{GEOCODE}?{urllib.parse.urlencode({'latlng': _pair(point)})}",
                               key_in_query=True) or {}
         status = answer.get("status") if isinstance(answer, dict) else None
         if status in ("REQUEST_DENIED", "INVALID_REQUEST"):
@@ -207,7 +292,7 @@ class Engine(maps_host.Engine):
         found = answer.get("results") if status == "OK" else None
         if not isinstance(found, list) or not found:
             raise HostUnavailable("not_found", "Google Maps has no address there.")
-        return {"places": [_address(item) for item in found[:maps_host.MAX_LOOKUP]]}
+        return {"places": [_address(item) for item in found[:MAX_LOOKUP]]}
 
     def _timing(self, request: dict[str, Any]) -> dict[str, str]:
         """departureTime or arrivalTime: Google takes a past time and an
@@ -215,15 +300,15 @@ class Engine(maps_host.Engine):
         works out when to leave from the duration."""
         transit = request["mode"] == "transit"
         if request.get("arrive_by"):
-            return {"arrivalTime": maps_host._utc(request["arrive_by"], self.zone)} if transit else {}
+            return {"arrivalTime": _utc(request["arrive_by"], self.zone)} if transit else {}
         if request.get("depart_at"):
-            moment = maps_host._local(request["depart_at"], self.zone)
+            moment = _local(request["depart_at"], self.zone)
             if transit or moment.timestamp() > self.clock() + 60:
-                return {"departureTime": maps_host._utc(request["depart_at"], self.zone)}
+                return {"departureTime": _utc(request["depart_at"], self.zone)}
         return {}
 
     def _directions(self, request: dict[str, Any], me: dict[str, Any] | None) -> dict[str, Any]:
-        origin, origin_place = self._point(request["from"], me, maps_host._mine(me))
+        origin, origin_place = self._point(request["from"], me, _mine(me))
         destination, destination_place = self._point(request["to"][0], me, origin)
         mode = request["mode"]
         body: dict[str, Any] = {"origin": _waypoint(origin), "destination": _waypoint(destination),
@@ -257,7 +342,7 @@ class Engine(maps_host.Engine):
         return result
 
     def _travel_times(self, request: dict[str, Any], me: dict[str, Any] | None) -> dict[str, Any]:
-        origin, origin_place = self._point(request["from"], me, maps_host._mine(me))
+        origin, origin_place = self._point(request["from"], me, _mine(me))
         targets: list[tuple[tuple[float, float] | None, dict[str, Any]]] = []
         for ref in request["to"]:
             try:
@@ -299,8 +384,50 @@ class Engine(maps_host.Engine):
             results.append(item)
         return {"from": origin_place, "mode": request["mode"], "results": results}
 
+    def _times(self, request: dict[str, Any], seconds: Any) -> dict[str, str]:
+        if not isinstance(seconds, (int, float)):
+            return {}
+        if request.get("arrive_by"):
+            arrive = _local(request["arrive_by"], self.zone)
+            return {"arrive_at": _show(arrive), "leave_by": _show(arrive - timedelta(seconds=seconds))}
+        depart = _local(request["depart_at"], self.zone) if request.get("depart_at") else \
+            datetime.fromtimestamp(self.clock(), self.zone)
+        return {"depart_at": _show(depart), "arrive_at": _show(depart + timedelta(seconds=seconds))}
+
 
 # --- Helpers -------------------------------------------------------------------------
+
+
+def _pair(point: tuple[float, float] | None) -> str | None:
+    return None if point is None else f"{point[0]:.6f},{point[1]:.6f}"
+
+
+def _mine(me: dict[str, Any] | None) -> tuple[float, float] | None:
+    return None if me is None else (me["lat"], me["lon"])
+
+
+def _me_place(me: dict[str, Any]) -> dict[str, Any]:
+    # The user's own position is never echoed back as coordinates or an address.
+    return {"name": me.get("label") or "the user's position"}
+
+
+def _metres_between(a: tuple[float, float], b: tuple[float, float]) -> float:
+    lat1, lon1, lat2, lon2 = map(math.radians, (a[0], a[1], b[0], b[1]))
+    h = math.sin((lat2 - lat1) / 2) ** 2 + math.cos(lat1) * math.cos(lat2) * math.sin((lon2 - lon1) / 2) ** 2
+    return 2 * 6_371_000 * math.asin(math.sqrt(h))
+
+
+def _local(value: str, zone: Any) -> datetime:
+    parsed = datetime.fromisoformat(value[:-1] + "+00:00" if value.endswith("Z") else value)
+    return parsed.replace(tzinfo=zone) if parsed.tzinfo is None else parsed.astimezone(zone)
+
+
+def _utc(value: str, zone: Any) -> str:
+    return _local(value, zone).astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _show(moment: datetime) -> str:
+    return moment.isoformat(timespec="minutes")
 
 
 def _real(value: Any, low: float, high: float) -> bool:
@@ -359,7 +486,7 @@ def _locate(shown: dict[str, Any], location: Any, centre: tuple[float, float] | 
     if _real(lat, -90, 90) and _real(lon, -180, 180):
         shown["lat"], shown["lon"] = lat, lon
         if centre is not None:
-            metres = maps_host._metres_between(centre, (lat, lon))
+            metres = _metres_between(centre, (lat, lon))
             shown["distance_m"] = round(metres, -2) if detail == "area" else round(metres)
 
 

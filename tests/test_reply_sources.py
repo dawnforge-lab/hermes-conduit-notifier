@@ -10,7 +10,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
-BASE = "/api/plugins/conduit_push"
+BASE = "/api/plugins/talaria_push"
 ELECTRON = "Mozilla/5.0 (Macintosh) AppleWebKit/537.36 Hermes/1.0 Chrome/130 Electron/33.0 Safari/537.36"
 SAFARI = "Mozilla/5.0 (Macintosh) AppleWebKit/605.1.15 Version/18.0 Safari/605.1.15"
 
@@ -33,10 +33,10 @@ if "tools.clarify_tool" not in sys.modules:
 
     _clarify_tool.strip_recommended = _strip_recommended
     sys.modules["tools.clarify_tool"] = _clarify_tool
-if "conduit_push" not in sys.modules:
-    _pkg = types.ModuleType("conduit_push")
+if "talaria_push" not in sys.modules:
+    _pkg = types.ModuleType("talaria_push")
     _pkg.__path__ = [str(ROOT)]
-    sys.modules["conduit_push"] = _pkg
+    sys.modules["talaria_push"] = _pkg
 
 
 def _load(name, path):
@@ -49,9 +49,9 @@ def _load(name, path):
     return module
 
 
-sources = _load("conduit_push.reply_sources", ROOT / "reply_sources.py")
-plugin = _load("conduit_push.__init__", ROOT / "__init__.py")
-api = _load("conduit_plugin_api_reply_sources", ROOT / "dashboard" / "plugin_api.py")
+sources = _load("talaria_push.reply_sources", ROOT / "reply_sources.py")
+plugin = _load("talaria_push.__init__", ROOT / "__init__.py")
+api = _load("talaria_plugin_api_reply_sources", ROOT / "dashboard" / "plugin_api.py")
 Store = sources.ReplySourcesStore
 
 
@@ -67,12 +67,12 @@ class WSTransport:
 
 def test_every_source_notifies_until_turned_off(tmp_path):
     store = Store(tmp_path)
-    assert store.settings() == {"conduit": True, "desktop": True, "messaging": True, "terminal": True}
+    assert store.settings() == {"talaria": True, "desktop": True, "messaging": True, "terminal": True}
     assert not (tmp_path / sources.FILE_NAME).exists()
     store.set_notify("desktop", False)
     store.set_notify("messaging", False)
-    assert Store(tmp_path).settings() == {"conduit": True, "desktop": False, "messaging": False, "terminal": True}
-    assert not Store(tmp_path).notifies("desktop") and Store(tmp_path).notifies("conduit")
+    assert Store(tmp_path).settings() == {"talaria": True, "desktop": False, "messaging": False, "terminal": True}
+    assert not Store(tmp_path).notifies("desktop") and Store(tmp_path).notifies("talaria")
     assert Store(tmp_path).set_notify("desktop", True)["desktop"] is True
     assert (tmp_path / sources.FILE_NAME).stat().st_mode & 0o777 == 0o600
 
@@ -96,20 +96,19 @@ def test_an_unreadable_file_reads_as_everything_on(tmp_path):
 
 
 @pytest.mark.parametrize("platform, transport, expected", [
-    ("tui", WSTransport({"x-conduit-client": "conduit", "user-agent": "Conduit/1 CFNetwork"}), "conduit"),
-    # A Telegram chat continued in Conduit is a Conduit turn.
-    ("telegram", WSTransport({"x-conduit-client": "conduit"}), "conduit"),
+    ("tui", WSTransport({"x-talaria-client": "talaria", "user-agent": "Talaria/1 CFNetwork"}), "talaria"),
+    # A Telegram chat continued in Talaria is a Talaria turn.
+    ("telegram", WSTransport({"x-talaria-client": "talaria"}), "talaria"),
     ("desktop", WSTransport({"user-agent": ELECTRON}), "desktop"),
     ("tui", WSTransport({"user-agent": SAFARI}), "desktop"),
-    ("desktop", types.SimpleNamespace(conduit_client="conduit"), "conduit"),
     ("telegram", None, "messaging"),
     ("Discord", None, "messaging"),
     ("cli", None, "terminal"),
     # Unknown: the push goes out whatever is set.
     ("tui", WSTransport({"user-agent": "python-websockets/12"}), None),
-    # Only Conduit's own value counts.
-    ("tui", WSTransport({"x-conduit-client": "", "user-agent": SAFARI}), "desktop"),
-    ("tui", WSTransport({"x-conduit-client": "other"}), None),
+    # Only Talaria's own value counts.
+    ("tui", WSTransport({"x-talaria-client": "", "user-agent": SAFARI}), "desktop"),
+    ("tui", WSTransport({"x-talaria-client": "other"}), None),
     ("desktop", None, None),
     ("tui", None, None),
     ("local", None, None),
@@ -152,7 +151,7 @@ def test_hermes_platform_list_decides_messaging_when_it_has_one(monkeypatch):
 def test_the_turns_connection_comes_from_hermes_gateway_when_loaded(monkeypatch):
     monkeypatch.delitem(sys.modules, "tui_gateway.transport", raising=False)
     assert sources.current_transport() is None
-    bound = WSTransport({"x-conduit-client": "conduit"})
+    bound = WSTransport({"x-talaria-client": "talaria"})
     module = types.ModuleType("tui_gateway.transport")
     module.current_transport = lambda: bound
     monkeypatch.setitem(sys.modules, "tui_gateway.transport", module)
@@ -207,12 +206,12 @@ def test_replies_push_from_every_source_by_default(turn):
     assert turn("telegram") == ["response.ready"]
 
 
-def test_conduit_only_skips_desktop_messaging_and_terminal_replies(turn):
+def test_talaria_only_skips_desktop_messaging_and_terminal_replies(turn):
     store = Store(turn.home)
     for source in ("desktop", "messaging", "terminal"):
         store.set_notify(source, False)
-    assert turn("tui", WSTransport({"x-conduit-client": "conduit"})) == ["response.ready"]
-    assert turn("telegram", WSTransport({"x-conduit-client": "conduit"})) == ["response.ready"]
+    assert turn("tui", WSTransport({"x-talaria-client": "talaria"})) == ["response.ready"]
+    assert turn("telegram", WSTransport({"x-talaria-client": "talaria"})) == ["response.ready"]
     assert turn("desktop", WSTransport({"user-agent": ELECTRON})) == []
     assert turn("telegram") == []
     assert turn("cli") == []
@@ -250,7 +249,7 @@ def client(tmp_path, monkeypatch):
 
 
 def test_routes_read_and_change_a_source(client):
-    on = {"conduit": True, "desktop": True, "messaging": True, "terminal": True}
+    on = {"talaria": True, "desktop": True, "messaging": True, "terminal": True}
     assert client.get(f"{BASE}/notifications/reply-sources").json() == {"ok": True, "sources": on}
     response = client.put(f"{BASE}/notifications/reply-sources", json={"source": "desktop", "notify": False})
     assert response.status_code == 200
@@ -262,10 +261,6 @@ def test_routes_read_and_change_a_source(client):
 def test_a_bad_body_is_a_400(client):
     assert client.put(f"{BASE}/notifications/reply-sources", json={"source": "x", "notify": False}).status_code == 400
     assert client.put(f"{BASE}/notifications/reply-sources", json=["desktop"]).status_code == 400
-
-
-def test_watch_jobs_count_as_conduit():
-    assert sources.turn_source("desktop", api._WatchJobTransport(None)) == "conduit"
 
 
 def test_an_unreadable_file_is_not_overwritten(tmp_path, monkeypatch):

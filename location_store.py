@@ -1,6 +1,6 @@
-"""Location from Conduit: the store, its encryption and its queries.
+"""Location from Talaria: the store, its encryption and its queries.
 
-Conduit can share where the user is with this profile so Hermes can use it
+Talaria can share where the user is with this profile so Hermes can use it
 (off until the user turns it on). Two layers, each its own opt-in on the
 phone: "while I'm talking to Hermes" (a fix taken as a message is sent or a
 voice call starts) and "in the background" (arriving at and leaving the
@@ -17,14 +17,14 @@ id alone, and the agent hears only "at a private place".
 
 What's kept: the latest fix per device, arrivals and departures for the
 user's chosen history (latest only, a day, 7 days, 30 days or a year), a log
-of every time the agent read any of it (shown in Conduit), place rules (run
+of every time the agent read any of it (shown in Talaria), place rules (run
 a scheduled job when the user arrives somewhere or leaves) and on-demand
 locate requests. Every ingest body is sealed end to end as in health_store:
 each device agrees its own key with this profile (``/location/key``,
 X25519), HKDF-SHA256 and ChaCha20-Poly1305, with location's own labels.
 
-State lives in the profile's ``conduit-location.sqlite3`` (owner-only). The
-dashboard routes (dashboard process) write it and the ``conduit_location``
+State lives in the profile's ``talaria-location.sqlite3`` (owner-only). The
+dashboard routes (dashboard process) write it and the ``talaria_location``
 tool and the call limits (agent process) read it: the dashboard loads this
 file by path, so it imports nothing from the plugin package.
 """
@@ -55,7 +55,7 @@ try:
 except ImportError:  # everything but Windows
     msvcrt = None  # type: ignore[assignment]
 
-FILE_NAME = "conduit-location.sqlite3"
+FILE_NAME = "talaria-location.sqlite3"
 SCHEMA_VERSION = 3
 # Versions _migrate brings up to SCHEMA_VERSION.
 OLDER_SCHEMAS = ("1", "2")
@@ -64,18 +64,10 @@ OLDER_SCHEMAS = ("1", "2")
 # older plugin still opens the file.
 _PENDING_JOB = "rule_job_pending:"
 
-SALT = b"conduit-location-v1"
-INFO_INGEST = b"conduit-location-v1 ingest device-to-host"
-# A live voice call reads the user's own location back (POST /voice-tools/call):
-# each direction has its own key from the same agreement, apart from ingest.
-INFO_VOICE_REQUEST = b"conduit-location-v1 voice device-to-host"
-INFO_VOICE_ANSWER = b"conduit-location-v1 voice host-to-device"
-# Maps lookups the phone answers with Apple Maps (conduit_maps): the host
-# seals each request for one device, the device seals its answer back.
-INFO_MAPS_REQUEST = b"conduit-location-v1 maps host-to-device"
-INFO_MAPS_ANSWER = b"conduit-location-v1 maps device-to-host"
-AAD_TAG = "conduit-location/1"
-KID_TAG = b"conduit-location-kid\n"
+SALT = b"talaria-location-v1"
+INFO_INGEST = b"talaria-location-v1 ingest device-to-host"
+AAD_TAG = "talaria-location/1"
+KID_TAG = b"talaria-location-kid\n"
 NONCE_BYTES = 12
 KEY_BYTES = 32
 
@@ -107,7 +99,7 @@ MAX_DEVICE_NAME_CHARS = 60
 MAX_AREA_CHARS = 80
 MAX_TASK_CHARS = 600
 MAX_WHAT_CHARS = 60
-# Reads the user can look through in Conduit.
+# Reads the user can look through in Talaria.
 READS_KEPT_S = 30 * 24 * 3600
 MAX_READS = 2000
 # An arrival or departure that reaches the host later than this doesn't run
@@ -123,19 +115,6 @@ LOCATES_KEPT_S = 24 * 3600
 # message says little after an hour.
 TRUSTED_BACKGROUND_S = 24 * 3600
 TRUSTED_TALKING_S = 3600
-# What a phone says it can do, in its sealed sharing settings.
-FEATURES = ("maps",)
-# Maps lookups wake the phone the same way locate does (a location push),
-# out of the same allowance: well under it, apart from locate's own budget.
-MAPS_PER_HOUR = 30
-MAPS_PER_DAY = 120
-# A request the phone hasn't fetched by then is no use to the waiting tool.
-MAPS_TTL_S = 60
-# The same question within this long gets the last answer, no wake.
-MAPS_CACHE_S = 120
-MAPS_KEPT_S = 24 * 3600
-MAX_MAPS_ANSWER_BYTES = 64 * 1024
-MAX_MAPS_REQUEST_BYTES = 8 * 1024
 EARLIEST = datetime(2020, 1, 1, tzinfo=timezone.utc)
 
 _DEVICE_ID = re.compile(r"^[A-Za-z0-9_-]{8,64}\Z")
@@ -143,11 +122,8 @@ _ITEM_ID = re.compile(r"^[A-Za-z0-9_-]{1,40}\Z")
 _RECORD_ID = re.compile(r"^[A-Za-z0-9:_-]{1,80}\Z")
 _BATCH_ID = re.compile(r"^[A-Za-z0-9_-]{8,64}\Z")
 _LOCATE_ID = re.compile(r"^l_[A-Za-z0-9_-]{16,64}\Z")
-_MAPS_ID = re.compile(r"^m_[A-Za-z0-9_-]{16,64}\Z")
 _RULE_ID = re.compile(r"^r_[A-Za-z0-9_-]{8,40}\Z")
 _KID = re.compile(r"^[0-9a-f]{32}\Z")
-# A voice tool's name, bound into the sealed request and answer.
-_VOICE_TOOL = re.compile(r"[a-z][a-z0-9_]{0,63}\Z")
 _B64URL = re.compile(r"^[A-Za-z0-9_-]*\Z")
 _TZ = re.compile(r"^[A-Za-z0-9_+\-/]{1,64}\Z")
 _COUNTRY = re.compile(r"^[A-Z]{2}\Z")
@@ -261,17 +237,6 @@ def new_host_keypair() -> tuple[bytes, bytes]:
 
 def ingest_aad(kid: str, device_id: str, batch_id: str) -> bytes:
     return "\n".join([AAD_TAG, "ingest", f"kid={kid}", f"dev={device_id}", f"batch={batch_id}"]).encode("utf-8")
-
-
-def maps_aad(direction: str, kid: str, device_id: str, request_id: str) -> bytes:
-    """``direction`` is ``request`` (host to phone) or ``answer``."""
-    return f"{AAD_TAG}\nmaps-{direction}\nkid={kid}\ndev={device_id}\nid={request_id}".encode("utf-8")
-
-
-def voice_aad(direction: str, tool: str, kid: str, device_id: str, call_id: str) -> bytes:
-    """``direction`` is "request" or "answer"; ``tool`` is the voice tool asked."""
-    return "\n".join([AAD_TAG, f"voice-{direction}", f"tool={tool}", f"kid={kid}", f"dev={device_id}",
-                      f"call={call_id}"]).encode("utf-8")
 
 
 def seal(key: bytes, plaintext: bytes, aad: bytes, nonce: bytes | None = None) -> tuple[str, str]:
@@ -489,7 +454,7 @@ class LocationStore:
         device_id = body.get("device_id")
         if not isinstance(device_id, str) or not _DEVICE_ID.match(device_id):
             raise LocationError("malformed", "device_id must be 8-64 letters, digits, - or _")
-        name = clean_text(body.get("device_name"), "device_name", MAX_DEVICE_NAME_CHARS) or "iPhone"
+        name = clean_text(body.get("device_name"), "device_name", MAX_DEVICE_NAME_CHARS) or "Phone"
         device_public = unb64u(body.get("public_key"))
         if len(device_public) != 32:
             raise LocationError("malformed", "public_key must be a 32-byte X25519 key")
@@ -506,7 +471,7 @@ class LocationStore:
             if not known and count >= MAX_DEVICES:
                 raise LocationError("too_many_devices",
                                     f"This profile already keeps location from {MAX_DEVICES} devices; delete one "
-                                    "from Conduit first", status=409)
+                                    "from Talaria first", status=409)
             db.execute(
                 "INSERT INTO devices(id, name, device_public, host_private, host_public, kid, created_at)"
                 " VALUES(?,?,?,?,?,?,?)"
@@ -519,83 +484,22 @@ class LocationStore:
             # A new key means a reinstall, sharing turned off and on, or a
             # new pairing: nothing the old key sent carries over to it. The
             # phone sends its saved places again with the new key. Its
-            # sharing stays until then (its maps choice counts meanwhile), and
-            # maps rows keep counting against the budget, emptied and closed.
+            # sharing stays until then (its maps choice counts meanwhile).
             if known and bytes(known[0]) != device_public:
                 for table in ("fixes", "visits", "places"):
                     db.execute(f"DELETE FROM {table} WHERE device=?", (device_id,))
-                db.execute("UPDATE maps SET cache='', request='', answer=NULL,"
-                           " answered_at=COALESCE(answered_at, ?) WHERE device=?", (now, device_id))
                 db.execute("UPDATE devices SET last_sent=NULL WHERE id=?", (device_id,))
             generation = _meta(db, "generation")
         return {"kid": kid, "host_public_key": b64u(host_public), "generation": generation}
 
-    def _still_keyed(self, device_id: str, kid: str) -> None:
-        """Refuses once the device has registered again since ``kid`` was
-        checked. A sealed answer's read runs in its own connection after the
-        request is opened, so a re-registration (and the new key's upload) can
-        land in between; checking again after the read means an answer is
-        sealed to ``kid`` only if no newer key's data could have been read.
-        Every registration mints a new host key, so a kid never comes back."""
-        with self._read() as db:
-            row = None if db is None else db.execute("SELECT kid FROM devices WHERE id=?", (device_id,)).fetchone()
-        if row is None or row[0] != kid:
-            raise LocationError("unknown_key", "This device's location key isn't on this profile; set it up again",
-                                status=409)
-
-    def _device_key(self, db: sqlite3.Connection, device_id: str, kid: str, purpose: bytes = INFO_INGEST) -> bytes:
+    def _device_key(self, db: sqlite3.Connection, device_id: str, kid: str) -> bytes:
         row = db.execute("SELECT device_public, host_private, host_public, kid FROM devices WHERE id=?",
                          (device_id,)).fetchone()
         if row is None or row[3] != kid:
             raise LocationError("unknown_key", "This device's location key isn't on this profile; set it up again",
                                 status=409)
         device_public, host_private, host_public = bytes(row[0]), bytes(row[1]), bytes(row[2])
-        return derive_key(agree(host_private, device_public), device_id, device_public, host_public, purpose)
-
-    # Voice reads ---------------------------------------------------------------------
-
-    def open_voice_request(self, envelope: Any) -> tuple[str, dict[str, Any], Callable[[Any], dict[str, str]]]:
-        """A live voice call's sealed read from one device: its device id, the
-        opened request, and a function that seals the answer for that device
-        alone. Only a device holding its own key can ask, and the caller reads
-        only that device's location (``snapshot(device_id)``)."""
-        if not isinstance(envelope, dict) or type(envelope.get("v")) is not int or envelope.get("v") != 1:
-            raise LocationError("malformed", "Expected a version 1 sealed request")
-        device_id, kid, call_id = envelope.get("device_id"), envelope.get("kid"), envelope.get("call_id")
-        tool = envelope.get("tool")
-        if not isinstance(tool, str) or not _VOICE_TOOL.match(tool):
-            raise LocationError("malformed", "tool is malformed")
-        if not isinstance(device_id, str) or not _DEVICE_ID.match(device_id):
-            raise LocationError("malformed", "device_id is malformed")
-        if not isinstance(kid, str) or not _KID.match(kid):
-            raise LocationError("malformed", "kid is malformed")
-        if not isinstance(call_id, str) or not _BATCH_ID.match(call_id):
-            raise LocationError("malformed", "call_id is malformed")
-        if not crypto_available():
-            raise LocationError("no_crypto", "Location sharing needs the cryptography package on this host",
-                                status=501)
-        with self._read() as db:
-            if db is None:
-                raise LocationError("unknown_key",
-                                    "This device's location key isn't on this profile; set it up again", status=409)
-            request_key = self._device_key(db, device_id, kid, INFO_VOICE_REQUEST)
-            answer_key = self._device_key(db, device_id, kid, INFO_VOICE_ANSWER)
-        plaintext = open_sealed(request_key, envelope.get("nonce"), envelope.get("ct"),
-                                voice_aad("request", tool, kid, device_id, call_id))
-        try:
-            request = json.loads(plaintext)
-        except (ValueError, RecursionError):
-            raise LocationError("malformed", "The sealed request isn't JSON") from None
-        if not isinstance(request, dict) or request.get("call_id") != call_id:
-            raise LocationError("malformed", "The sealed request doesn't match its envelope")
-
-        def seal_answer(answer: Any) -> dict[str, str]:
-            self._still_keyed(device_id, kid)
-            body = json.dumps({"call_id": call_id, "result": answer}, ensure_ascii=False).encode("utf-8")
-            nonce, ct = seal(answer_key, body, voice_aad("answer", tool, kid, device_id, call_id))
-            return {"nonce": nonce, "ct": ct}
-
-        return device_id, request, seal_answer
+        return derive_key(agree(host_private, device_public), device_id, device_public, host_public)
 
     # Ingest --------------------------------------------------------------------
 
@@ -627,9 +531,6 @@ class LocationStore:
             if not isinstance(batch, dict) or batch.get("batch_id") != batch_id:
                 raise LocationError("malformed", "The sealed batch doesn't match its envelope")
             result = _apply(db, device_id, batch, now)
-            # Every upload also forgets old lookups, so they don't outlive
-            # their window when no new lookup comes.
-            _prune_maps(db, now)
             generation = _meta(db, "generation")
         return {**result, "generation": generation}
 
@@ -683,7 +584,7 @@ class LocationStore:
             return {"deleted": True, "remaining_devices": 0, "rule_jobs": []}
         with self._write() as db:
             jobs: list[str] = []
-            for table in ("fixes", "visits", "places", "maps", "devices"):
+            for table in ("fixes", "visits", "places", "devices"):
                 column = "id" if table == "devices" else "device"
                 if device_id is None:
                     db.execute(f"DELETE FROM {table}")
@@ -729,28 +630,23 @@ class LocationStore:
 
     # The agent's view -------------------------------------------------------------------
 
-    def snapshot(self, device_id: str | None = None, upgrade: bool = True) -> dict[str, Any] | None:
+    def snapshot(self, upgrade: bool = True) -> dict[str, Any] | None:
         """Where the user is: the device with the newest fix, with its sharing
         and places, or None when nothing is shared. The device that synced
         last decides when it says sharing is paused or off (the user's
-        latest word), and when no device has a fix. ``device_id`` (a voice
-        read) reads that device alone, matched as an id. ``upgrade=False``
-        (another profile looking) leaves a store an older plugin wrote as it
-        is, unread, rather than taking its write lock."""
+        latest word), and when no device has a fix. ``upgrade=False`` (another
+        profile looking) leaves a store an older plugin wrote as it is,
+        unread, rather than taking its write lock."""
         with self._read(upgrade) as db:
             if db is None:
                 return None
-            if device_id is not None:
-                rows = db.execute("SELECT id, name, last_seen, sharing FROM devices WHERE id=? AND last_seen IS NOT"
-                                  " NULL", (device_id,)).fetchall()
-            else:
-                rows = db.execute("SELECT id, name, last_seen, sharing FROM devices WHERE last_seen IS NOT NULL"
-                                  " ORDER BY last_seen DESC").fetchall()
+            rows = db.execute("SELECT id, name, last_seen, sharing FROM devices WHERE last_seen IS NOT NULL"
+                              " ORDER BY last_seen DESC").fetchall()
             if not rows:
                 return None
             row = rows[0]
             latest = _decode(row[3], None) or {}
-            if device_id is None and not sharing_paused(latest, self.clock()) and (
+            if not sharing_paused(latest, self.clock()) and (
                     latest.get("talking") or latest.get("background")):
                 newest = db.execute(
                     "SELECT device FROM fixes WHERE device IN (%s) ORDER BY at DESC LIMIT 1"
@@ -815,7 +711,7 @@ class LocationStore:
     def put_rule(self, rule: dict[str, Any], *, replacing: bool = False) -> dict[str, Any]:
         """Adds or replaces a rule (by id). The caller made its job first.
         ``replacing``: the caller is changing a rule it found, which must
-        still be there (the user may have just deleted it in Conduit)."""
+        still be there (the user may have just deleted it in Talaria)."""
         now = self.clock()
         with self._write() as db:
             exists = db.execute("SELECT 1 FROM rules WHERE id=?", (rule["id"],)).fetchone()
@@ -908,25 +804,6 @@ class LocationStore:
             row = db.execute("SELECT answered_at FROM locates WHERE id=?", (locate_id,)).fetchone()
             return bool(row and row[0])
 
-
-    # Maps lookups on the phone ---------------------------------------------------------
-
-    def maps_device(self) -> dict[str, Any] | None:
-        """The device that answers maps lookups: background sharing on, not
-        paused, and a Conduit that says it can (``features``), newest sync
-        first. None when no device can."""
-        now = self.clock()
-        with self._read() as db:
-            if db is None:
-                return None
-            for device_id, kid, sharing_text in db.execute(
-                    "SELECT id, kid, sharing FROM devices WHERE last_seen IS NOT NULL ORDER BY last_seen DESC"):
-                sharing = _decode(sharing_text, None) or {}
-                if (sharing.get("background") and "maps" in (sharing.get("features") or [])
-                        and not sharing_paused(sharing, now)):
-                    return {"device_id": device_id, "kid": kid, "sharing": sharing}
-        return None
-
     def maps_host_allowed(self) -> bool:
         """False while any device asks to keep maps lookups on the phone."""
         with self._read() as db:
@@ -934,112 +811,6 @@ class LocationStore:
                 return True
             return all((_decode(text, None) or {}).get("maps_host", True) is not False
                        for (text,) in db.execute("SELECT sharing FROM devices WHERE sharing IS NOT NULL"))
-
-    def start_maps(self, device_id: str, request: dict[str, Any]) -> dict[str, Any]:
-        """Stores a lookup for one device. Returns ``{"cached": answer}``
-        when the same question was answered moments ago, else ``{"id": …}``
-        (the caller wakes the phone). Raises LocationError ``too_soon`` /
-        ``daily_limit`` past the budget."""
-        cache = json.dumps(request, sort_keys=True, separators=(",", ":"))
-        if len(cache) > MAX_MAPS_REQUEST_BYTES:
-            raise LocationError("malformed", "That lookup is too long")
-        now = self.clock()
-        with self._write() as db:
-            _prune_maps(db, now)
-            row = db.execute(
-                "SELECT answer FROM maps WHERE device=? AND cache=? AND answered_at>? AND answer IS NOT NULL"
-                " ORDER BY answered_at DESC LIMIT 1", (device_id, cache, now - MAPS_CACHE_S)).fetchone()
-            if row is not None:
-                answer = _decode(row[0], None)
-                if isinstance(answer, dict) and answer.get("ok"):
-                    return {"cached": answer}
-            hour = db.execute("SELECT COUNT(*) FROM maps WHERE requested_at>?", (now - 3600,)).fetchone()[0]
-            day = db.execute("SELECT COUNT(*) FROM maps WHERE requested_at>?", (now - 86400,)).fetchone()[0]
-            if day >= MAPS_PER_DAY:
-                raise LocationError("daily_limit", "The day's maps lookups on the phone are used up", status=429)
-            if hour >= MAPS_PER_HOUR:
-                raise LocationError("too_soon", "Too many maps lookups this hour; try again later", status=429)
-            request_id = "m_" + secrets.token_urlsafe(18)
-            body = json.dumps({**request, "id": request_id,
-                               "expires_at": iso_utc(now + MAPS_TTL_S)}, ensure_ascii=False)
-            db.execute("INSERT INTO maps(id, device, requested_at, expires_at, cache, request) VALUES(?,?,?,?,?,?)",
-                       (request_id, device_id, now, now + MAPS_TTL_S, cache, body))
-        return {"id": request_id}
-
-    def cancel_maps(self, request_id: str) -> None:
-        """A lookup the relay couldn't deliver doesn't count against the
-        budget, and the phone can't fetch it any more."""
-        with self._write() as db:
-            db.execute("DELETE FROM maps WHERE id=? AND answered_at IS NULL", (request_id,))
-
-    def maps_request(self, request_id: Any, device_id: Any, kid: Any) -> dict[str, Any]:
-        """The sealed lookup for the device it was made for (GET
-        /location/maps/{id}): only while it's waiting and unexpired."""
-        if not isinstance(request_id, str) or not _MAPS_ID.match(request_id):
-            raise LocationError("malformed", "The lookup id is malformed")
-        if not isinstance(device_id, str) or not _DEVICE_ID.match(device_id):
-            raise LocationError("malformed", "device_id is malformed")
-        if not isinstance(kid, str) or not _KID.match(kid):
-            raise LocationError("malformed", "kid is malformed")
-        if not crypto_available():
-            raise LocationError("no_crypto", "Location sharing needs the cryptography package on this host",
-                                status=501)
-        now = self.clock()
-        with self._write() as db:
-            row = db.execute("SELECT request FROM maps WHERE id=? AND device=? AND answered_at IS NULL"
-                             " AND expires_at>?", (request_id, device_id, now)).fetchone()
-            if row is None:
-                raise LocationError("unknown", "No waiting lookup has that id", status=404)
-            key = self._device_key(db, device_id, kid, INFO_MAPS_REQUEST)
-            nonce, ct = seal(key, row[0].encode("utf-8"), maps_aad("request", kid, device_id, request_id))
-            db.execute("UPDATE maps SET fetched_at=? WHERE id=?", (now, request_id))
-        return {"v": 1, "nonce": nonce, "ct": ct}
-
-    def answer_maps(self, request_id: Any, envelope: Any) -> dict[str, Any]:
-        """The phone's sealed answer (POST /location/maps/{id})."""
-        if not isinstance(request_id, str) or not _MAPS_ID.match(request_id):
-            raise LocationError("malformed", "The lookup id is malformed")
-        if not isinstance(envelope, dict) or type(envelope.get("v")) is not int or envelope.get("v") != 1:
-            raise LocationError("malformed", "Expected a version 1 sealed answer")
-        device_id, kid = envelope.get("device_id"), envelope.get("kid")
-        if not isinstance(device_id, str) or not _DEVICE_ID.match(device_id):
-            raise LocationError("malformed", "device_id is malformed")
-        if not isinstance(kid, str) or not _KID.match(kid):
-            raise LocationError("malformed", "kid is malformed")
-        if not crypto_available():
-            raise LocationError("no_crypto", "Location sharing needs the cryptography package on this host",
-                                status=501)
-        now = self.clock()
-        with self._write() as db:
-            # After expiry the tool has long stopped waiting; a late answer
-            # would only reach the repeat cache.
-            row = db.execute("SELECT 1 FROM maps WHERE id=? AND device=? AND answered_at IS NULL AND expires_at>?",
-                             (request_id, device_id, now)).fetchone()
-            if row is None:
-                raise LocationError("unknown", "No waiting lookup has that id", status=404)
-            key = self._device_key(db, device_id, kid, INFO_MAPS_ANSWER)
-            plaintext = open_sealed(key, envelope.get("nonce"), envelope.get("ct"),
-                                    maps_aad("answer", kid, device_id, request_id))
-            if len(plaintext) > MAX_MAPS_ANSWER_BYTES:
-                raise LocationError("malformed", "The answer is too long")
-            try:
-                answer = json.loads(plaintext)
-            except (ValueError, RecursionError):
-                raise LocationError("malformed", "The sealed answer isn't JSON") from None
-            if not isinstance(answer, dict) or answer.get("id") != request_id or not isinstance(answer.get("ok"), bool):
-                raise LocationError("malformed", "The sealed answer doesn't match its request")
-            db.execute("UPDATE maps SET answered_at=?, answer=? WHERE id=?",
-                       (now, json.dumps(answer, ensure_ascii=False), request_id))
-        return {}
-
-    def maps_answer(self, request_id: str) -> dict[str, Any] | None:
-        with self._read() as db:
-            if db is None:
-                return None
-            row = db.execute("SELECT answer FROM maps WHERE id=? AND answered_at IS NOT NULL",
-                             (request_id,)).fetchone()
-            answer = _decode(row[0], None) if row else None
-            return answer if isinstance(answer, dict) else None
 
 
 def sharing_paused(sharing: dict[str, Any], now: float) -> bool:
@@ -1094,35 +865,13 @@ def _meta(db: sqlite3.Connection, key: str) -> str | None:
     return row[0] if row else None
 
 
-# Maps requests (schema 2): the sealed-for-one-device question, its answer,
-# and `cache` (the question without its id) to answer a repeat from here.
-# Sealing covers the trip to and from the phone; here, in this owner-only
-# file, the question and answer stay readable while they're useful (the
-# request's minute plus the repeat window, about 3 minutes), then are
-# blanked. The row (id, device, times) stays a day for the budget.
-_MAPS_TABLE = """
-    CREATE TABLE IF NOT EXISTS maps(
-        id TEXT PRIMARY KEY, device TEXT NOT NULL, requested_at REAL NOT NULL, expires_at REAL NOT NULL,
-        cache TEXT NOT NULL, request TEXT NOT NULL, fetched_at REAL, answered_at REAL, answer TEXT)
-"""
-
-
-def _prune_maps(db: sqlite3.Connection, now: float) -> None:
-    """Rows stay a day for the budget; what was asked and found goes once no
-    one can use it."""
-    db.execute("DELETE FROM maps WHERE requested_at<?", (now - MAPS_KEPT_S,))
-    db.execute("UPDATE maps SET cache='', request='', answer=NULL WHERE requested_at<? AND request!=''",
-               (now - MAPS_TTL_S - MAPS_CACHE_S,))
-
-
 def _migrate(db: sqlite3.Connection, now: float) -> None:
     version = _meta(db, "schema")
     if version == str(SCHEMA_VERSION):
         return
     if version in OLDER_SCHEMAS:
-        if version == "1":
-            db.execute(_MAPS_TABLE)
-        # 3: when the newest batch was sent, so a late older one changes nothing.
+        # Schema 2 added a table for maps lookups on the phone, no longer
+        # used; a store that has it keeps it, unread. 3: when the newest batch was sent, so a late older one changes nothing.
         db.execute("ALTER TABLE devices ADD COLUMN last_sent REAL")
         db.execute("UPDATE meta SET value=? WHERE key='schema'", (str(SCHEMA_VERSION),))
         return
@@ -1159,7 +908,6 @@ def _migrate(db: sqlite3.Connection, now: float) -> None:
     """.split(";"):
         if statement.strip():
             db.execute(statement)
-    db.execute(_MAPS_TABLE)
     db.execute("INSERT OR REPLACE INTO meta VALUES('schema', ?)", (str(SCHEMA_VERSION),))
     db.execute("INSERT OR IGNORE INTO meta VALUES('generation', ?)", (secrets.token_hex(8),))
     db.execute("INSERT OR IGNORE INTO meta VALUES('created_at', ?)", (str(int(now)),))
@@ -1197,20 +945,14 @@ def _parse_sharing(value: Any) -> dict[str, Any]:
     if zone is not None and (not isinstance(zone, str) or not _TZ.match(zone)):
         raise LocationError("malformed", "sharing.time_zone is malformed")
     sharing["time_zone"] = zone
-    # What this Conduit can do (newer phones only): unknown entries are
-    # ignored, so a later phone doesn't break an older plugin.
-    features = value.get("features")
-    if features is not None and not isinstance(features, list):
-        raise LocationError("malformed", "sharing.features must be a list")
-    sharing["features"] = sorted({item for item in features or [] if item in FEATURES})
-    # "Keep maps lookups on this iPhone": false keeps conduit_maps off this
-    # host's Apple Maps engine.
+    # "Keep maps lookups on this phone": false keeps talaria_maps off this
+    # host's maps engine.
     maps_host = value.get("maps_host", True)
     if not isinstance(maps_host, bool):
         raise LocationError("malformed", "sharing.maps_host must be true or false")
     sharing["maps_host"] = maps_host
     # "Share with this host's other profiles": the other profiles paired
-    # with the same iPhone read this store (location_profiles).
+    # with the same phone read this store (location_profiles).
     other_profiles = value.get("other_profiles", False)
     if not isinstance(other_profiles, bool):
         raise LocationError("malformed", "sharing.other_profiles must be true or false")
@@ -1479,7 +1221,7 @@ def _fire_rules(db: sqlite3.Connection, event: dict[str, Any], place: dict[str, 
         verb = "arrived at" if event["kind"] == "arrive" else "left"
         where = "a private place" if place["private"] else place["name"]
         fired.append({"rule_id": rule["id"], "job_id": rule["job_id"], "what": rule["what"],
-                      "prompt": f"[Conduit place event: the user {verb} {where} at "
+                      "prompt": f"[Talaria place event: the user {verb} {where} at "
                                 f"{local.hour:02d}:{local.minute:02d} ({_DAY_NAMES[local.weekday()]} {local.day:02d} "
                                 f"{_MONTH_NAMES[local.month - 1]}, their local time).]"})
     return fired

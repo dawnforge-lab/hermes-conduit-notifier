@@ -14,16 +14,16 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
-BASE = "/api/plugins/conduit_push"
+BASE = "/api/plugins/talaria_push"
 
 if "hermes_constants" not in sys.modules:
     _hermes_constants = types.ModuleType("hermes_constants")
     _hermes_constants.get_hermes_home = lambda: pathlib.Path(tempfile.gettempdir())
     sys.modules["hermes_constants"] = _hermes_constants
-if "conduit_push" not in sys.modules:
-    _pkg = types.ModuleType("conduit_push")
+if "talaria_push" not in sys.modules:
+    _pkg = types.ModuleType("talaria_push")
     _pkg.__path__ = [str(ROOT)]
-    sys.modules["conduit_push"] = _pkg
+    sys.modules["talaria_push"] = _pkg
 
 
 def _load(name, path):
@@ -36,10 +36,10 @@ def _load(name, path):
     return module
 
 
-store_module = _load("conduit_push.present_store", ROOT / "present_store.py")
-tool = _load("conduit_push.present_tool", ROOT / "present_tool.py")
-events_module = _load("conduit_push.events", ROOT / "events.py")
-_api_spec = importlib.util.spec_from_file_location("conduit_plugin_api_present", ROOT / "dashboard" / "plugin_api.py")
+store_module = _load("talaria_push.present_store", ROOT / "present_store.py")
+tool = _load("talaria_push.present_tool", ROOT / "present_tool.py")
+events_module = _load("talaria_push.events", ROOT / "events.py")
+_api_spec = importlib.util.spec_from_file_location("talaria_plugin_api_present", ROOT / "dashboard" / "plugin_api.py")
 api = importlib.util.module_from_spec(_api_spec)
 _api_spec.loader.exec_module(api)
 
@@ -214,8 +214,8 @@ def test_no_prompt_without_a_capable_phone(store):
     assert store.has_device()
 
 
-def test_a_go_prompt_goes_only_to_a_conduit_that_can_open_maps(store, clock):
-    # Conduit without maps-navigate (an older build, or another device) would
+def test_a_go_prompt_goes_only_to_a_talaria_that_can_open_maps(store, clock):
+    # Talaria without maps-navigate (an older build, or another device) would
     # show a Go prompt as a plain confirm: a tap there never opens Maps.
     def exchange(installation, features=(), results=()):
         return store.exchange({"installation_id": installation, "features": list(features),
@@ -227,12 +227,12 @@ def test_a_go_prompt_goes_only_to_a_conduit_that_can_open_maps(store, clock):
     plain = _confirm(store)
     assert [prompt["id"] for prompt in exchange(IPAD)] == [plain["id"]]
     exchange(IPAD, results=[{"id": go["id"], "outcome": "confirmed", "via": "tap"}])
-    assert store.status(go["id"])[0]["status"] == "waiting", "a Conduit that can't open Maps doesn't answer Go"
+    assert store.status(go["id"])[0]["status"] == "waiting", "a Talaria that can't open Maps doesn't answer Go"
     assert [prompt["id"] for prompt in exchange(PHONE, ["maps-navigate"])] == [go["id"], plain["id"]]
     exchange(PHONE, ["maps-navigate"], results=[{"id": go["id"], "outcome": "confirmed", "via": "tap"}])
     [answered] = store.status(go["id"])
     assert answered["status"] == "confirmed" and answered["device"] == PHONE
-    # A Conduit that said so long ago doesn't count any more.
+    # A Talaria that said so long ago doesn't count any more.
     assert store.has_feature("maps-navigate")
     clock.now += store_module.CARD_DEVICE_RECENT_S
     assert not store.has_feature("maps-navigate")
@@ -455,10 +455,10 @@ def test_present_v1_is_a_plugin_capability():
 @pytest.fixture()
 def route_home(tmp_path, monkeypatch):
     monkeypatch.setattr(api, "_calls_home", lambda: tmp_path)
-    monkeypatch.setattr(api, "_pairing_state_path", lambda: tmp_path / "conduit-push.json")
+    monkeypatch.setattr(api, "_pairing_state_path", lambda: tmp_path / "talaria-push.json")
     monkeypatch.setattr(api, "_profile_scope", lambda profile: contextlib.nullcontext())
     api._present_exchange_limiter._mints.clear()
-    (tmp_path / "conduit-push.json").write_text(json.dumps({"credential": "c", "installation_id": "i", "gateway_id": "g"}))
+    (tmp_path / "talaria-push.json").write_text(json.dumps({"credential": "c", "installation_id": "i", "gateway_id": "g"}))
     return tmp_path
 
 
@@ -493,7 +493,7 @@ def test_the_route_refuses_a_malformed_exchange(route_home):
 
 
 def test_the_route_needs_a_paired_profile(route_home):
-    (route_home / "conduit-push.json").unlink()
+    (route_home / "talaria-push.json").unlink()
     assert _http().post(f"{BASE}/present/exchange", json={"installation_id": PHONE}).status_code == 409
 
 

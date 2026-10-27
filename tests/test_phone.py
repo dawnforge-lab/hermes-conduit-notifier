@@ -15,16 +15,16 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
-BASE = "/api/plugins/conduit_push"
+BASE = "/api/plugins/talaria_push"
 
 if "hermes_constants" not in sys.modules:
     _hermes_constants = types.ModuleType("hermes_constants")
     _hermes_constants.get_hermes_home = lambda: pathlib.Path(tempfile.gettempdir())
     sys.modules["hermes_constants"] = _hermes_constants
-if "conduit_push" not in sys.modules:
-    _pkg = types.ModuleType("conduit_push")
+if "talaria_push" not in sys.modules:
+    _pkg = types.ModuleType("talaria_push")
     _pkg.__path__ = [str(ROOT)]
-    sys.modules["conduit_push"] = _pkg
+    sys.modules["talaria_push"] = _pkg
 
 
 def _load(name, path):
@@ -37,11 +37,11 @@ def _load(name, path):
     return module
 
 
-phone = _load("conduit_push.phone_store", ROOT / "phone_store.py")
-tool = _load("conduit_push.phone_tool", ROOT / "phone_tool.py")
-events_module = _load("conduit_push.events", ROOT / "events.py")
-e2e = _load("conduit_push.e2e", ROOT / "e2e.py")
-_api_spec = importlib.util.spec_from_file_location("conduit_plugin_api_phone", ROOT / "dashboard" / "plugin_api.py")
+phone = _load("talaria_push.phone_store", ROOT / "phone_store.py")
+tool = _load("talaria_push.phone_tool", ROOT / "phone_tool.py")
+events_module = _load("talaria_push.events", ROOT / "events.py")
+e2e = _load("talaria_push.e2e", ROOT / "e2e.py")
+_api_spec = importlib.util.spec_from_file_location("talaria_plugin_api_phone", ROOT / "dashboard" / "plugin_api.py")
 api = importlib.util.module_from_spec(_api_spec)
 _api_spec.loader.exec_module(api)
 
@@ -55,7 +55,7 @@ def _raw(private):
 
 
 class Phone:
-    """Conduit's side of the protocol, as the Swift code does it."""
+    """Talaria's side of the protocol, as the app does it."""
 
     def __init__(self, device_id=DEVICE, private=None, name="Eric's iPhone"):
         self.device_id = device_id
@@ -197,8 +197,8 @@ def _events(store, need="events"):
 # --- Crypto ---------------------------------------------------------------------
 
 
-def test_shared_vector_matches_conduit():
-    # The iOS app's PhoneSyncCryptoTests checks the same values.
+def test_shared_vector_matches_talaria():
+    # The Talaria app's tests check the same values.
     host_private, device_private = phone.unb64u(VECTOR["host_private"]), phone.unb64u(VECTOR["device_private"])
     host_public = _raw(X25519PrivateKey.from_private_bytes(host_private))
     device_public = _raw(X25519PrivateKey.from_private_bytes(device_private))
@@ -936,7 +936,7 @@ def test_a_change_reaches_the_phone_and_its_outcome_comes_back(store, iphone):
     assert store.changes()[0]["state"] == "applied"
 
 
-# Conduit keeps a change's URL only when it's http or https and applies the
+# Talaria keeps a change's URL only when it's http or https and applies the
 # rest without it, so anything else is refused here rather than lost there.
 @pytest.mark.parametrize("url", ["javascript:alert(1)", "ftp://files.example.com/a", "example.com/booking",
                                  "/booking", "mailto:a@example.com", "https://"])
@@ -1103,17 +1103,12 @@ def test_malformed_results_are_refused(store, iphone, results):
         store.exchange(iphone.exchange_request(results))
 
 
-def test_an_unknown_op_is_refused(store, iphone):
-    with pytest.raises(phone.PhoneError) as error:
-        store.exchange(iphone.exchange_request(op="other"))
-    assert error.value.code == "unknown_op"
-
-
-def test_a_voice_read_is_refused_before_opening(store, iphone, monkeypatch):
+@pytest.mark.parametrize("op", ["other", "voice"])
+def test_an_unknown_op_is_refused_before_opening(store, iphone, monkeypatch, op):
     opened = []
     monkeypatch.setattr(phone, "open_sealed", lambda *args: opened.append(args))
     with pytest.raises(phone.PhoneError) as error:
-        store.exchange(iphone.exchange_request(op="voice"))
+        store.exchange(iphone.exchange_request(op=op))
     assert error.value.code == "unknown_op" and opened == []
 
 
@@ -1144,7 +1139,7 @@ def _cal(args, **kw):
 def test_the_tools_hide_until_something_is_shared(home):
     assert tool.calendar_available() is False and tool.phone_available() is False
     assert _cal({"action": "overview"})["error"] == "nothing_shared"
-    assert "conduit://settings/phone" in _cal({"action": "overview"})["note"]
+    assert "talaria://settings/phone" in _cal({"action": "overview"})["note"]
     store = phone.PhoneStore(home.path, clock=lambda: NOW)
     handset = Phone()
     handset.accept(store.register_key(handset.key_request()))
@@ -1199,7 +1194,7 @@ def test_read_only_sharing_reads_and_tells_the_agent_not_to_write(home):
     assert _cal({"action": "events", "from": "2026-10-14"})["ok"] is True
     added = _cal({"action": "add_event", "title": "Gym", "start": "2026-10-15T07:00:00+01:00",
                   "end": "2026-10-15T08:00:00+01:00"})
-    assert added["error"] == "shared_read_only" and "tell the user" in added["note"] and "conduit://settings/phone" in added["note"]
+    assert added["error"] == "shared_read_only" and "tell the user" in added["note"] and "talaria://settings/phone" in added["note"]
     assert _cal({"action": "complete_reminder", "reminder_id": "r_milk"})["error"] == "shared_read_only"
     assert device["adds_without_asking"] is False
     assert home.sent == []
@@ -1214,7 +1209,7 @@ def test_a_write_queues_a_change_and_nudges_the_phone(home):
     # A voice chat answers it out loud: Hermes doesn't send the user to tap.
     assert "say yes or no" in added["note"] and "don't ask them to tap first" in added["note"]
     assert "ask them to tap the card" in added["note"]
-    # Conduit takes a spoken answer only as the user's very next words.
+    # Talaria takes a spoken answer only as the user's very next words.
     assert "very next words" in added["note"]
     assert "very next words after the reply" in tool.CALENDAR_SCHEMA["description"]
     assert "very next words after the reply" in tool.PHONE_SCHEMA["description"]
@@ -1375,106 +1370,7 @@ def test_the_rate_limit_answers_429(client, monkeypatch):
     assert response.status_code == 429 and response.headers["cache-control"] == "no-store"
 
 
-# --- Live voice reads ---------------------------------------------------------------
-
-
-def _voice_request(handset, tool, args, call_id="voice-00000001"):
-    body = json.dumps({"call_id": call_id, "tool": tool, "args": args, "provider": "gemini-live"}).encode()
-    nonce, ct = phone.seal(handset.keys[phone.INFO_EXCHANGE_REQUEST], body,
-                           phone.exchange_aad("request", "voice", handset.kid, handset.device_id, call_id))
-    return {"v": 1, "device_id": handset.device_id, "kid": handset.kid, "call_id": call_id, "op": "voice",
-            "nonce": nonce, "ct": ct}
-
-
-def _voice_read(client, handset, tool, args, call_id="voice-00000001"):
-    response = client.http.post(f"{BASE}/voice-tools/call", json=_voice_request(handset, tool, args, call_id))
-    assert response.status_code == 200, response.text
-    assert response.headers["cache-control"] == "no-store"
-    return handset.open_answer(response.json(), call_id=call_id, op="voice")["result"]
-
-
-def _route_shared(client, handset=None, **sharing):
-    handset = handset or Phone()
-    handset.accept(client.http.post(f"{BASE}/phone/key", json=handset.key_request()).json())
-    batch = _batch(sent_at=datetime.now(timezone.utc).isoformat(), sharing=_sharing(**sharing))
-    assert client.http.post(f"{BASE}/phone/ingest", json=handset.seal(batch)).status_code == 200
-    return handset
-
-
-def test_voice_lists_calendar_and_phone_reads_only_once_shared(client):
-    assert client.http.get(f"{BASE}/voice-tools").json()["tools"] == []
-    _route_shared(client)
-    tools = {tool["name"]: tool for tool in client.http.get(f"{BASE}/voice-tools").json()["tools"]}
-    assert set(tools) == {"conduit_calendar", "conduit_phone"}
-    assert {tool["key"] for tool in tools.values()} == {"phone"}
-    calendar = tools["conduit_calendar"]["parameters"]
-    assert calendar["properties"]["action"]["enum"] == list(tool.VOICE_CALENDAR_ACTIONS)
-    assert "device" not in calendar["properties"] and "title" not in calendar["properties"]
-    assert "add_event" not in tools["conduit_calendar"]["description"]
-
-
-def test_voice_lists_only_what_the_calling_device_shares(client):
-    # The iPhone shares phone status alone; the iPad shares the calendar.
-    # A call on the iPhone reads the iPhone only, so it isn't offered the
-    # iPad's calendar; without a device the list stays any device's.
-    _route_shared(client, calendar="off", reminders=False)
-    _route_shared(client, Phone("ipad-installation-2", name="iPad"), status=False, focus=False)
-    tools = lambda **query: {tool["name"]: tool for tool in client.http.get(
-        f"{BASE}/voice-tools", params=query).json()["tools"]}
-    assert set(tools()) == {"conduit_calendar", "conduit_phone"}
-    assert set(tools(phone_device=DEVICE)) == {"conduit_phone"}
-    assert set(tools(phone_device="ipad-installation-2")) == {"conduit_calendar"}
-    assert tools(phone_device="someone-else") == {}
-
-
-def test_voice_reads_this_phones_calendar_sealed(client):
-    handset = _route_shared(client)
-    found = _voice_read(client, handset, "conduit_calendar",
-                        {"action": "events", "from": "2026-10-16", "to": "2026-10-16"})
-    assert found["ok"] is True and "e_dentist" in [event["id"] for event in found["events"]]
-    overview = _voice_read(client, handset, "conduit_calendar", {"action": "overview"}, call_id="voice-00000002")
-    assert [device["id"] for device in overview["devices"]] == [DEVICE]
-    status = _voice_read(client, handset, "conduit_phone", {"action": "status"}, call_id="voice-00000003")
-    assert status["ok"] is True
-
-
-def test_voice_offers_no_writes(client):
-    handset = _route_shared(client)
-    refused = _voice_read(client, handset, "conduit_calendar", {"action": "add_event", "title": "Gym",
-                                                                 "start": "2026-10-15T07:00:00+01:00"})
-    assert refused["ok"] is False and refused["error"] == "invalid"
-    assert phone.PhoneStore(client.home).changes(20) == []
-
-
-def test_voice_reads_never_reach_another_device(client):
-    other = _route_shared(client, Phone("phone-installation-2", name="Work iPhone"))
-    handset = _route_shared(client)
-    found = _voice_read(client, handset, "conduit_calendar",
-                        {"action": "events", "from": "2026-10-16", "to": "2026-10-16", "device": other.device_id})
-    assert found["device"] == "Eric's iPhone"
-    overview = _voice_read(client, handset, "conduit_calendar", {"action": "overview"}, call_id="voice-00000002")
-    assert [device["id"] for device in overview["devices"]] == [DEVICE]
-
-
-@pytest.mark.parametrize("name, args", [("conduit_calendar", {"action": "overview"}),
-                                        ("conduit_phone", {"action": "status"})])
-def test_a_new_key_during_the_read_seals_nothing_to_the_old_key(client, monkeypatch, name, args):
-    owner = _route_shared(client)
-    tool = api._plugin_package_module("phone_tool")
-    read = tool.voice_handle
-
-    def re_keyed_meanwhile(*args, **kwargs):
-        # The request opened with the owner's key; before its read, the same
-        # device id registers a new key and shares under it.
-        store = phone.PhoneStore(client.home)
-        replacement = Phone()
-        replacement.accept(store.register_key(replacement.key_request()))
-        store.ingest(replacement.seal(_batch(batch_id="batch-0002", sent_at=datetime.now(timezone.utc).isoformat())))
-        return read(*args, **kwargs)
-
-    monkeypatch.setattr(tool, "voice_handle", re_keyed_meanwhile)
-    response = client.http.post(f"{BASE}/voice-tools/call", json=_voice_request(owner, name, args))
-    assert response.status_code == 409 and response.json()["code"] == "unknown_key", response.text
+# --- Exchanges across a new key ----------------------------------------------------
 
 
 def _exchange_re_keyed_meanwhile(store, monkeypatch, replacement, then=lambda: None):
@@ -1536,74 +1432,6 @@ def test_an_exchange_that_outlives_its_kid_records_no_outcome(store, iphone, mon
     assert refused.value.code == "unknown_key"
     [kept] = store.changes(mark_reported=False)
     assert kept["id"] == change["id"] and kept["state"] == "waiting"
-
-
-def test_a_voice_read_needs_the_voice_seal(client):
-    handset = _route_shared(client)
-    # Sealed for the changes exchange: it doesn't open as a voice read.
-    response = client.http.post(f"{BASE}/voice-tools/call", json={**handset.exchange_request(), "op": "voice"})
-    assert response.status_code == 409 and "set up" in response.json()["detail"]
-    assert response.json()["code"] == "bad_seal"
-    # And a voice read doesn't run as an exchange.
-    response = client.http.post(f"{BASE}/phone/exchange",
-                                json=_voice_request(handset, "conduit_calendar", {"action": "overview"}))
-    assert response.status_code == 400
-    response = client.http.post(f"{BASE}/voice-tools/call",
-                                json=_voice_request(handset, "conduit_health", {"action": "overview"}))
-    assert response.status_code == 404
-
-
-def test_voice_follows_what_the_phone_shares(client):
-    handset = _route_shared(client, calendar="write_only", reminders=False, status=False, focus=False)
-    listed = client.http.get(f"{BASE}/voice-tools").json()["tools"]
-    assert [tool["name"] for tool in listed] == ["conduit_calendar"]
-    # Add-only: no event or reminder reads offered, and asking anyway says why.
-    assert listed[0]["parameters"]["properties"]["action"]["enum"] == ["overview", "calendars"]
-    found = _voice_read(client, handset, "conduit_calendar", {"action": "events"})
-    assert found["ok"] is False and found["error"] == "write_only"
-
-
-def test_voice_never_takes_another_device_by_name(client):
-    # A device that registered but never uploaded asks with an id that is
-    # another device's name: it reads nothing of that device.
-    _route_shared(client, Phone("phone-installation-2", name="phone-installation-9"))
-    asker = Phone("phone-installation-9")
-    asker.accept(client.http.post(f"{BASE}/phone/key", json=asker.key_request()).json())
-    found = _voice_read(client, asker, "conduit_calendar", {"action": "events", "from": "2026-10-16", "to": "2026-10-16"})
-    assert found["ok"] is False and "events" not in found
-    status = _voice_read(client, asker, "conduit_phone", {"action": "status"}, call_id="voice-00000002")
-    assert status["ok"] is False and "status" not in status
-
-
-def test_a_broken_calendar_store_leaves_health_listed(client, monkeypatch):
-    _route_shared(client)
-    real = api._plugin_package_module
-    health = real("health_tool")
-    # Some phone shares health, so its tool is listed.
-    monkeypatch.setattr(health.HealthStore, "overview", lambda self, only=None: {"devices": [{"id": "phone-installation-3"}]})
-
-    def broken(name):
-        if name == "phone_tool":
-            raise RuntimeError("boom")
-        return real(name)
-
-    monkeypatch.setattr(api, "_plugin_package_module", broken)
-    response = client.http.get(f"{BASE}/voice-tools")
-    assert response.status_code == 200
-    assert [tool["name"] for tool in response.json()["tools"]] == [health.TOOL_NAME]
-
-
-def test_a_broken_health_store_leaves_the_calendar_listed(client, monkeypatch):
-    _route_shared(client)
-    health = api._plugin_package_module("health_tool")
-
-    def broken(self):
-        raise RuntimeError("boom")
-
-    monkeypatch.setattr(health.HealthStore, "overview", broken)
-    response = client.http.get(f"{BASE}/voice-tools")
-    assert response.status_code == 200
-    assert "conduit_calendar" in [tool["name"] for tool in response.json()["tools"]]
 
 
 # --- Alarms and contacts (plugin 0.30.0) -----------------------------------------------
@@ -1863,7 +1691,7 @@ def test_the_contacts_tool_reads_only_the_people_picked(home):
     assert [person["name"] for person in people["people"]] == ["Sam Taylor", "Alex Kim"]
     assert json.loads(tool.handle_contacts({"action": "people", "query": "sammy"}))["people"][0]["id"] == "p_sam"
     nobody = json.loads(tool.handle_contacts({"action": "people", "query": "Bob"}))
-    assert nobody["people"] == [] and "conduit://settings/phone" in nobody["note"]
+    assert nobody["people"] == [] and "talaria://settings/phone" in nobody["note"]
     bell = json.loads(tool.handle_contacts({"action": "people", "query": "Bo\x07b"}))
     assert "\x07" not in bell["note"] and "\\x07" not in bell["note"]
     assert json.loads(tool.handle_contacts({"action": "all"}))["error"] == "invalid"
@@ -1873,37 +1701,11 @@ def test_the_contacts_tool_reads_only_the_people_picked(home):
     assert json.loads(tool.handle_phone({"action": "alarms"}, **child))["error"] == "subagent"
 
 
-def test_voice_lists_alarms_and_contacts_reads_once_shared(client):
-    handset = _route_shared(client, status=False, focus=False, alarms=True, contacts=True)
-    batch = _batch("batch-0002", sent_at=datetime.now(timezone.utc).isoformat(),
-                   sharing=_sharing(status=False, focus=False, alarms=True, contacts=True),
-                   alarms=ALARMS, contacts=CONTACTS)
-    assert client.http.post(f"{BASE}/phone/ingest", json=handset.seal(batch)).status_code == 200
-    tools = {item["name"]: item for item in client.http.get(f"{BASE}/voice-tools").json()["tools"]}
-    assert tools["conduit_phone"]["parameters"]["properties"]["action"]["enum"] == ["alarms"]
-    assert set(tools["conduit_contacts"]["parameters"]["properties"]) == {"action", "query"}
-    assert tools["conduit_contacts"]["key"] == "phone"
-    alarms = _voice_read(client, handset, "conduit_phone", {"action": "alarms"})
-    assert [alarm["id"] for alarm in alarms["alarms"]] == ["a_wake", "a_pasta"]
-    people = _voice_read(client, handset, "conduit_contacts", {"action": "people", "query": "boss"},
-                         call_id="voice-00000002")
-    assert [person["id"] for person in people["people"]] == ["p_alex"]
-    nobody = _voice_read(client, handset, "conduit_contacts", {"action": "people", "query": "Bob"},
-                         call_id="voice-00000005")
-    assert nobody["people"] == [] and "conduit://" not in nobody["note"], "Voice reads the note aloud"
-    refused = _voice_read(client, handset, "conduit_phone", {"action": "set_timer", "seconds": 60},
-                          call_id="voice-00000003")
-    assert refused["error"] == "invalid"
-    status = _voice_read(client, handset, "conduit_phone", {"action": "status"}, call_id="voice-00000004")
-    assert status["error"] == "not_shared"
-    assert phone.PhoneStore(client.home).changes(20) == []
-
-
-def test_every_change_kind_names_a_title_label_conduit_reads():
+def test_every_change_kind_names_a_title_label_talaria_reads():
     # A kind the label pattern drops would leave the phone with the host's
     # English title (#1144).
-    events = sys.modules["conduit_push.events"]
-    store = sys.modules["conduit_push.phone_store"]
+    events = sys.modules["talaria_push.events"]
+    store = sys.modules["talaria_push.phone_store"]
     for kind in store.CHANGE_KINDS:
         assert events._TITLE_LABEL.match(f"phone.{kind}"), kind
         assert events._TITLE_LABEL.match(f"phone.auto.{kind}"), kind

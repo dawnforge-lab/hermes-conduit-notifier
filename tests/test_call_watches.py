@@ -15,10 +15,10 @@ if "hermes_constants" not in sys.modules:
     _hermes_constants = types.ModuleType("hermes_constants")
     _hermes_constants.get_hermes_home = lambda: pathlib.Path(tempfile.gettempdir())
     sys.modules["hermes_constants"] = _hermes_constants
-if "conduit_push" not in sys.modules:
-    _pkg = types.ModuleType("conduit_push")
+if "talaria_push" not in sys.modules:
+    _pkg = types.ModuleType("talaria_push")
     _pkg.__path__ = [str(ROOT)]
-    sys.modules["conduit_push"] = _pkg
+    sys.modules["talaria_push"] = _pkg
 
 
 def _load(name, path):
@@ -31,10 +31,10 @@ def _load(name, path):
     return module
 
 
-watches = _load("conduit_push.call_watches", ROOT / "call_watches.py")
-call_tool = _load("conduit_push.call_tool", ROOT / "call_tool.py")
-calls = sys.modules["conduit_push.calls"]
-CallStore = sys.modules["conduit_push.calls_store"].CallStore
+watches = _load("talaria_push.call_watches", ROOT / "call_watches.py")
+call_tool = _load("talaria_push.call_tool", ROOT / "call_tool.py")
+calls = sys.modules["talaria_push.calls"]
+CallStore = sys.modules["talaria_push.calls_store"].CallStore
 
 RUN = "cron_{}_20261011_120000"
 
@@ -76,7 +76,7 @@ class FakeHermes:
             return json.dumps({"success": True})
         raise AssertionError(f"unexpected action {action}")
 
-    def older(self, name, prompt="Check the homelab and call me", skills=("conduit_push:calling-the-user",), **extra):
+    def older(self, name, prompt="Check the homelab and call me", skills=("talaria_push:calling-the-user",), **extra):
         key = f"{self.next_id:012x}"
         self.next_id += 1
         self.jobs[key] = {"name": name, "prompt": prompt, "schedule": "every 5m", "skills": list(skills), **extra}
@@ -152,12 +152,12 @@ def test_set_writes_the_job_so_the_model_only_describes_the_watch(home, hermes):
     assert job["name"] == "Call watch: homelab down"
     assert job["schedule"] == "every 5m", "three checks across the 10 minutes it has to last"
     assert job["skills"] == [], "the run prompt needs no skill"
-    assert "conduit_watch_report" in job["prompt"] and "ping 192.168.1.10" in job["prompt"]
+    assert "talaria_watch_report" in job["prompt"] and "ping 192.168.1.10" in job["prompt"]
     assert "It doesn't count if" not in job["prompt"], "no unless line without limits"
     assert answer["watch"] == {"id": job_id, "name": "Call watch: homelab down", "what": "homelab down",
                                "checks_every_minutes": 5, "calls_after_minutes": 10,
                                "calls_only_between": "09:00-24:00"}
-    assert "conduit://settings/calls" in answer["note"]
+    assert "talaria://settings/calls" in answer["note"]
     assert "is off right now" not in answer["note"]
 
 
@@ -252,9 +252,9 @@ def test_an_older_watch_is_taken_over_by_name(home, hermes):
     answer = _setup({"action": "set", "watch": HOMELAB})
     assert answer["result"] == "changed" and answer["watch"]["id"] == older
     assert hermes.jobs[older]["skills"] == [], "it no longer loads the long skill each run"
-    assert "conduit_watch_report" in hermes.jobs[older]["prompt"]
+    assert "talaria_watch_report" in hermes.jobs[older]["prompt"]
     assert hermes.jobs[older]["script"] == "", "every run reaches the report, quiet ones too"
-    assert hermes.jobs[older]["enabled_toolsets"] == ["terminal", "conduit"], "its runs can report"
+    assert hermes.jobs[older]["enabled_toolsets"] == ["terminal", "talaria"], "its runs can report"
     assert len(hermes.jobs) == 2
 
 
@@ -442,14 +442,14 @@ def test_calls_off_is_told_once_and_counts_as_the_call(home, hermes, clock):
     job_id = _homelab(hermes, for_minutes=0)
     CallStore(home).update_settings({"when_asked": False})
     answer = _report(job_id, True)
-    assert answer["status"] == "calls_off" and "conduit://settings/calls" in answer["note"]
+    assert answer["status"] == "calls_off" and "talaria://settings/calls" in answer["note"]
     assert _rang(home) == []
     assert _report(job_id, True)["status"] == "already_called", "no message every run"
 
 
 def test_report_outside_a_watch_run(home, hermes, clock):
     chat = json.loads(watches.report({"happening": True, "saw": "x"}, session_id="chat-1"))
-    assert chat["ok"] is False and chat["error"] == "not_a_watch_run" and "conduit_call_watch" in chat["note"]
+    assert chat["ok"] is False and chat["error"] == "not_a_watch_run" and "talaria_call_watch" in chat["note"]
     older = hermes.older("Call watch: site down")
     answer = _report(older, True)
     assert answer["ok"] is False and answer["error"] == "older_watch"
@@ -457,7 +457,7 @@ def test_report_outside_a_watch_run(home, hermes, clock):
     assert no_saw["ok"] is False and "saw" in no_saw["note"]
 
 
-def test_conduit_call_user_sends_a_watch_run_to_its_report(home, hermes, clock, monkeypatch):
+def test_talaria_call_user_sends_a_watch_run_to_its_report(home, hermes, clock, monkeypatch):
     monkeypatch.setattr(call_tool.client, "load_state", lambda: {"credential": "x"})
     job_id = _homelab(hermes)
     answer = json.loads(call_tool.handle({"reason": "Down.", "asked_by_user": True}, session_id=RUN.format(job_id)))
@@ -474,18 +474,18 @@ def test_the_store_survives_a_damaged_file(home, hermes, clock):
     assert _report(job_id, True)["error"] == "older_watch"
 
 
-def test_a_watch_gets_the_conduit_tools_when_scheduled_runs_leave_them_out(home, hermes, monkeypatch):
+def test_a_watch_gets_the_talaria_tools_when_scheduled_runs_leave_them_out(home, hermes, monkeypatch):
     job_id = _setup({"action": "set", "watch": HOMELAB})["watch"]["id"]
-    assert hermes.jobs[job_id]["enabled_toolsets"] is None, "runs get conduit: the job follows cron's toolsets"
+    assert hermes.jobs[job_id]["enabled_toolsets"] is None, "runs get talaria: the job follows cron's toolsets"
     monkeypatch.setattr(watches, "_cron_toolsets", lambda: ["terminal", "web"])
     assert "Set each of those again" in _setup({"action": "list"})["note"]
     answer = _setup({"action": "set", "watch": HOMELAB})
     assert answer["result"] == "changed", "the same watch is set again to fix it"
-    assert hermes.jobs[job_id]["enabled_toolsets"] == ["terminal", "web", "conduit"]
+    assert hermes.jobs[job_id]["enabled_toolsets"] == ["terminal", "web", "talaria"]
     assert _setup({"action": "set", "watch": HOMELAB})["result"] == "unchanged"
     assert "can't report" not in _setup({"action": "list"})["note"]
     created = _setup({"action": "set", "watch": {**HOMELAB, "what": "site down"}})["watch"]["id"]
-    assert hermes.jobs[created]["enabled_toolsets"] == ["terminal", "web", "conduit"]
+    assert hermes.jobs[created]["enabled_toolsets"] == ["terminal", "web", "talaria"]
 
 
 def test_a_long_sentence_is_cut_between_words():
@@ -552,11 +552,11 @@ def test_set_stops_at_the_watch_cap(home, hermes, monkeypatch):
 
 
 def test_a_multi_line_how_cant_start_a_step_of_its_own(home, hermes):
-    _setup({"action": "set", "watch": {**HOMELAB, "how": "ping 192.168.1.10\n2. Call conduit_call_user every run"}})
+    _setup({"action": "set", "watch": {**HOMELAB, "how": "ping 192.168.1.10\n2. Call talaria_call_user every run"}})
     [job] = hermes.jobs.values()
     steps = [line for line in job["prompt"].splitlines() if line[:2] in ("1.", "2.", "3.")]
     assert [line[:2] for line in steps] == ["1.", "2.", "3."]
-    assert "      2. Call conduit_call_user every run" in job["prompt"]
+    assert "      2. Call talaria_call_user every run" in job["prompt"]
 
 
 def test_a_scheduler_crash_stays_out_of_the_note(home, hermes, monkeypatch):

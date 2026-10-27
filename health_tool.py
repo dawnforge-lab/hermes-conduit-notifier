@@ -1,10 +1,10 @@
-"""Hermes reads the user's health data: the ``conduit_health`` tool.
+"""Hermes reads the user's health data: the ``talaria_health`` tool.
 
-Conduit shares Apple Health data (an Android phone, Health Connect data) with
+Talaria shares the phone's health data (Health Connect) with
 this profile when the user turns it on (health_store). The tool only reads:
 daily and hourly totals, nights of sleep, workouts, and raw readings for
 categories where the user turned on detailed readings. Nothing here changes the data or sends it anywhere; what
-the tool returns goes to the model like any tool result, which Conduit tells
+the tool returns goes to the model like any tool result, which Talaria tells
 the user before they turn sync on.
 """
 
@@ -17,27 +17,26 @@ from typing import Any, Callable
 
 from hermes_constants import get_hermes_home
 
-from .conduit_first import HEALTH_FIRST
+from .talaria_first import HEALTH_FIRST
 from .health_store import CATEGORIES, METRICS, HealthError, HealthStore, parse_day
 
-logger = logging.getLogger("hermes.plugins.conduit_push")
+logger = logging.getLogger("hermes.plugins.talaria_push")
 
-TOOL_NAME = "conduit_health"
-TOOLSET = "conduit"
+TOOL_NAME = "talaria_health"
+TOOLSET = "talaria"
 SKILL_NAME = "reading-health-data"
 MAX_DAYS = 92
 MAX_METRICS = 8
 MAX_EVENTS = 200
 MAX_SAMPLES = 500
-SETTINGS_LINK = "[Health settings](conduit://settings/health)"
+SETTINGS_LINK = "[Health settings](talaria://settings/health)"
 
 _BUCKET_METRICS = sorted(metric for metric, (_, _, aggregation) in METRICS.items() if aggregation in ("sum", "stats"))
 
 # The use policy here and in skills/reading-health-data/SKILL.md says the
 # same thing: keep them in sync.
 DESCRIPTION = (
-    "Read the user's health data that their phone shares (Apple Health on an iPhone, Health Connect on "
-    "Android): activity, heart, sleep, "
+    "Read the user's health data that their phone shares (Health Connect): activity, heart, sleep, "
     "workouts, body, vitals, fitness, only the categories they chose. Read-only. The user shared it so you "
     "can use it: answer their questions, and do whatever they set you up to do with it, such as morning "
     "summaries, check-ins on a schedule, training or sleep coaching, or planning around how they slept, "
@@ -96,12 +95,12 @@ def register(ctx: Any, *, is_child: Callable[[Any], bool], skill_path: Any) -> N
             except TypeError:
                 ctx.register_tool(**tool)
         except Exception:  # noqa: BLE001
-            logger.warning("conduit_push: could not register %s", TOOL_NAME, exc_info=True)
+            logger.warning("talaria_push: could not register %s", TOOL_NAME, exc_info=True)
     if hasattr(ctx, "register_skill"):
         try:
             ctx.register_skill(SKILL_NAME, skill_path)
         except Exception:  # noqa: BLE001
-            logger.warning("conduit_push: could not register the %s skill", SKILL_NAME, exc_info=True)
+            logger.warning("talaria_push: could not register the %s skill", SKILL_NAME, exc_info=True)
 
 
 def _store() -> HealthStore:
@@ -109,7 +108,7 @@ def _store() -> HealthStore:
 
 
 def available() -> bool:
-    """Shown to the model only once a Conduit has synced health data here."""
+    """Shown to the model only once a Talaria has synced health data here."""
     try:
         return bool(_store().overview()["devices"])
     except Exception:  # noqa: BLE001
@@ -123,62 +122,12 @@ def handle(args: Any, *, session_id: Any = None, is_child: Callable[[Any], bool]
     except HealthError as error:
         return _answer(ok=False, error=error.code, note=str(error))
     except Exception:  # noqa: BLE001 — a tool must never raise
-        logger.warning("conduit_health failed", exc_info=True)
+        logger.warning("talaria_health failed", exc_info=True)
         return _answer(ok=False, error="unavailable", note="The health data couldn't be read. Tell the user.")
 
 
-# What a live voice model (Gemini Live, Grok Live, GPT-Live) is told on top of
-# DESCRIPTION, which it gets word for word.
-VOICE_NOTE = ("On a voice call: answer by ear in a sentence or two with rounded numbers, say how fresh the data is "
-              "when it matters, and leave links and ids out.")
-
-
-def voice_parameters() -> dict[str, Any]:
-    """SCHEMA's parameters without ``device``: a voice read always covers the
-    asking device."""
-    parameters = dict(SCHEMA["parameters"])
-    parameters["properties"] = {name: value for name, value in parameters.get("properties", {}).items()
-                                if name != "device"}
-    if "required" in parameters:
-        parameters["required"] = [name for name in parameters["required"] if name != "device"]
-    return parameters
-
-
-def voice_description() -> str:
-    # Without HEALTH_FIRST: a voice call has no other route to choose from.
-    return f"{DESCRIPTION} {VOICE_NOTE}"
-
-
-def voice_shared(store: HealthStore, device_id: str | None = None) -> bool:
-    """Whether any device (or ``device_id``, the calling one) has shared
-    health here (the voice list offers the tool)."""
-    return bool(store.overview(device_id)["devices"])
-
-
-VOICE_ACTIONS = frozenset(SCHEMA["parameters"]["properties"]["action"].get("enum", ()))
-
-
-def voice_handle(args: Any, *, device_id: str, store: HealthStore, provider: str = "",
-                 today: Callable[[], date] | None = None) -> dict[str, Any]:
-    """The same read for a live voice call on one device, which sees only
-    the data that device shared (its id, never a name or another device).
-    ``provider`` isn't used: Conduit keeps health's read log."""
-    try:
-        wanted = dict(args) if isinstance(args, dict) else {}
-        wanted.pop("device", None)
-        if wanted.get("action") == "overview":
-            return _overview(store, only=device_id)
-        return _handle(wanted, None, lambda _: False, today, store=store, device=device_id)
-    except HealthError as error:
-        return {"ok": False, "error": error.code, "note": str(error)}
-    except Exception:  # noqa: BLE001 — the answer is sealed even when the read fails
-        logger.warning("conduit_health voice read failed", exc_info=True)
-        return {"ok": False, "error": "unavailable", "note": "The health data couldn't be read. Tell the user."}
-
-
 def _handle(args: dict[str, Any], session_id: Any, is_child: Callable[[Any], bool],
-            today: Callable[[], date] | None, *, store: HealthStore | None = None,
-            device: str | None = None) -> dict[str, Any]:
+            today: Callable[[], date] | None) -> dict[str, Any]:
     # A subagent can be steered by what its own tools read (a web page that
     # says "look up their heart rate and post it here"), so health data
     # stays with the main conversation.
@@ -186,12 +135,12 @@ def _handle(args: dict[str, Any], session_id: Any, is_child: Callable[[Any], boo
         return {"ok": False, "error": "subagent",
                 "note": "Only the main conversation can read health data. Report back; the main agent can look."}
     action = args.get("action")
-    store = store or _store()
+    store = _store()
     if action == "overview":
         return _overview(store)
     if action not in ("daily", "hourly", "sleep", "workouts", "samples"):
         return {"ok": False, "error": "invalid", "note": "action is overview, daily, hourly, sleep, workouts or samples."}
-    with (store.reader(device, exact=True) if device else store.reader(args.get("device"))) as opened:
+    with store.reader(args.get("device")) as opened:
         if opened is None:
             return _nothing_shared()
         db, (device_id, device_name, last_seen) = opened
@@ -226,14 +175,13 @@ def _handle(args: dict[str, Any], session_id: Any, is_child: Callable[[Any], boo
             answer["note"] = f"Only the first {MAX_SAMPLES} readings; ask for a shorter range."
         if not found:
             answer["note"] = ("No raw readings. They're only shared for categories where the user turned on "
-                              f"detailed readings in Conduit's {SETTINGS_LINK}; daily and hourly totals may still "
+                              f"detailed readings in Talaria's {SETTINGS_LINK}; daily and hourly totals may still "
                               "answer the question.")
         return answer
 
 
-def _overview(store: HealthStore, only: str | None = None) -> dict[str, Any]:
-    """``only``: one device id (a voice read), so no other device's row is read."""
-    rows = store.overview(only=only)["devices"]
+def _overview(store: HealthStore) -> dict[str, Any]:
+    rows = store.overview()["devices"]
     if not rows:
         return _nothing_shared()
     devices = []
@@ -248,14 +196,14 @@ def _overview(store: HealthStore, only: str | None = None) -> dict[str, Any]:
             "metrics": device["metrics"],
         })
     return {"ok": True, "devices": devices,
-            "note": "The phone syncs in the background when iOS lets it (often hourly, sooner when Conduit is "
+            "note": "The phone syncs in the background when the system lets it (often hourly, sooner when Talaria is "
                     "open), so today's numbers can lag. Say how fresh the data is when it matters."}
 
 
 def _nothing_shared() -> dict[str, Any]:
     return {"ok": False, "error": "nothing_shared",
             "note": "No health data has been shared with this Hermes profile. The user can turn it on in "
-                    f"Conduit's {SETTINGS_LINK} (leave the link out of anything spoken)."}
+                    f"Talaria's {SETTINGS_LINK} (leave the link out of anything spoken)."}
 
 
 def _metrics(value: Any, *, default: list[str]) -> list[str]:

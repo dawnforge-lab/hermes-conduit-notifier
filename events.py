@@ -10,7 +10,7 @@ from typing import Any
 
 # Keep in sync with plugin.yaml. Reported on every event so the relay can
 # expose per-gateway compatibility state to the app (Settings > Notifications).
-PLUGIN_VERSION = "0.69.2"
+PLUGIN_VERSION = "1.0.0"
 PLUGIN_CAPABILITIES = [
     "approval-decisions",
     "clarify-loop",
@@ -19,7 +19,6 @@ PLUGIN_CAPABILITIES = [
     "e2e-v1",
     "hermes-calls",
     "location-locate",
-    "maps-v1",
     "live-activities",
     "present-v1",
 ]
@@ -27,7 +26,7 @@ PLUGIN_CAPABILITIES = [
 # PROTOCOL/STORE bounds for batch clarify decisions (8 questions x 8
 # choices, same text caps), mirrored by the relay. This is the maximum a
 # decision may CONTAIN — it is NOT a promise that every valid batch fits an
-# answerable card: APNs caps the whole notification at 4 KB, so a wide or
+# answerable card: FCM caps a message's data at 4 KB, so a wide or
 # long-text batch can still exceed the relay's payload guard. That case
 # degrades safely (plain banner delivered, decision parked deliverable=false,
 # native clarify path continues) instead of losing the notification.
@@ -86,8 +85,6 @@ def push_event(
     call: dict[str, Any] | None = None,
     mode: str | None = None,
     locate: dict[str, Any] | None = None,
-    maps: dict[str, Any] | None = None,
-    count: int | None = None,
 ) -> dict[str, Any]:
     event: dict[str, Any] = {
         "event_id": identifier,
@@ -103,19 +100,16 @@ def push_event(
         event["title"] = _clean(title, 120)
     if body:
         event["body"] = _clean(body, 500)
-    # Conduit writes the title in its own language (#1144): `title_label`
+    # Talaria writes the title in its own language (#1144): `title_label`
     # names which one (an event type, or `phone.<kind>`), and the chat's
     # title rides on its own instead of glued into `title`. `title` stays for
     # older apps and the relay.
     if isinstance(title_label, str) and _TITLE_LABEL.match(title_label):
         event["title_label"] = title_label
-    # How many things a Pulse push brings, for its title ("Pulse noticed 3 things").
-    if isinstance(count, int) and not isinstance(count, bool) and 0 < count <= 100 and kind == "response.ready":
-        event["count"] = count
     chat_title = _clean(session_title, 120) if isinstance(session_title, str) else ""
     if chat_title:
         event["session_title"] = chat_title
-    # `decision` carries the structured card content that lets Conduit render
+    # `decision` carries the structured card content that lets Talaria render
     # an answerable card from the push payload alone, without the one-shot
     # gateway stream event (which is missed while the app is backgrounded).
     # The decision kind must match the event type: approval.needed -> approval
@@ -126,28 +120,21 @@ def push_event(
         expected_kind = "approval" if kind == "approval.needed" else "clarify"
         if sanitized and sanitized.get("kind") == expected_kind:
             event["decision"] = sanitized
-    # `call` (#449) names the job a call request is about, so Conduit can open
+    # `call` (#449) names the job a call request is about, so Talaria can open
     # its chat and tell the user how it ended.
     if call is not None and kind == "call.requested":
         sanitized_call = sanitize_call(call)
         if sanitized_call:
             event["call"] = sanitized_call
-    # `locate` asks the phone for a fresh location (conduit_location): the
+    # `locate` asks the phone for a fresh location (talaria_location): the
     # request id the phone answers with, and nothing else.
     if locate is not None and kind == "location.requested":
         locate_id = locate.get("id") if isinstance(locate, dict) else None
         if isinstance(locate_id, str) and _LOCATE_ID.match(locate_id):
             event["locate"] = {"id": locate_id}
-    # `maps` asks the phone to answer a maps lookup (conduit_maps) through the
-    # same location push: the id it fetches the sealed lookup with, nothing
-    # else.
-    if maps is not None and kind == "location.requested":
-        maps_id = maps.get("id") if isinstance(maps, dict) else None
-        if isinstance(maps_id, str) and _MAPS_ID.match(maps_id):
-            event["maps"] = {"id": maps_id}
     # `mode` (phone.changes only) tells the relay how to wake the phone for a
     # change Hermes queued: "alert" shows a notification the user taps to
-    # review, "background" wakes Conduit silently to apply a change the user
+    # review, "background" wakes Talaria silently to apply a change the user
     # lets Hermes make without asking. Routing, not content: it stays visible
     # to the relay when the rest is sealed.
     if kind == "phone.changes":
@@ -157,7 +144,6 @@ def push_event(
 
 PHONE_CHANGE_MODES = ("alert", "background")
 _LOCATE_ID = re.compile(r"^l_[A-Za-z0-9_-]{16,64}\Z")
-_MAPS_ID = re.compile(r"^m_[A-Za-z0-9_-]{16,64}\Z")
 
 
 # How a watched job ended, or (an alert call) what Hermes waits on.
@@ -199,14 +185,14 @@ def sanitize_call(value: Any) -> dict[str, Any] | None:
     return call
 
 
-REDACTED_APPROVAL_TEXT = "Hermes needs your approval. Open Conduit for details."
-REDACTED_QUESTION_TEXT = "Hermes needs your answer. Open Conduit for details."
+REDACTED_APPROVAL_TEXT = "Hermes needs your approval. Open Talaria for details."
+REDACTED_QUESTION_TEXT = "Hermes needs your answer. Open Talaria for details."
 
 
 def redact_event(event: dict[str, Any]) -> dict[str, Any]:
     """Strip chat content from an outgoing event, keeping answer routing.
 
-    For profiles that opt into `hermes conduit-push redact on` (#192): no
+    For profiles that opt into `hermes talaria redact on` (#192): no
     title/body text leaves the gateway, and a decision keeps only the
     structural fields the device needs to answer it (kind, session_key or
     request_id, qids, choices, multi_select), with its display text replaced
@@ -229,10 +215,6 @@ def redact_event(event: dict[str, Any]) -> dict[str, Any]:
     if isinstance(label, str) and _TITLE_LABEL.match(label):
         # Which title the phone writes: not content, so it stays.
         redacted["title_label"] = label
-    count = event.get("count")
-    if isinstance(count, int) and not isinstance(count, bool) and 0 < count <= 100:
-        # How many things a Pulse report noticed, for that title: a number, not content.
-        redacted["count"] = count
     decision = sanitize_decision(event.get("decision")) if event.get("decision") is not None else {}
     if decision.get("kind") == "approval":
         # Unknown labels never transit; fall back to the always-valid subset
@@ -271,10 +253,6 @@ def redact_event(event: dict[str, Any]) -> dict[str, Any]:
     if isinstance(locate_id, str) and _LOCATE_ID.match(locate_id):
         # Only the request id the phone answers with: routing, not content.
         redacted["locate"] = {"id": locate_id}
-    maps = event.get("maps") if event.get("type") == "location.requested" else None
-    maps_id = maps.get("id") if isinstance(maps, dict) else None
-    if isinstance(maps_id, str) and _MAPS_ID.match(maps_id):
-        redacted["maps"] = {"id": maps_id}
     return redacted
 
 
@@ -292,7 +270,7 @@ def approval_decision(*, session_key: str, description: str) -> dict[str, Any]:
     builds every `ApprovalRequest` with at least those two), so the push card
     offers that always-safe subset; the live foreground card still shows the
     full set. The raw `command` is intentionally omitted — it can carry
-    secrets, and the relay/APNs path is an extra egress transport.
+    secrets, and the relay/FCM path is an extra egress transport.
     """
     return {
         "kind": "approval",
@@ -318,9 +296,9 @@ def clarify_decision(
 
     `questions` carries the FULL batch (current Hermes `questions[]`
     protocol): each entry keeps the gateway qid as identity plus its
-    choices and multi_select flag, so background Conduit devices see and
+    choices and multi_select flag, so background Talaria devices see and
     answer every question instead of only the first. The collapsed
-    `question`/`choices` summary stays in the payload for older Conduit
+    `question`/`choices` summary stays in the payload for older Talaria
     builds, which render an answerable first-question card from it.
 
     Legacy scalar invocations pass no `questions`, keeping the decision —
@@ -462,7 +440,7 @@ def sanitize_decision(decision: dict[str, Any]) -> dict[str, Any]:
 
     Defense in depth: the relay re-validates, but keep this side bounded too
     so a malformed hook payload can never push an oversized or unknown-shaped
-    object through to the relay/APNs. Mirrors the relay's contract:
+    object through to the relay/FCM. Mirrors the relay's contract:
     approval requires the session key that routes the answer, the description
     that renders the card, and non-empty whitelisted choices; clarify
     requires the plugin-minted request id and the question.

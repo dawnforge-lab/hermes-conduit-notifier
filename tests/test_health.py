@@ -15,16 +15,16 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
-BASE = "/api/plugins/conduit_push"
+BASE = "/api/plugins/talaria_push"
 
 if "hermes_constants" not in sys.modules:
     _hermes_constants = types.ModuleType("hermes_constants")
     _hermes_constants.get_hermes_home = lambda: pathlib.Path(tempfile.gettempdir())
     sys.modules["hermes_constants"] = _hermes_constants
-if "conduit_push" not in sys.modules:
-    _pkg = types.ModuleType("conduit_push")
+if "talaria_push" not in sys.modules:
+    _pkg = types.ModuleType("talaria_push")
     _pkg.__path__ = [str(ROOT)]
-    sys.modules["conduit_push"] = _pkg
+    sys.modules["talaria_push"] = _pkg
 
 
 def _load(name, path):
@@ -37,9 +37,9 @@ def _load(name, path):
     return module
 
 
-health = _load("conduit_push.health_store", ROOT / "health_store.py")
-tool = _load("conduit_push.health_tool", ROOT / "health_tool.py")
-_api_spec = importlib.util.spec_from_file_location("conduit_plugin_api_health", ROOT / "dashboard" / "plugin_api.py")
+health = _load("talaria_push.health_store", ROOT / "health_store.py")
+tool = _load("talaria_push.health_tool", ROOT / "health_tool.py")
+_api_spec = importlib.util.spec_from_file_location("talaria_plugin_api_health", ROOT / "dashboard" / "plugin_api.py")
 api = importlib.util.module_from_spec(_api_spec)
 _api_spec.loader.exec_module(api)
 
@@ -48,7 +48,7 @@ NOW = 1_791_900_000  # 2026-10-13T...Z, after every sample below
 
 
 class Phone:
-    """Conduit's side of the protocol, as the Swift code does it."""
+    """Talaria's side of the protocol, as the app does it."""
 
     def __init__(self, device_id=DEVICE, private=None):
         self.device_id = device_id
@@ -311,8 +311,8 @@ def test_status_never_carries_health_values(store, phone):
     assert "1200" not in json.dumps(status)
 
 
-def test_shared_vector_matches_conduit():
-    # ConduitTests/HealthSyncCryptoTests.swift checks the same values.
+def test_shared_vector_matches_talaria():
+    # The Talaria app's tests check the same values (health_vector.json).
     host_private = bytes(range(32))
     device_private = bytes(range(32, 64))
     host_public = X25519PrivateKey.from_private_bytes(host_private).public_key().public_bytes(
@@ -416,7 +416,7 @@ def test_routes_round_trip(client):
 
 
 def test_a_refusal_carries_the_stores_code_beside_its_message(client):
-    # Conduit clears its key only for a lost key (unknown_key, bad_seal),
+    # Talaria clears its key only for a lost key (unknown_key, bad_seal),
     # not for a full host or a newer schema: the code tells them apart.
     phone = Phone()
     phone.accept(client.post(f"{BASE}/health/key", json=phone.key_request()).json())

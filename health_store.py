@@ -1,6 +1,6 @@
-"""Health data from Conduit: the store, its encryption and its queries.
+"""Health data from Talaria: the store, its encryption and its queries.
 
-Conduit can share Apple Health data with this profile so Hermes can read it
+Talaria can share the phone's health data with this profile so Hermes can read it
 (off until the user turns it on, per category). The phone sends it straight
 to this host over the dashboard connection, never through the push relay.
 
@@ -23,11 +23,11 @@ that exchange still can't open later bodies. HKDF-SHA256 and
 ChaCha20-Poly1305 as in e2e.py; the associated data binds a body to its key
 and batch.
 
-State lives in the profile's ``conduit-health.sqlite3`` (owner-only). The
-dashboard routes (dashboard process) write it and answer sealed voice reads
-from it; the ``conduit_health`` tool (agent process) reads it. The dashboard
-loads this file and health_tool.py as a private package
-(``conduit_push_dashboard_pkg``), so it imports nothing else from the plugin.
+State lives in the profile's ``talaria-health.sqlite3`` (owner-only). The
+dashboard routes (dashboard process) write it; the ``talaria_health`` tool
+(agent process) reads it. The dashboard loads this file and health_tool.py as
+a private package (``talaria_push_dashboard_pkg``), so it imports nothing else
+from the plugin.
 """
 
 from __future__ import annotations
@@ -56,20 +56,16 @@ try:
 except ImportError:  # everything but Windows
     msvcrt = None  # type: ignore[assignment]
 
-FILE_NAME = "conduit-health.sqlite3"
+FILE_NAME = "talaria-health.sqlite3"
 SCHEMA_VERSION = 1
 
-SALT = b"conduit-health-v1"
-INFO_INGEST = b"conduit-health-v1 ingest device-to-host"
-# A live voice call reads the user's own data back (POST /voice-tools/call):
-# one key per direction, from the same agreement as ingest.
-INFO_VOICE_REQUEST = b"conduit-health-v1 voice device-to-host"
-INFO_VOICE_ANSWER = b"conduit-health-v1 voice host-to-device"
-AAD_TAG = "conduit-health/1"
+SALT = b"talaria-health-v1"
+INFO_INGEST = b"talaria-health-v1 ingest device-to-host"
+AAD_TAG = "talaria-health/1"
 NONCE_BYTES = 12
 KEY_BYTES = 32
 
-# What Conduit may send, each with its one unit. A metric not listed is
+# What Talaria may send, each with its one unit. A metric not listed is
 # refused, so the store never fills with names the tool can't explain.
 # "sum": cumulative (sum per bucket); "stats": discrete (min/avg/max).
 METRICS: dict[str, tuple[str, str, str]] = {
@@ -120,8 +116,6 @@ _DEVICE_ID = re.compile(r"^[A-Za-z0-9_-]{8,64}\Z")
 _EVENT_ID = re.compile(r"^[A-Za-z0-9:_-]{1,80}\Z")
 _BATCH_ID = re.compile(r"^[A-Za-z0-9_-]{8,64}\Z")
 _KID = re.compile(r"^[0-9a-f]{32}\Z")
-# A voice tool's name, bound into the sealed request and answer.
-_VOICE_TOOL = re.compile(r"[a-z][a-z0-9_]{0,63}\Z")
 _B64URL = re.compile(r"^[A-Za-z0-9_-]*\Z")
 _DATE = re.compile(r"^\d{4}-\d{2}-\d{2}\Z")
 _TZ = re.compile(r"^[A-Za-z0-9_+\-/]{1,64}\Z")
@@ -196,7 +190,7 @@ def crypto_available() -> bool:
 
 
 def key_id(device_public: bytes, host_public: bytes) -> str:
-    return hashlib.sha256(b"conduit-health-kid\n" + device_public + host_public).hexdigest()[:32]
+    return hashlib.sha256(b"talaria-health-kid\n" + device_public + host_public).hexdigest()[:32]
 
 
 def derive_key(shared: bytes, device_id: str, device_public: bytes, host_public: bytes,
@@ -235,12 +229,6 @@ def new_host_keypair() -> tuple[bytes, bytes]:
 
 def ingest_aad(kid: str, device_id: str, batch_id: str) -> bytes:
     return "\n".join([AAD_TAG, "ingest", f"kid={kid}", f"dev={device_id}", f"batch={batch_id}"]).encode("utf-8")
-
-
-def voice_aad(direction: str, tool: str, kid: str, device_id: str, call_id: str) -> bytes:
-    """``direction`` is "request" or "answer"; ``tool`` is the voice tool asked."""
-    return "\n".join([AAD_TAG, f"voice-{direction}", f"tool={tool}", f"kid={kid}", f"dev={device_id}",
-                      f"call={call_id}"]).encode("utf-8")
 
 
 def seal(key: bytes, plaintext: bytes, aad: bytes, nonce: bytes | None = None) -> tuple[str, str]:
@@ -422,7 +410,7 @@ class HealthStore:
         device_id = body.get("device_id")
         if not isinstance(device_id, str) or not _DEVICE_ID.match(device_id):
             raise HealthError("malformed", "device_id must be 8-64 letters, digits, - or _")
-        name = _text(body.get("device_name"), "device_name", MAX_DEVICE_NAME_CHARS) or "iPhone"
+        name = _text(body.get("device_name"), "device_name", MAX_DEVICE_NAME_CHARS) or "Phone"
         device_public = unb64u(body.get("public_key"))
         if len(device_public) != 32:
             raise HealthError("malformed", "public_key must be a 32-byte X25519 key")
@@ -438,11 +426,10 @@ class HealthStore:
             if not known and count >= MAX_DEVICES:
                 raise HealthError("too_many_devices",
                                   f"This profile already keeps health data from {MAX_DEVICES} devices; delete one "
-                                  "from Conduit first", status=409)
+                                  "from Talaria first", status=409)
             if known and bytes(known[0]) != device_public:
                 # A new device key starts the device over: what the old key
-                # sent can't be read back with the new one (a voice read), and
-                # the phone re-sends everything after a new key anyway. The
+                # sent belongs to the old key, and the phone re-sends everything after a new key anyway. The
                 # same device key again keeps the data: only that device's
                 # private key can use what this exchange agrees.
                 for table in ("buckets", "events", "tombstones", "windows"):
@@ -462,71 +449,14 @@ class HealthStore:
             generation = _meta(db, "generation")
         return {"kid": kid, "host_public_key": b64u(host_public), "generation": generation}
 
-    def _still_keyed(self, device_id: str, kid: str) -> None:
-        """Refuses once the device has registered again since ``kid`` was
-        checked. A sealed answer's read runs in its own connection after the
-        request is opened, so a re-registration (and the new key's upload) can
-        land in between; checking again after the read means an answer is
-        sealed to ``kid`` only if no newer key's data could have been read.
-        Every registration mints a new host key, so a kid never comes back."""
-        with self._read() as db:
-            row = None if db is None else db.execute("SELECT kid FROM devices WHERE id=?", (device_id,)).fetchone()
-        if row is None or row[0] != kid:
-            raise HealthError("unknown_key", "This device's health key isn't on this profile; set it up again",
-                              status=409)
-
-    def _device_key(self, db: sqlite3.Connection, device_id: str, kid: str, purpose: bytes = INFO_INGEST) -> bytes:
+    def _device_key(self, db: sqlite3.Connection, device_id: str, kid: str) -> bytes:
         row = db.execute("SELECT device_public, host_private, host_public, kid FROM devices WHERE id=?",
                          (device_id,)).fetchone()
         if row is None or row[3] != kid:
             raise HealthError("unknown_key", "This device's health key isn't on this profile; set it up again",
                               status=409)
         device_public, host_private, host_public = bytes(row[0]), bytes(row[1]), bytes(row[2])
-        return derive_key(agree(host_private, device_public), device_id, device_public, host_public, purpose)
-
-    # Voice reads ---------------------------------------------------------------------
-
-    def open_voice_request(self, envelope: Any) -> tuple[str, dict[str, Any], Callable[[Any], dict[str, str]]]:
-        """A live voice call's sealed read from one device: its device id, the
-        opened request, and a function that seals the answer for that device
-        alone. Only a device holding its own key can ask, and the caller reads
-        only that device's data (``reader(device_id, exact=True)``)."""
-        if not isinstance(envelope, dict) or type(envelope.get("v")) is not int or envelope.get("v") != 1:
-            raise HealthError("malformed", "Expected a version 1 sealed request")
-        device_id, kid, call_id = envelope.get("device_id"), envelope.get("kid"), envelope.get("call_id")
-        tool = envelope.get("tool")
-        if not isinstance(tool, str) or not _VOICE_TOOL.match(tool):
-            raise HealthError("malformed", "tool is malformed")
-        if not isinstance(device_id, str) or not _DEVICE_ID.match(device_id):
-            raise HealthError("malformed", "device_id is malformed")
-        if not isinstance(kid, str) or not _KID.match(kid):
-            raise HealthError("malformed", "kid is malformed")
-        if not isinstance(call_id, str) or not _BATCH_ID.match(call_id):
-            raise HealthError("malformed", "call_id is malformed")
-        if not crypto_available():
-            raise HealthError("no_crypto", "Health sync needs the cryptography package on this host", status=501)
-        with self._read() as db:
-            if db is None:
-                raise HealthError("unknown_key", "This device's health key isn't on this profile; set it up again",
-                                  status=409)
-            request_key = self._device_key(db, device_id, kid, INFO_VOICE_REQUEST)
-            answer_key = self._device_key(db, device_id, kid, INFO_VOICE_ANSWER)
-        plaintext = open_sealed(request_key, envelope.get("nonce"), envelope.get("ct"),
-                                voice_aad("request", tool, kid, device_id, call_id))
-        try:
-            request = json.loads(plaintext)
-        except (ValueError, RecursionError):
-            raise HealthError("malformed", "The sealed request isn't JSON") from None
-        if not isinstance(request, dict) or request.get("call_id") != call_id:
-            raise HealthError("malformed", "The sealed request doesn't match its envelope")
-
-        def seal_answer(answer: Any) -> dict[str, str]:
-            self._still_keyed(device_id, kid)
-            body = json.dumps({"call_id": call_id, "result": answer}, ensure_ascii=False).encode("utf-8")
-            nonce, ct = seal(answer_key, body, voice_aad("answer", tool, kid, device_id, call_id))
-            return {"nonce": nonce, "ct": ct}
-
-        return device_id, request, seal_answer
+        return derive_key(agree(host_private, device_public), device_id, device_public, host_public)
 
     # Ingest --------------------------------------------------------------------
 
@@ -617,16 +547,14 @@ class HealthStore:
 
     # Queries (the agent's tool) ------------------------------------------------------
 
-    def overview(self, only: str | None = None) -> dict[str, Any]:
-        """``only``: one device id (a voice read); no other device is read."""
+    def overview(self) -> dict[str, Any]:
         with self._read() as db:
             if db is None:
                 return {"devices": []}
             devices = []
             for device_id, name, last_seen, categories, tz, detailed in db.execute(
                     "SELECT id, name, last_seen, categories, tz, detailed FROM devices"
-                    " WHERE last_seen IS NOT NULL AND (? IS NULL OR id=?) ORDER BY last_seen DESC",
-                    (only, only)).fetchall():
+                    " WHERE last_seen IS NOT NULL ORDER BY last_seen DESC").fetchall():
                 metrics = {}
                 for metric, grain, first, last in db.execute(
                         "SELECT metric, grain, MIN(date), MAX(date) FROM buckets WHERE device=?"
@@ -647,15 +575,9 @@ class HealthStore:
                                 "detailed_readings": json.loads(detailed or "[]"), "metrics": metrics})
             return {"devices": devices}
 
-    def latest_device(self, db: sqlite3.Connection, wanted: Any = None,
-                      exact: bool = False) -> tuple[str, str, int] | None:
-        """``exact``: ``wanted`` is a device id, matched only as an id (a voice
-        read, where another device's name must never stand in for it)."""
+    def latest_device(self, db: sqlite3.Connection, wanted: Any = None) -> tuple[str, str, int] | None:
         rows = db.execute("SELECT id, name, last_seen FROM devices WHERE last_seen IS NOT NULL"
                           " ORDER BY last_seen DESC").fetchall()
-        if exact:
-            rows = [row for row in rows if row[0] == wanted]
-            return (rows[0][0], rows[0][1], rows[0][2]) if rows else None
         if isinstance(wanted, str) and wanted:
             rows = [row for row in rows if row[0] == wanted] or [
                 row for row in rows if row[1].casefold() == wanted.casefold()]
@@ -664,13 +586,12 @@ class HealthStore:
         return (rows[0][0], rows[0][1], rows[0][2]) if rows else None
 
     @contextlib.contextmanager
-    def reader(self, device: Any = None,
-               exact: bool = False) -> Iterator[tuple[sqlite3.Connection, tuple[str, str, int]] | None]:
+    def reader(self, device: Any = None) -> Iterator[tuple[sqlite3.Connection, tuple[str, str, int]] | None]:
         with self._read() as db:
             if db is None:
                 yield None
                 return
-            chosen = self.latest_device(db, device, exact)
+            chosen = self.latest_device(db, device)
             yield (db, chosen) if chosen else None
 
     def daily(self, db: sqlite3.Connection, device: str, metrics: list[str], start: str, end: str) -> list[dict]:

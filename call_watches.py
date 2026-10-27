@@ -5,21 +5,21 @@ user when something happens ("call me if the homelab is down for more than
 The bookkeeping lives here, not in the model's prompt, so a small model
 can't get it wrong. Two tools:
 
-- ``conduit_call_watch`` (in chats) lists, sets, syncs and removes the
+- ``talaria_call_watch`` (in chats) lists, sets, syncs and removes the
   user's call watches. Each is a Hermes cron job named "Call watch: <what>",
   written through Hermes's own ``cronjob`` function (the one
   ``cronjob_manage`` runs) with a run prompt this module writes. A watch
   with the same name is the same watch, so asking twice never adds a second
   job, and ``sync`` makes the whole set match the user's What's worth a
   call note in one call.
-- ``conduit_watch_report`` (in a run of a watch) takes whether the thing is
+- ``talaria_watch_report`` (in a run of a watch) takes whether the thing is
   happening. This module keeps the incident per job (first seen, called),
   waits out ``for_minutes`` and the allowed hours, calls once per incident
   through the usual call path (``calls.tool_watch``), and tells the run
   exactly what to reply.
 
 What each watch waits for, and its open incident, live in the profile's
-``conduit-call-watches.json``, keyed by cron job id. Watches set up before
+``talaria-call-watches.json``, keyed by cron job id. Watches set up before
 0.17.0 (cron jobs that load the calling skill) show up as older watches;
 setting one by its id moves it onto this module's prompt.
 """
@@ -43,17 +43,17 @@ from hermes_constants import get_hermes_home
 from . import calls, client, cron_runs, cron_store
 from .calls_store import _exclusive
 
-logger = logging.getLogger("hermes.plugins.conduit_push")
+logger = logging.getLogger("hermes.plugins.talaria_push")
 
-SETUP_TOOL = "conduit_call_watch"
-REPORT_TOOL = "conduit_watch_report"
-TOOLSET = "conduit"
+SETUP_TOOL = "talaria_call_watch"
+REPORT_TOOL = "talaria_watch_report"
+TOOLSET = "talaria"
 NAME_PREFIX = "Call watch: "
 # Watches set up before 0.17.0 load the calling skill.
-OLDER_SKILL = "conduit_push:calling-the-user"
-SETTINGS_LINK = "[Calls from Hermes](conduit://settings/calls)"
+OLDER_SKILL = "talaria_push:calling-the-user"
+SETTINGS_LINK = "[Calls from Hermes](talaria://settings/calls)"
 
-FILE_NAME = "conduit-call-watches.json"
+FILE_NAME = "talaria-call-watches.json"
 VERSION = 1
 MAX_WATCHES = 20
 MAX_WHAT_CHARS = 60
@@ -106,7 +106,7 @@ _WATCH_FIELDS: dict[str, Any] = {
 SETUP_SCHEMA: dict[str, Any] = {
     "name": SETUP_TOOL,
     "description": (
-        "Call watches: scheduled checks that phone the user through Conduit when something happens (\"call me "
+        "Call watches: scheduled checks that phone the user through Talaria when something happens (\"call me "
         "if the homelab is down for more than 10 minutes\"). This tool writes and keeps the scheduled jobs; you "
         "only describe each watch. action set: add one watch, or change it (the same `what` is the same "
         "watch, never a second one). action sync: when the user sends their What's worth a call note, pass "
@@ -182,7 +182,7 @@ def register(ctx: Any, *, is_child: Callable[[Any], bool] = lambda _: False) -> 
             except TypeError:
                 ctx.register_tool(**tool)
         except Exception:  # noqa: BLE001
-            logger.warning("conduit_push: could not register %s", name, exc_info=True)
+            logger.warning("talaria_push: could not register %s", name, exc_info=True)
 
 
 def _report_handler(args: Any, session_id: Any = None, task_id: Any = None, **_: Any) -> str:
@@ -270,7 +270,7 @@ def _setup(args: dict[str, Any], session_id: Any, is_child: Callable[[Any], bool
                 "note": "Only the main conversation can change call watches. Report back; the main agent can ask."}
     if client.load_state() is None:
         return {"ok": False, "error": "not_paired",
-                "note": "This Hermes profile isn't paired with the Conduit app, so it can't call. Say so in your reply."}
+                "note": "This Hermes profile isn't paired with the Talaria app, so it can't call. Say so in your reply."}
     cronjob = _cronjob()
     if cronjob is None:
         return {"ok": False, "error": "unavailable",
@@ -305,7 +305,7 @@ def _list(cronjob: Callable[..., str]) -> dict[str, Any]:
     note = "The user has no call watches yet." if not watches else (
         "These are the user's call watches. Older ones were set up before this tool: set one by its id to keep "
         "it up to date here.") if any(view.get("older") for view in watches) else "These are the user's call watches."
-    if any(_toolsets_with_conduit(job) is not None for job, _ in found):
+    if any(_toolsets_with_talaria(job) is not None for job, _ in found):
         note += (f" Some can't report: their runs don't get the {TOOLSET} tools. Set each of those again to fix "
                  "it (the same watch is fine).")
     return {"ok": True, "watches": watches, "note": note}
@@ -402,7 +402,7 @@ def _apply(cronjob: Callable[..., str], watch: dict[str, Any],
               "schedule": f"every {config['every_minutes']}m"}
     # Its runs need the report: a job whose runs wouldn't get it lists the
     # toolsets they'd have, plus this plugin's.
-    toolsets = _toolsets_with_conduit(match[0] if match else None)
+    toolsets = _toolsets_with_talaria(match[0] if match else None)
     if toolsets is not None:
         fields["enabled_toolsets"] = toolsets
     if match is None:
@@ -462,7 +462,7 @@ def _call(cronjob: Callable[..., str], **kwargs: Any) -> dict[str, Any]:
         answer = json.loads(cronjob(**kwargs))
     except Exception:  # noqa: BLE001 — Hermes's tool answers errors itself; this is a crash
         # The details stay in the log: the note may be read out to the user.
-        logger.warning("conduit_push: cronjob %s failed", kwargs.get("action"), exc_info=True)
+        logger.warning("talaria_push: cronjob %s failed", kwargs.get("action"), exc_info=True)
         return {"success": False, "error": "Hermes's scheduler failed"}
     return answer if isinstance(answer, dict) else {"success": False, "error": "unexpected answer"}
 
@@ -538,7 +538,7 @@ def _tell(lead: str) -> str:
     """What the model tells the user after a change, with the setting that
     has to be on for any of it to ring."""
     note = (f"{lead} Say what each watch checks, how often, and when it calls, by its name. It calls only while "
-            f"Call when I ask is on in {SETTINGS_LINK} (a link that opens it in Conduit; leave it out of anything "
+            f"Call when I ask is on in {SETTINGS_LINK} (a link that opens it in Talaria; leave it out of anything "
             "spoken). They can ask you to change or stop a watch any time.")
     try:
         settings = calls.settings()
@@ -549,7 +549,7 @@ def _tell(lead: str) -> str:
     return note
 
 
-def _toolsets_with_conduit(job: dict[str, Any] | None) -> list[str] | None:
+def _toolsets_with_talaria(job: dict[str, Any] | None) -> list[str] | None:
     """The toolsets a watch's job needs so its runs get this plugin's, or
     None when they already do (or it can't be told)."""
     own = (job or {}).get("enabled_toolsets")
@@ -709,8 +709,8 @@ def _report(args: dict[str, Any], session_id: Any, task_id: Any = None) -> dict[
     if status == "older":
         # Set up before 0.17.0 (or by hand): its prompt says how it calls.
         return {"ok": False, "error": "older_watch", "note": (
-            "This scheduled job wasn't set up with conduit_call_watch, so the report doesn't keep it. Do what its "
-            "own prompt says, calling conduit_call_user if it says to.")}
+            "This scheduled job wasn't set up with talaria_call_watch, so the report doesn't keep it. Do what its "
+            "own prompt says, calling talaria_call_user if it says to.")}
     if status == "quiet":
         return {"ok": True, "status": status, "reply": "[SILENT]", "note": f"Nothing to report. {SILENT}"}
     if status == "cleared":
@@ -738,7 +738,7 @@ def _report(args: dict[str, Any], session_id: Any, task_id: Any = None) -> dict[
     except Exception as error:  # noqa: BLE001 — the run still tells the user in its reply
         if isinstance(error, ValueError) and str(error) == "calls_off":
             return {"ok": True, "status": "calls_off", "note": (
-                "It's time to call, but calls the user asks for are off in Conduit. End with what you found in a "
+                "It's time to call, but calls the user asks for are off in Talaria. End with what you found in a "
                 f"few short lines, and that they turn on Call when I ask in {SETTINGS_LINK} for this watch to ring.")}
         if isinstance(error, ValueError) and str(error) == "too_many":
             # Other calls fill the queue for now: the next run calls.
@@ -746,7 +746,7 @@ def _report(args: dict[str, Any], session_id: Any, task_id: Any = None) -> dict[
             return {"ok": True, "status": "busy", "reply": "[SILENT]",
                     "note": f"Too many calls are waiting right now; the next run tries again. {SILENT}"}
         if not isinstance(error, ValueError):
-            logger.warning("conduit_push: a call watch couldn't place its call", exc_info=True)
+            logger.warning("talaria_push: a call watch couldn't place its call", exc_info=True)
         return {"ok": True, "status": "not_called", "note": (
             "It's time to call, but the call couldn't be set up. End with what you found in a few short lines.")}
     return {"ok": True, "status": "calling", "note": (

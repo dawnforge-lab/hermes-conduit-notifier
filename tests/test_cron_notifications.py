@@ -6,7 +6,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 ROOT = Path(__file__).resolve().parents[1]
-BASE = "/api/plugins/conduit_push"
+BASE = "/api/plugins/talaria_push"
 
 
 def _load(name, path):
@@ -16,8 +16,8 @@ def _load(name, path):
     return module
 
 
-store_module = _load("conduit_cron_store_test", ROOT / "cron_store.py")
-api = _load("conduit_plugin_api_cron", ROOT / "dashboard" / "plugin_api.py")
+store_module = _load("talaria_cron_store_test", ROOT / "cron_store.py")
+api = _load("talaria_plugin_api_cron", ROOT / "dashboard" / "plugin_api.py")
 CronStore = store_module.CronStore
 
 

@@ -12,7 +12,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 ROOT = Path(__file__).resolve().parents[1]
-BASE = "/api/plugins/conduit_push"
+BASE = "/api/plugins/talaria_push"
 OWN_PID = 1000
 DESKTOP_PID = 2000
 
@@ -23,7 +23,7 @@ if "hermes_constants" not in sys.modules:
 
 
 def _load_plugin_api():
-    spec = importlib.util.spec_from_file_location("conduit_plugin_api_takeover", ROOT / "dashboard" / "plugin_api.py")
+    spec = importlib.util.spec_from_file_location("talaria_plugin_api_takeover", ROOT / "dashboard" / "plugin_api.py")
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module

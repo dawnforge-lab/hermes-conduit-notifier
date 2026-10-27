@@ -11,14 +11,14 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
-BASE = "/api/plugins/conduit_push"
+BASE = "/api/plugins/talaria_push"
 
 if "hermes_constants" not in sys.modules:
     _hermes_constants = types.ModuleType("hermes_constants")
     _hermes_constants.get_hermes_home = lambda: pathlib.Path(tempfile.gettempdir())
     sys.modules["hermes_constants"] = _hermes_constants
 
-spec = importlib.util.spec_from_file_location("conduit_plugin_api_pairing", ROOT / "dashboard" / "plugin_api.py")
+spec = importlib.util.spec_from_file_location("talaria_plugin_api_pairing", ROOT / "dashboard" / "plugin_api.py")
 api = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(api)
 
@@ -52,7 +52,7 @@ def _short_hostname(monkeypatch):
 
 
 def test_pairing_claims_the_code_and_saves_the_credential(tmp_path):
-    path = tmp_path / "conduit-push.json"
+    path = tmp_path / "talaria-push.json"
     calls = []
     result = api.pair_profile({"pairing_code": " abcde-fgh23 ", "relay_url": "https://relay.example/"},
                               path=path, claim=_recording_claim(calls))

@@ -13,12 +13,12 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 ROOT = Path(__file__).resolve().parents[1]
-BASE = "/api/plugins/conduit_push"
+BASE = "/api/plugins/talaria_push"
 
 ELECTRON = ("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) "
             "Hermes/1.4.0 Chrome/138.0.0.0 Electron/37.2.0 Safari/537.36")
 CHROME = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.0.0 Safari/537.36"
-CONDUIT = "Conduit/212 CFNetwork/3826.500.1 Darwin/25.0.0"
+TALARIA = "Talaria/212 CFNetwork/3826.500.1 Darwin/25.0.0"
 
 if "hermes_constants" not in sys.modules:
     _hermes_constants = types.ModuleType("hermes_constants")
@@ -27,7 +27,7 @@ if "hermes_constants" not in sys.modules:
 
 
 def _load_plugin_api():
-    spec = importlib.util.spec_from_file_location("conduit_plugin_api_desktop_views", ROOT / "dashboard" / "plugin_api.py")
+    spec = importlib.util.spec_from_file_location("talaria_plugin_api_desktop_views", ROOT / "dashboard" / "plugin_api.py")
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
@@ -94,8 +94,8 @@ def _hook(flush_delay=3600.0):
 @pytest.mark.parametrize("headers, expected", [
     ({"user-agent": ELECTRON}, "desktop"),
     ({"user-agent": CHROME}, "browser"),
-    ({"user-agent": CONDUIT}, None),
-    ({"user-agent": ELECTRON, "x-conduit-client": "ios"}, None),
+    ({"user-agent": TALARIA}, None),
+    ({"user-agent": ELECTRON, "x-talaria-client": "ios"}, None),
     ({}, None),
 ])
 def test_only_browser_engine_sockets_count(headers, expected):
@@ -124,8 +124,8 @@ def test_a_desktop_open_is_recorded_and_the_response_is_untouched(monkeypatch, t
     assert not hasattr(gateway.server._methods["session.list"], api._DESKTOP_VIEW_MARKER)
 
 
-def test_conduit_and_failed_opens_are_not_recorded(monkeypatch, tmp_path):
-    gateway = FakeGateway(tmp_path, WSTransport({"user-agent": CONDUIT}))
+def test_talaria_and_failed_opens_are_not_recorded(monkeypatch, tmp_path):
+    gateway = FakeGateway(tmp_path, WSTransport({"user-agent": TALARIA}))
     gateway.install(monkeypatch)
     hook = _hook()
     hook.try_install()
@@ -181,7 +181,7 @@ def test_a_subclass_of_the_gateway_socket_still_counts(monkeypatch, tmp_path):
 
 def test_header_names_are_matched_in_any_case():
     assert api.desktop_view_client(WSTransport({"User-Agent": ELECTRON})) == "desktop"
-    assert api.desktop_view_client(WSTransport({"User-Agent": ELECTRON, "X-Conduit-Client": "conduit"})) is None
+    assert api.desktop_view_client(WSTransport({"User-Agent": ELECTRON, "X-Talaria-Client": "talaria"})) is None
 
 
 def test_a_socket_type_that_isnt_a_class_falls_back_to_the_name():
@@ -221,8 +221,8 @@ def test_an_open_at_the_same_moment_takes_the_newer_client():
     assert merged["client"] == "desktop"
 
 
-def test_a_blank_conduit_header_still_marks_conduit():
-    assert api.desktop_view_client(WSTransport({"user-agent": ELECTRON, "x-conduit-client": ""})) is None
+def test_a_blank_talaria_header_still_marks_talaria():
+    assert api.desktop_view_client(WSTransport({"user-agent": ELECTRON, "x-talaria-client": ""})) is None
 
 
 def test_an_absurdly_nested_file_reads_as_empty(tmp_path):
@@ -540,7 +540,7 @@ def test_reads_are_rate_limited(monkeypatch, tmp_path):
 
 # --- Selected chats for the reply-ready push (#87) -----------------------------
 
-_selected_spec = importlib.util.spec_from_file_location("conduit_desktop_selected_views_test", ROOT / "desktop_selected.py")
+_selected_spec = importlib.util.spec_from_file_location("talaria_desktop_selected_views_test", ROOT / "desktop_selected.py")
 desktop_selected = importlib.util.module_from_spec(_selected_spec)
 _selected_spec.loader.exec_module(desktop_selected)
 

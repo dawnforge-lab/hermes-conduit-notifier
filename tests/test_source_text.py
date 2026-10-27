@@ -1,6 +1,6 @@
 """Hermes scans a plugin's whole checkout before it installs it. A literal
 bidi override or zero-width character anywhere in the tree is a high
-"injection" finding, and that verdict stops a one-tap install from Conduit.
+"injection" finding, and that verdict stops a one-tap install from Talaria.
 Write these characters as escapes instead."""
 
 import pathlib

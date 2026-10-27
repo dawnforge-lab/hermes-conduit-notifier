@@ -1,8 +1,8 @@
 """Calendar, Reminders, Focus, phone status, alarms and contacts from
-Conduit: the store, its encryption, its queries and the changes Hermes asks
+Talaria: the store, its encryption, its queries and the changes Hermes asks
 the phone to make.
 
-Conduit can share the user's calendars, reminders, which Focus is on and a
+Talaria can share the user's calendars, reminders, which Focus is on and a
 snapshot of the phone's state (battery, CarPlay, audio route, motion) with
 this profile so Hermes can use them. Each kind is off until the user turns
 it on. The phone sends them straight to this host over the dashboard
@@ -16,9 +16,9 @@ What arrives (designs/phone-v1-contract.md, section 2):
   days), as a diff or, with ``full``, the whole window.
 * reminders: open ones and those completed in the last 14 days, the same way.
 * status and focus: the latest value only, never a history.
-* alarms (0.30.0): the alarms and timers Conduit set for Hermes that are
+* alarms (0.30.0): the alarms and timers Talaria set for Hermes that are
   still on the phone, replaced whole when sent.
-* contacts (0.30.0): the people the user picked in Conduit, replaced whole
+* contacts (0.30.0): the people the user picked in Talaria, replaced whole
   when sent, deleted when the user stops sharing them.
 
 The sharing the phone reports in every batch is enforced here again, so a
@@ -38,9 +38,9 @@ then HKDF-SHA256 and ChaCha20-Poly1305 as in health_store.py, with this
 feature's own labels: one key for ingest and one per direction for the
 exchange. Wiping this feature never touches health or location.
 
-State lives in the profile's ``conduit-phone.sqlite3`` (owner-only). The
-dashboard routes (dashboard process) write it and the ``conduit_calendar`` /
-``conduit_phone`` tools (agent process) read it and add changes: the
+State lives in the profile's ``talaria-phone.sqlite3`` (owner-only). The
+dashboard routes (dashboard process) write it and the ``talaria_calendar`` /
+``talaria_phone`` tools (agent process) read it and add changes: the
 dashboard loads this file by path, so it imports nothing from the plugin
 package.
 """
@@ -75,21 +75,20 @@ from urllib.parse import urlsplit
 
 logger = logging.getLogger(__name__)
 
-FILE_NAME = "conduit-phone.sqlite3"
+FILE_NAME = "talaria-phone.sqlite3"
 SCHEMA_VERSION = 3  # 2: alarms and contacts (plugin 0.30.0); 3: last_contact, prior_sharing (0.51.9)
 
-SALT = b"conduit-phone-v1"
-INFO_INGEST = b"conduit-phone-v1 ingest device-to-host"
-INFO_EXCHANGE_REQUEST = b"conduit-phone-v1 exchange device-to-host"
-INFO_EXCHANGE_ANSWER = b"conduit-phone-v1 exchange host-to-device"
-AAD_TAG = "conduit-phone/1"
-KID_TAG = b"conduit-phone-kid\n"
+SALT = b"talaria-phone-v1"
+INFO_INGEST = b"talaria-phone-v1 ingest device-to-host"
+INFO_EXCHANGE_REQUEST = b"talaria-phone-v1 exchange device-to-host"
+INFO_EXCHANGE_ANSWER = b"talaria-phone-v1 exchange host-to-device"
+AAD_TAG = "talaria-phone/1"
+KID_TAG = b"talaria-phone-kid\n"
 NONCE_BYTES = 12
 KEY_BYTES = 32
 
-# Exchange operations this host answers: "changes" at /phone/exchange,
-# "voice" (a live voice call's read) at /voice-tools/call (contract section 5).
-EXCHANGE_OPS = ("changes", "voice")
+# Exchange operations this host answers: "changes" at /phone/exchange.
+EXCHANGE_OPS = ("changes",)
 
 CALENDAR_SHARING = ("full", "write_only", "off")
 # Sharing switches that take changes away when on: Hermes reads what's
@@ -455,7 +454,7 @@ def _url(value: Any, field: str) -> str | None:
 
 
 def _write_url(value: Any, field: str) -> str | None:
-    """A change's link: Conduit keeps only an http or https one and applies
+    """A change's link: Talaria keeps only an http or https one and applies
     the rest of the change without anything else, so it's refused here."""
     text = _url(value, field)
     if text is None:
@@ -594,7 +593,7 @@ class PhoneStore:
         device_id = body.get("device_id")
         if not isinstance(device_id, str) or not _DEVICE_ID.match(device_id):
             raise PhoneError("malformed", "device_id must be 8-64 letters, digits, - or _")
-        name = clean_text(body.get("device_name"), "device_name", MAX_DEVICE_NAME_CHARS) or "iPhone"
+        name = clean_text(body.get("device_name"), "device_name", MAX_DEVICE_NAME_CHARS) or "Phone"
         device_public = unb64u(body.get("public_key"))
         if len(device_public) != 32:
             raise PhoneError("malformed", "public_key must be a 32-byte X25519 key")
@@ -610,7 +609,7 @@ class PhoneStore:
             if not known and count >= MAX_DEVICES:
                 raise PhoneError("too_many_devices",
                                  f"This profile already keeps calendar data from {MAX_DEVICES} devices; delete one "
-                                 "from Conduit first", status=409)
+                                 "from Talaria first", status=409)
             fresh = not known or bytes(known[0]) != device_public
             if known and fresh:
                 # The phone will never see what was waiting for its old key:
@@ -732,8 +731,7 @@ class PhoneStore:
         if op not in EXCHANGE_OPS:
             raise PhoneError("unknown_op", f"op must be one of {', '.join(EXCHANGE_OPS)}")
         if op not in ops:
-            raise PhoneError("unknown_op", "Voice reads go to /voice-tools/call" if op == "voice"
-                             else f"This route takes op {', '.join(ops)}")
+            raise PhoneError("unknown_op", f"This route takes op {', '.join(ops)}")
         if not crypto_available():
             raise PhoneError("no_crypto", "Calendar sharing needs the cryptography package on this host", status=501)
         with self._read() as db:
@@ -764,16 +762,6 @@ class PhoneStore:
         device_id, _, request, seal_answer = self.open_exchange(envelope, ops=("changes",))
         changes = self.exchange_changes(device_id, request.get("results"), kid=envelope["kid"])
         return {"v": 1, **seal_answer({"changes": changes})}
-
-    def open_voice_request(self, envelope: Any) -> tuple[str, dict[str, Any], Callable[[dict[str, Any]], dict[str, str]]]:
-        """A live voice call's sealed read (``op: "voice"``): the device it
-        covers, the opened request ``{call_id, tool, args, provider}``, and the
-        sealer for its answer. Only the device can ask, and only about itself.
-        A replayed request isn't refused (like health voice reads): it only
-        re-runs a read whose answer is sealed to the device, so whoever replays
-        it learns nothing, and the route's rate limit caps the load."""
-        device_id, _, request, seal_answer = self.open_exchange(envelope, ops=("voice",))
-        return device_id, request, seal_answer
 
     def exchange_changes(self, device_id: str, results: Any, *, kid: str) -> list[dict[str, Any]]:
         """Records the phone's outcomes for its changes, then answers every
@@ -930,7 +918,7 @@ class PhoneStore:
                         "pending": pending,
                     }
         # A known device only, and at most one write a second per device
-        # (Conduit asks on every sync pass); a stamp from this second already
+        # (Talaria asks on every sync pass); a stamp from this second already
         # puts it first.
         if stamp is not None and stamp < now:
             self._touch(device_id, answer["device"]["kid"], now)
@@ -944,7 +932,7 @@ class PhoneStore:
             connection = sqlite3.connect(f"{self.path.as_uri()}?mode=rw", uri=True, timeout=15,
                                          isolation_level=None)
         except sqlite3.DatabaseError as error:
-            logger.warning("conduit phone: couldn't note a check-in (%s); changes follow the last upload", error)
+            logger.warning("talaria phone: couldn't note a check-in (%s); changes follow the last upload", error)
             return
         try:
             # Only forward: a slower, older check-in never pulls it back.
@@ -953,7 +941,7 @@ class PhoneStore:
         except sqlite3.DatabaseError as error:
             # The read just upgraded the schema, so this is a busy or broken
             # file: routing falls back to the last upload, and says so.
-            logger.warning("conduit phone: couldn't note a check-in (%s); changes follow the last upload", error)
+            logger.warning("talaria phone: couldn't note a check-in (%s); changes follow the last upload", error)
         finally:
             connection.close()
 
@@ -1022,15 +1010,13 @@ class PhoneStore:
 
     @contextlib.contextmanager
     def reader(self, need: str, device: Any = None,
-               exact: bool = False, for_change: bool = False
-               ) -> Iterator[tuple[sqlite3.Connection, dict[str, Any]] | None]:
+               for_change: bool = False) -> Iterator[tuple[sqlite3.Connection, dict[str, Any]] | None]:
         """A read connection and the device to read: the one named, else the
         one that synced last sharing ``need`` (see ``shares``: "events",
         "reminders", "status", "focus", "calendars", "phone", "phone_tool",
         "alarms", "contacts" or "any"). None when nothing is shared.
         Raises PhoneError ``not_shared`` when the named device doesn't share
-        it. ``exact``: ``device`` is an id and only that device is read (a
-        voice read), never another device by name. ``for_change``: the device
+        it. ``for_change``: the device
         is the one a change will go to, so a device still setting up after a
         new key isn't replaced by another (PhoneError ``device_not_ready``)."""
         with self._read() as db:
@@ -1038,10 +1024,10 @@ class PhoneStore:
                 yield None
                 return
             try:
-                device_id, name, sharing = _pick_device(db, device, need, exact=exact,
+                device_id, name, sharing = _pick_device(db, device, need,
                                                         now=int(self.clock()) if for_change else None)
             except PhoneError as error:
-                if error.code == "nothing_shared" and not exact:
+                if error.code == "nothing_shared":
                     yield None
                     return
                 raise
@@ -1067,10 +1053,10 @@ class PhoneStore:
             # Filtered before the limit, so a busy range still finds them.
             # SQLite's lower() folds ASCII only; fold in Python so "Événement"
             # finds "événement".
-            db.create_function("conduit_fold", 1, lambda text: text.casefold() if isinstance(text, str) else "",
+            db.create_function("talaria_fold", 1, lambda text: text.casefold() if isinstance(text, str) else "",
                                deterministic=True)
-            sql += (" AND (instr(conduit_fold(title), ?) OR instr(conduit_fold(location), ?)"
-                    " OR instr(conduit_fold(notes), ?))")
+            sql += (" AND (instr(talaria_fold(title), ?) OR instr(talaria_fold(location), ?)"
+                    " OR instr(talaria_fold(notes), ?))")
             needle = query.casefold()
             args.extend([needle, needle, needle])
         sql += " ORDER BY start_utc, end_utc LIMIT ?"
@@ -1152,7 +1138,7 @@ class PhoneStore:
                 "focus_at": row[3]}
 
     def alarms(self, db: sqlite3.Connection, device: str) -> tuple[list[dict[str, Any]], int | None]:
-        """The alarms and timers Conduit set that are still on the phone, and
+        """The alarms and timers Talaria set that are still on the phone, and
         when the phone said so."""
         row = db.execute("SELECT alarms, alarms_at FROM devices WHERE id=?", (device,)).fetchone()
         listed = _decode(row[0], []) if row else []
@@ -1301,7 +1287,7 @@ def _migrate(db: sqlite3.Connection, now: float) -> None:
     if version == str(SCHEMA_VERSION):
         return
     if version == "1":
-        # 0.30.0: the alarms Conduit set and the people the user picked.
+        # 0.30.0: the alarms Talaria set and the people the user picked.
         db.execute("ALTER TABLE devices ADD COLUMN alarms TEXT")
         db.execute("ALTER TABLE devices ADD COLUMN alarms_at INTEGER")
         db.execute(_CONTACTS_TABLE)
@@ -1420,7 +1406,7 @@ def shares(sharing: dict[str, Any], need: str) -> bool:
     if need == "phone":
         return sharing.get("status") is True or sharing.get("focus") is True
     if need == "phone_tool":
-        # conduit_phone: status, Focus, or the alarms Hermes can set.
+        # talaria_phone: status, Focus, or the alarms Hermes can set.
         return any(sharing.get(kind) is True for kind in ("status", "focus", "alarms"))
     # An unknown need is a caller's mistake: deny it rather than share.
     return need == "any"
@@ -1447,26 +1433,13 @@ def _read_only(sharing: dict[str, Any], need: str) -> PhoneError | None:
 
 
 def _pick_device(db: sqlite3.Connection, wanted: Any, need: str,
-                 exact: bool = False, now: int | None = None) -> tuple[str, str, dict[str, Any]]:
+                 now: int | None = None) -> tuple[str, str, dict[str, Any]]:
     """The device a read or a change is for. Unnamed, it's the device in use:
     the one that checked in (``status``) or uploaded most recently. ``now``
     (for a change) also refuses to stand another device in for one that is
     still setting up after a new key."""
     rows = [(row[0], row[1], _decode(row[2], {})) for row in db.execute(
         f"SELECT id, name, sharing FROM devices WHERE last_seen IS NOT NULL ORDER BY {_IN_TOUCH_ORDER}")]
-    if exact:
-        # Another device's name must never stand in for this one.
-        named = [row for row in rows if row[0] == wanted]
-        if not named:
-            raise PhoneError("nothing_shared", "This iPhone hasn't shared anything yet")
-        if need in ("events", "events_change") and named[0][2].get("calendar") == "write_only":
-            raise PhoneError("write_only", "The user lets Hermes add events but not read their calendar")
-        refusal = _read_only(named[0][2], need)
-        if refusal is not None:
-            raise refusal
-        if not shares(named[0][2], need):
-            raise PhoneError("not_shared", f"{named[0][1]} doesn't share {_NEED_WORDS.get(need, need)} with Hermes")
-        return named[0]
     if isinstance(wanted, str) and wanted.strip():
         wanted = wanted.strip()
         named = [row for row in rows if row[0] == wanted] or [
@@ -1602,7 +1575,7 @@ def _narrowed(stored: Any, sharing: dict[str, Any]) -> dict[str, Any]:
 def _not_ahead(at: datetime, field: str, now: int) -> datetime:
     if at.timestamp() > now + MAX_CLOCK_SKEW_S:
         raise PhoneError("clock_skew", f"{field} is more than {MAX_CLOCK_SKEW_S // 60} minutes ahead of this host;"
-                         " check the iPhone's clock and the host's")
+                         " check the phone's clock and the host's")
     return at
 
 
@@ -1750,7 +1723,7 @@ def _apply(db: sqlite3.Connection, device_id: str, batch: dict[str, Any], now: i
                 sql += f" AND {column} NOT IN ({','.join('?' * len(kept))})"
             counts["deleted"] += db.execute(sql, (device_id, *kept)).rowcount
 
-    # The alarms Conduit set and the people the user picked: replaced whole.
+    # The alarms Talaria set and the people the user picked: replaced whole.
     if parsed_alarms is not None:
         db.execute("UPDATE devices SET alarms=?, alarms_at=? WHERE id=?",
                    (json.dumps(parsed_alarms), sent_epoch, device_id))
@@ -1936,7 +1909,7 @@ def _parse_focus(value: Any, now: int) -> dict[str, Any]:
 
 
 def _parse_alarms(value: Any) -> list[dict[str, Any]]:
-    """The alarms and timers Conduit set for Hermes that are still on the
+    """The alarms and timers Talaria set for Hermes that are still on the
     phone (not the user's own: AlarmKit shows an app only its own)."""
     alarms = _list(value, "alarms")
     if len(alarms) > MAX_ALARMS_LISTED:
@@ -1972,7 +1945,7 @@ def _weekdays(value: Any, field: str) -> list[str]:
 
 
 def _parse_contacts(value: Any) -> list[dict[str, Any]]:
-    """The people the user picked in Conduit for Hermes to know."""
+    """The people the user picked in Talaria for Hermes to know."""
     contacts = _list(value, "contacts")
     if len(contacts) > MAX_CONTACTS:
         raise PhoneError("too_large", f"At most {MAX_CONTACTS} contacts", status=413)

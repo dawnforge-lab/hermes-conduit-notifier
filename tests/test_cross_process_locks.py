@@ -22,10 +22,10 @@ if "hermes_constants" not in sys.modules:
     _hermes_constants = types.ModuleType("hermes_constants")
     _hermes_constants.get_hermes_home = lambda: pathlib.Path(tempfile.gettempdir())
     sys.modules["hermes_constants"] = _hermes_constants
-if "conduit_push" not in sys.modules:
-    _pkg = types.ModuleType("conduit_push")
+if "talaria_push" not in sys.modules:
+    _pkg = types.ModuleType("talaria_push")
     _pkg.__path__ = [str(ROOT)]
-    sys.modules["conduit_push"] = _pkg
+    sys.modules["talaria_push"] = _pkg
 
 
 def _load(name, path):
@@ -38,10 +38,10 @@ def _load(name, path):
     return module
 
 
-health = _load("conduit_push.health_store", ROOT / "health_store.py")
-location = _load("conduit_push.location_store", ROOT / "location_store.py")
-phone = _load("conduit_push.phone_store", ROOT / "phone_store.py")
-_api_spec = importlib.util.spec_from_file_location("conduit_plugin_api_locks", ROOT / "dashboard" / "plugin_api.py")
+health = _load("talaria_push.health_store", ROOT / "health_store.py")
+location = _load("talaria_push.location_store", ROOT / "location_store.py")
+phone = _load("talaria_push.phone_store", ROOT / "phone_store.py")
+_api_spec = importlib.util.spec_from_file_location("talaria_plugin_api_locks", ROOT / "dashboard" / "plugin_api.py")
 api = importlib.util.module_from_spec(_api_spec)
 _api_spec.loader.exec_module(api)
 

@@ -2,7 +2,6 @@ import importlib.util
 import json
 import os
 import pathlib
-import secrets
 import sqlite3
 import stat
 import sys
@@ -17,16 +16,16 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
-BASE = "/api/plugins/conduit_push"
+BASE = "/api/plugins/talaria_push"
 
 if "hermes_constants" not in sys.modules:
     _hermes_constants = types.ModuleType("hermes_constants")
     _hermes_constants.get_hermes_home = lambda: pathlib.Path(tempfile.gettempdir())
     sys.modules["hermes_constants"] = _hermes_constants
-if "conduit_push" not in sys.modules:
-    _pkg = types.ModuleType("conduit_push")
+if "talaria_push" not in sys.modules:
+    _pkg = types.ModuleType("talaria_push")
     _pkg.__path__ = [str(ROOT)]
-    sys.modules["conduit_push"] = _pkg
+    sys.modules["talaria_push"] = _pkg
 
 
 def _load(name, path):
@@ -39,12 +38,12 @@ def _load(name, path):
     return module
 
 
-location = _load("conduit_push.location_store", ROOT / "location_store.py")
-tool = _load("conduit_push.location_tool", ROOT / "location_tool.py")
-profiles = _load("conduit_push.location_profiles", ROOT / "location_profiles.py")
-calls_store = _load("conduit_push.calls_store", ROOT / "calls_store.py")
-calls = _load("conduit_push.calls", ROOT / "calls.py")
-_api_spec = importlib.util.spec_from_file_location("conduit_plugin_api_location", ROOT / "dashboard" / "plugin_api.py")
+location = _load("talaria_push.location_store", ROOT / "location_store.py")
+tool = _load("talaria_push.location_tool", ROOT / "location_tool.py")
+profiles = _load("talaria_push.location_profiles", ROOT / "location_profiles.py")
+calls_store = _load("talaria_push.calls_store", ROOT / "calls_store.py")
+calls = _load("talaria_push.calls", ROOT / "calls.py")
+_api_spec = importlib.util.spec_from_file_location("talaria_plugin_api_location", ROOT / "dashboard" / "plugin_api.py")
 api = importlib.util.module_from_spec(_api_spec)
 _api_spec.loader.exec_module(api)
 
@@ -55,7 +54,7 @@ VECTOR = json.loads((ROOT / "tests" / "location_vector.json").read_text())
 
 
 class Phone:
-    """Conduit's side of the protocol, as the Swift code does it."""
+    """Talaria's side of the protocol, as the app does it."""
 
     def __init__(self, device_id=DEVICE):
         self.device_id = device_id
@@ -133,8 +132,6 @@ def test_a_new_device_key_starts_with_no_history(store, phone):
         db.execute("INSERT INTO visits VALUES(?,?,?,?,?,?,?,?,?)",
                    (phone.device_id, "v_1", "arrive", "p_home", "Home", None, NOW - 60, "2026-10-13T06:57:00+01:00",
                     NOW))
-        db.execute("INSERT INTO maps(id, device, requested_at, expires_at, cache, request) VALUES(?,?,?,?,?,?)",
-                   ("m_1", phone.device_id, NOW, NOW + 60, "k", "{}"))
         watermark = db.execute("SELECT last_sent FROM devices").fetchone()[0]
     assert watermark is not None
     # The same key again (a lost answer) keeps everything.
@@ -148,11 +145,8 @@ def test_a_new_device_key_starts_with_no_history(store, phone):
     with store._write() as db:
         for table in ("fixes", "visits", "places"):
             assert db.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0] == 0, table
-        # The lookup still counts against the budget, but nothing of it is left.
-        assert db.execute("SELECT cache, request, answer FROM maps").fetchall() == [("", "", None)]
         last_seen, last_sent, sharing = db.execute("SELECT last_seen, last_sent, sharing FROM devices").fetchone()
     assert last_sent is None and last_seen is not None and sharing is not None
-    assert store.maps_answer("m_1") is None
 
 
 def test_a_sealed_fix_lands_at_the_detail_the_user_chose(store, phone):
@@ -188,7 +182,7 @@ def test_a_private_place_hides_everything_but_itself(store, phone):
 def test_making_a_place_private_forgets_what_it_revealed(store, phone):
     arrive = {"id": "e_home", "kind": "arrive", "place_id": "p_home", "at": "2026-10-13T06:50:00+01:00"}
     store.ingest(phone.seal(phone.batch(fix=fix(place_id="p_home"), events=[arrive])))
-    # The user marks Home private: Conduit sends just the settings.
+    # The user marks Home private: Talaria sends just the settings.
     store.ingest(phone.seal(phone.batch(places=[{**PLACES[0], "private": True}, *PLACES[1:]])))
     stored = store.snapshot()["fix"]
     assert stored["place_id"] == "p_home" and stored["precision"] == "places"
@@ -256,8 +250,12 @@ def test_an_older_store_upgrades_and_still_takes_batches(store, phone, version):
     store.ingest(phone.seal(phone.batch(fix=fix())))
     db = sqlite3.connect(store.path)
     db.execute("ALTER TABLE devices DROP COLUMN last_sent")
-    if version == "1":
-        db.execute("DROP TABLE maps")
+    if version == "2":
+        # Schema 2 kept maps lookups on the phone in their own table. Nothing
+        # reads it any more; a store that has it opens as before.
+        db.execute("CREATE TABLE maps(id TEXT PRIMARY KEY, device TEXT NOT NULL, requested_at REAL NOT NULL,"
+                   " expires_at REAL NOT NULL, cache TEXT NOT NULL, request TEXT NOT NULL, fetched_at REAL,"
+                   " answered_at REAL, answer TEXT)")
     db.execute("UPDATE meta SET value=? WHERE key='schema'", (version,))
     db.commit()
     db.close()
@@ -472,8 +470,8 @@ def test_a_deleted_rules_job_stays_listed_until_its_gone(store, phone):
     assert store.pending_rule_jobs() == ["job-1"] and store.path.exists() and store.status()["stored"] is True
 
 
-def test_shared_vector_matches_conduit():
-    # ConduitTests checks the same values.
+def test_shared_vector_matches_talaria():
+    # The Talaria app's tests check the same values.
     host_private = location.unb64u(VECTOR["host_private"])
     device_private = location.unb64u(VECTOR["device_private"])
     raw = (serialization.Encoding.Raw, serialization.PublicFormat.Raw)
@@ -595,12 +593,6 @@ def test_a_places_only_fix_the_settings_no_longer_explain_blames_nothing():
     assert "the user chose" not in note
 
 
-def test_a_spoken_no_distance_note_leaves_out_locate():
-    # Voice calls have no locate action.
-    answer = tool._spoken({"ok": False, "note": "The last fix carried no distances." + tool.LOCATE_HINT + " Otherwise."})
-    assert "locate" not in answer["note"]
-
-
 def test_a_paused_user_is_never_guessed(home):
     _shared(home, sharing=sharing(paused_until="2099-01-01T00:00:00+00:00"))
     assert _call({"action": "now"})["error"] == "paused"
@@ -691,10 +683,10 @@ def test_set_rule_writes_one_job_and_changes_it_in_place(home, scheduler):
     assert answer["result"] == "created" and answer["rule"]["days"] == ["mon", "tue", "fri"]
     job = scheduler.jobs["job-1"]
     assert job["name"] == "Place rule: weekday morning brief" and job["schedule"] == tool.RULE_SCHEDULE
-    assert tool.EVENT_MARK in job["prompt"] and "conduit_call_user" in job["prompt"]
+    assert tool.EVENT_MARK in job["prompt"] and "talaria_call_user" in job["prompt"]
     answer = _call({"action": "set_rule", "rule": {**RULE, "what": "Weekday morning brief", "call": False}})
     assert answer["result"] == "changed" and list(scheduler.jobs) == ["job-1"]
-    assert "conduit_call_user" not in scheduler.jobs["job-1"]["prompt"]
+    assert "talaria_call_user" not in scheduler.jobs["job-1"]["prompt"]
     rules = _call({"action": "rules"})["rules"]
     assert len(rules) == 1 and rules[0]["calls"] is False
     assert _call({"action": "remove_rule", "id": rules[0]["id"]})["result"] == "removed"
@@ -857,7 +849,7 @@ def test_a_relay_without_a_reason_or_with_a_strange_one_gets_the_plain_note(home
 
 def _paired(home, installation="installation-1"):
     home.mkdir(parents=True, exist_ok=True)
-    (home / "conduit-push.json").write_text(json.dumps({"credential": "c", "installation_id": installation}))
+    (home / "talaria-push.json").write_text(json.dumps({"credential": "c", "installation_id": installation}))
 
 
 def _work_shares(home, other_profiles=True, installation="installation-1", **batch):
@@ -1083,10 +1075,10 @@ def test_a_wipe_whose_job_removal_fails_retries_on_the_next_change(client, monke
 
 
 def test_status_says_whether_hermes_can_ask_for_a_fresh_position(client, monkeypatch):
-    # Conduit's Location settings read `locate.available` to tell whether
-    # conduit_location's locate can reach this phone; it mirrors locate's own
+    # Talaria's Location settings read `locate.available` to tell whether
+    # talaria_location's locate can reach this phone; it mirrors locate's own
     # not_paired gate (background sharing is the phone's own setting).
-    pairing = client.home / "conduit-push.json"
+    pairing = client.home / "talaria-push.json"
     monkeypatch.setattr(api, "_pairing_state_path", lambda: pairing)
     assert client.get(f"{BASE}/location/status").json()["locate"] == {"available": False}
     pairing.write_text(json.dumps({"credential": "c" * 32, "installation_id": "i" * 16}))
@@ -1100,7 +1092,7 @@ def test_ingest_refuses_an_oversized_body(client):
 
 
 def test_a_lost_key_refusal_carries_the_stores_code(client):
-    # Conduit sets up a new key when the host lost its old one; until now it
+    # Talaria sets up a new key when the host lost its old one; until now it
     # had only the message to go on, which never named the code.
     phone = Phone()
     phone.accept(client.post(f"{BASE}/location/key", json=phone.key_request()).json())
@@ -1124,7 +1116,7 @@ def test_a_rule_deleted_meanwhile_isnt_brought_back(store):
 
 
 def test_a_redacted_profile_still_sends_the_locate_id():
-    from conduit_push import events
+    from talaria_push import events
     event = events.push_event("location.requested", identifier="locate:x", profile="default",
                               locate={"id": "l_" + "a" * 20})
     assert events.redact_event(event)["locate"] == {"id": "l_" + "a" * 20}
@@ -1132,235 +1124,7 @@ def test_a_redacted_profile_still_sends_the_locate_id():
 
 
 def test_a_content_free_locate_carries_only_a_valid_id():
-    from conduit_push import e2e
+    from talaria_push import e2e
     event = {"type": "location.requested", "event_id": "e1", "locate": {"id": "l_" + "a" * 20}}
     assert e2e.content_free(event)["locate"] == {"id": "l_" + "a" * 20}
     assert "locate" not in e2e.content_free({**event, "locate": {"id": "bad\n"}})
-
-
-# --- Voice reads (POST /voice-tools/call) -------------------------------------------
-
-
-class VoicePhone(Phone):
-    """Conduit's side of a location voice read, as the Swift code does it."""
-
-    def accept(self, answer):
-        super().accept(answer)
-        host_public = location.unb64u(answer["host_public_key"])
-        shared = self.private.exchange(X25519PublicKey.from_public_bytes(host_public))
-        self.request_key = location.derive_key(shared, self.device_id, self.public, host_public,
-                                               location.INFO_VOICE_REQUEST)
-        self.answer_key = location.derive_key(shared, self.device_id, self.public, host_public,
-                                              location.INFO_VOICE_ANSWER)
-
-    def ask(self, args, tool_name="conduit_location", call_id="call-voice-0001"):
-        body = json.dumps({"call_id": call_id, "args": args, "provider": "gemini-live"}).encode()
-        nonce, ct = location.seal(self.request_key, body,
-                                  location.voice_aad("request", tool_name, self.kid, self.device_id, call_id))
-        return {"v": 1, "tool": tool_name, "device_id": self.device_id, "kid": self.kid, "call_id": call_id,
-                "nonce": nonce, "ct": ct}
-
-    def read(self, envelope, answer):
-        plain = location.open_sealed(self.answer_key, answer["nonce"], answer["ct"],
-                                     location.voice_aad("answer", envelope["tool"], self.kid, self.device_id,
-                                                        envelope["call_id"]))
-        opened = json.loads(plain)
-        assert opened["call_id"] == envelope["call_id"]
-        return opened["result"]
-
-
-_ORIGINAL_MODULES = api._voice_tool_modules
-
-
-@pytest.fixture()
-def voice(tmp_path, monkeypatch):
-    """The voice routes on a profile whose location store runs at NOW."""
-    monkeypatch.setattr(api, "_calls_home", lambda: tmp_path)
-    monkeypatch.setattr(api, "_voice_tools_limiter", api._MintLimiter(1000, 60))
-    modules = api._voice_tool_modules()
-    entry = modules["conduit_location"]
-    dashboard_store = entry[1]
-    modules["conduit_location"] = (entry[0], lambda home: dashboard_store(home, clock=lambda: NOW), *entry[2:])
-    monkeypatch.setattr(api, "_voice_tool_modules", lambda: modules)
-    app = FastAPI()
-    app.include_router(api.router, prefix=BASE)
-    store = location.LocationStore(tmp_path, clock=lambda: NOW)
-    return TestClient(app), store
-
-
-def _voice_phone(store, device_id=DEVICE, **batch):
-    phone = VoicePhone(device_id)
-    phone.accept(store.register_key(phone.key_request()))
-    if batch:
-        store.ingest(phone.seal(phone.batch(**batch)))
-    return phone
-
-
-def _voice_call(client, phone, args, **kw):
-    envelope = phone.ask(args, **kw)
-    response = client.post(f"{BASE}/voice-tools/call", json=envelope)
-    assert response.status_code == 200, response.text
-    assert response.headers["cache-control"] == "no-store"
-    raw = response.json()
-    assert set(raw) == {"ok", "v", "nonce", "ct"}
-    return phone.read(envelope, raw)
-
-
-def test_voice_list_offers_location_reads_once_it_arrived(voice):
-    client, store = voice
-    assert client.get(f"{BASE}/voice-tools").json()["tools"] == []
-    _voice_phone(store, fix=fix())
-    tools = {item["name"]: item for item in client.get(f"{BASE}/voice-tools").json()["tools"]}
-    entry = tools["conduit_location"]
-    assert entry["key"] == "location"
-    assert entry["parameters"]["properties"]["action"]["enum"] == ["now", "places", "history", "distance_to"]
-    assert "rule" not in entry["parameters"]["properties"]
-    assert "set_rule" not in entry["description"] and "locate (" not in entry["description"]
-    assert "voice call" in entry["description"]
-
-
-def test_a_voice_read_answers_sealed_and_is_logged_as_a_call(voice):
-    client, store = voice
-    phone = _voice_phone(store, fix=fix())
-    answer = _voice_call(client, phone, {"action": "now"})
-    assert answer["ok"] and answer["area"] == "Shoreditch, London, United Kingdom"
-    assert "coordinates" not in answer and "51.53" not in json.dumps(answer)
-    assert _voice_call(client, phone, {"action": "distance_to", "place": "Home"})["distance"] == "1.2 km"
-    assert _voice_call(client, phone, {"action": "distance_to", "place": "Clinic"})["error"] == "private"
-    assert store.reads()[0] == {"at": store.reads()[0]["at"], "action": "distance_to",
-                                "session_title": "Gemini Live call"}
-    assert "conduit://" not in json.dumps(_voice_call(client, phone, {"action": "places"}))
-
-
-@pytest.mark.parametrize("action", ["now", "places", "history", "distance_to"])
-def test_a_new_key_during_the_read_seals_nothing_to_the_old_key(voice, monkeypatch, action):
-    client, store = voice
-    owner = _voice_phone(store, fix=fix())
-    tool = api._plugin_package_module("location_tool")
-    read = tool.voice_handle
-
-    def re_keyed_meanwhile(*args, **kwargs):
-        # The request opened with the owner's key; before its read, the same
-        # device id registers a new key and shares under it.
-        _voice_phone(store, fix=fix(id="f_other", area={"name": "Elsewhere", "locality": "Leeds",
-                                                        "country": "United Kingdom", "country_code": "GB"}))
-        return read(*args, **kwargs)
-
-    monkeypatch.setattr(tool, "voice_handle", re_keyed_meanwhile)
-    response = client.post(f"{BASE}/voice-tools/call", json=owner.ask({"action": action, "place": "Home"}))
-    assert response.status_code == 409 and response.json()["code"] == "unknown_key", response.text
-    assert "Elsewhere" not in response.text
-
-
-@pytest.mark.parametrize("action", ["locate", "set_rule", "remove_rule", "rules", None, ["now"], {"a": 1}])
-def test_a_voice_call_can_only_read(voice, action):
-    client, store = voice
-    phone = _voice_phone(store, fix=fix())
-    answer = _voice_call(client, phone, {"action": action, "rule": {"what": "x"}, "id": "r_abcdefgh"})
-    assert answer["error"] == "invalid"
-    assert store.reads() == []
-
-
-def test_a_voice_read_covers_only_the_asking_phone(voice):
-    client, store = voice
-    _voice_phone(store, fix=fix())
-    other = _voice_phone(store, "ipad-installation-2")
-    # The iPad has a key but shared nothing: it hears nothing about the phone.
-    answer = _voice_call(client, other, {"action": "now"})
-    assert answer["error"] == "nothing_shared" and "conduit://" not in answer["note"]
-
-
-def test_a_paused_phone_isnt_read_by_voice(voice):
-    client, store = voice
-    phone = _voice_phone(store, fix=fix())
-    store.ingest(phone.seal(phone.batch(sharing=sharing(paused_until="2099-01-01T00:00:00+00:00"))))
-    assert _voice_call(client, phone, {"action": "now"})["error"] == "paused"
-
-
-def test_a_location_voice_request_needs_the_device_key_and_its_tool(voice):
-    client, store = voice
-    phone = _voice_phone(store, fix=fix())
-    envelope = phone.ask({"action": "now"})
-    # Relabelled for health, it opens with neither key: the tool is sealed in.
-    relabelled = client.post(f"{BASE}/voice-tools/call", json={**envelope, "tool": "conduit_health"})
-    assert relabelled.status_code in (404, 409) and "1.2 km" not in relabelled.text
-    with pytest.raises(location.LocationError) as error:
-        store.open_voice_request({**envelope, "tool": "conduit_health"})
-    assert error.value.code == "bad_seal"
-    forged = VoicePhone()
-    forged.kid, forged.request_key = phone.kid, secrets.token_bytes(32)
-    response = client.post(f"{BASE}/voice-tools/call", json=forged.ask({"action": "now"}))
-    assert response.status_code == 409 and "1.2 km" not in response.text, response.text
-    # Ingest's key doesn't open a voice request either.
-    body = json.dumps({"call_id": "call-voice-0001", "args": {"action": "now"}}).encode()
-    nonce, ct = location.seal(phone.key, body, location.voice_aad("request", "conduit_location", phone.kid,
-                                                                  phone.device_id, "call-voice-0001"))
-    assert client.post(f"{BASE}/voice-tools/call", json={**envelope, "nonce": nonce, "ct": ct}).status_code == 409
-
-
-def test_shared_location_voice_vector_matches_conduit():
-    # ConduitTests checks the same values.
-    voice_vector = VECTOR["voice"]
-    host_private = location.unb64u(VECTOR["host_private"])
-    device_private = location.unb64u(VECTOR["device_private"])
-    raw = (serialization.Encoding.Raw, serialization.PublicFormat.Raw)
-    host_public = X25519PrivateKey.from_private_bytes(host_private).public_key().public_bytes(*raw)
-    device_public = X25519PrivateKey.from_private_bytes(device_private).public_key().public_bytes(*raw)
-    kid = location.key_id(device_public, host_public)
-    shared = location.agree(host_private, device_public)
-    request_key = location.derive_key(shared, VECTOR["device_id"], device_public, host_public,
-                                      location.INFO_VOICE_REQUEST)
-    answer_key = location.derive_key(shared, VECTOR["device_id"], device_public, host_public,
-                                     location.INFO_VOICE_ANSWER)
-    request_aad = location.voice_aad("request", "conduit_location", kid, VECTOR["device_id"], voice_vector["call_id"])
-    answer_aad = location.voice_aad("answer", "conduit_location", kid, VECTOR["device_id"], voice_vector["call_id"])
-    assert (request_key.hex(), answer_key.hex()) == (voice_vector["request_key"], voice_vector["answer_key"])
-    assert (request_aad.decode(), answer_aad.decode()) == (voice_vector["request_aad"], voice_vector["answer_aad"])
-    assert location.seal(request_key, voice_vector["request"].encode(), request_aad,
-                         nonce=bytes(12))[1] == voice_vector["request_ct"]
-    assert location.seal(answer_key, voice_vector["answer"].encode(), answer_aad,
-                         nonce=bytes(12))[1] == voice_vector["answer_ct"]
-
-
-@pytest.mark.parametrize("field", ["nonce", "ct"])
-@pytest.mark.parametrize("value", [None, 7, ["x"]])
-def test_a_voice_envelope_with_a_bad_nonce_or_body_is_a_400(voice, field, value):
-    client, store = voice
-    phone = _voice_phone(store, fix=fix())
-    response = client.post(f"{BASE}/voice-tools/call", json={**phone.ask({"action": "now"}), field: value})
-    assert response.status_code == 400
-
-
-def test_a_broken_location_module_leaves_health_voice_reads(tmp_path, monkeypatch):
-    real = api._plugin_package_module
-
-    def broken(name):
-        if name == "location_tool":
-            raise ImportError("half installed")
-        return real(name)
-
-    monkeypatch.setattr(api, "_plugin_package_module", broken)
-    assert list(_ORIGINAL_MODULES()) == ["conduit_health"]
-
-
-def test_a_damaged_location_store_hides_only_location_from_the_voice_list(voice, monkeypatch):
-    client, store = voice
-    _voice_phone(store, fix=fix())
-    # Health has something shared here, so it stays listed beside the damage.
-    monkeypatch.setattr(api._plugin_package_module("health_tool"), "voice_shared", lambda _store: True)
-    store.path.write_bytes(b"not a database" * 100)
-    response = client.get(f"{BASE}/voice-tools")
-    assert response.status_code == 200
-    assert [item["name"] for item in response.json()["tools"]] == ["conduit_health"]
-
-
-def test_a_local_live_read_is_logged_as_a_local_live_call():
-    logged = []
-
-    class Store:
-        def log_read(self, action, session, title):
-            logged.append((action, session, title))
-
-    tool._log_voice(Store(), "now", "local-live")
-    tool._log_voice(Store(), "now", "something-new")
-    assert logged == [("now", "", "Local Live call"), ("now", "", "Voice call")]

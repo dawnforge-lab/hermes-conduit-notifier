@@ -11,16 +11,16 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
-BASE = "/api/plugins/conduit_push"
+BASE = "/api/plugins/talaria_push"
 
 if "hermes_constants" not in sys.modules:
     _hermes_constants = types.ModuleType("hermes_constants")
     _hermes_constants.get_hermes_home = lambda: pathlib.Path(tempfile.gettempdir())
     sys.modules["hermes_constants"] = _hermes_constants
-if "conduit_push" not in sys.modules:
-    _pkg = types.ModuleType("conduit_push")
+if "talaria_push" not in sys.modules:
+    _pkg = types.ModuleType("talaria_push")
     _pkg.__path__ = [str(ROOT)]
-    sys.modules["conduit_push"] = _pkg
+    sys.modules["talaria_push"] = _pkg
 
 
 def _load(name, path):
@@ -33,9 +33,9 @@ def _load(name, path):
     return module
 
 
-e2e = _load("conduit_push.e2e", ROOT / "e2e.py")
-client = _load("conduit_push.client", ROOT / "client.py")
-api = _load("conduit_plugin_api_e2e", ROOT / "dashboard" / "plugin_api.py")
+e2e = _load("talaria_push.e2e", ROOT / "e2e.py")
+client = _load("talaria_push.client", ROOT / "client.py")
+api = _load("talaria_plugin_api_e2e", ROOT / "dashboard" / "plugin_api.py")
 
 KID = "0123456789abcdef0123456789abcdef"
 SECRET = bytes(range(32))
@@ -60,7 +60,7 @@ def _state(**extra):
 
 
 def _clarify_event(question="Deploy to prod?", questions=None):
-    decision = {"kind": "clarify", "request_id": "conduit-push-abc123def456", "question": question, "choices": ["Yes", "No"]}
+    decision = {"kind": "clarify", "request_id": "talaria-push-abc123def456", "question": question, "choices": ["Yes", "No"]}
     if questions is not None:
         decision["questions"] = questions
     return {
@@ -84,9 +84,9 @@ def test_keys_are_separate_per_direction_and_purpose():
 
 
 def test_known_answer_vector_matches_the_app():
-    # Conduit's E2ETests.swift checks the same derivation with CryptoKit.
+    # The Talaria app's end-to-end encryption tests check the same derivation.
     keys = _keys()
-    assert keys.push.hex() == _hkdf_hex(b"conduit-e2e-v1 push gateway-to-device")
+    assert keys.push.hex() == _hkdf_hex(b"talaria-e2e-v1 push gateway-to-device")
     assert e2e.thread_token(keys, "sess-1") == e2e.thread_token(e2e.derive_keys(KID, SECRET), "sess-1")
 
 
@@ -118,7 +118,7 @@ def test_sealed_event_hides_content_and_round_trips():
     assert sealed["type"] == "input.needed"
     assert sealed["event_id"] == sealed["e2e"]["msg"]
     assert sealed["event_id"] != event["event_id"]
-    assert sealed["clarify"] == {"request_id": "conduit-push-abc123def456", "qids": [], "card": True}
+    assert sealed["clarify"] == {"request_id": "talaria-push-abc123def456", "qids": [], "card": True}
     assert sealed["plugin_version"] == "0.5.0"
     inner = e2e.open_event(sealed, keys, installation_id=INSTALLATION, gateway_id=GATEWAY)
     assert inner["body"] == "Deploy to prod?"
@@ -149,7 +149,7 @@ def test_a_sealed_call_request_carries_its_call_inside():
     lambda s: s["e2e"].__setitem__("tok", "0" * 16),
     lambda s: s["e2e"].__setitem__("iat", s["e2e"]["iat"] + 1),
     lambda s: s["e2e"].__setitem__("msg", "input:" + "0" * 32),
-    lambda s: s["e2e"].__setitem__("req", "conduit-push-000000000000"),
+    lambda s: s["e2e"].__setitem__("req", "talaria-push-000000000000"),
 ])
 def test_relay_visible_fields_are_bound_to_the_ciphertext(tamper):
     keys = _keys()
@@ -226,7 +226,7 @@ def test_redaction_still_applies_before_encryption(monkeypatch):
 def test_a_broken_key_never_falls_back_to_plaintext(monkeypatch, tmp_path):
     sent = _capture(monkeypatch, _state(e2e={"kid": KID, "secret": "not-base64!"}))
     saved = []
-    monkeypatch.setattr(client, "state_path", lambda: tmp_path / "conduit-push.json")
+    monkeypatch.setattr(client, "state_path", lambda: tmp_path / "talaria-push.json")
     monkeypatch.setattr(client, "_write_state", lambda value, path: saved.append(value))
     client.send_now(_clarify_event())
     assert len(saved) == 1  # the local re-keying key, minted once
@@ -238,7 +238,7 @@ def test_missing_crypto_never_falls_back_to_plaintext(monkeypatch, tmp_path):
     state = _state()
     sent = _capture(monkeypatch, state)
     saved = []
-    monkeypatch.setattr(client, "state_path", lambda: tmp_path / "conduit-push.json")
+    monkeypatch.setattr(client, "state_path", lambda: tmp_path / "talaria-push.json")
     monkeypatch.setattr(client, "_write_state", lambda value, path: saved.append(value))
 
     def unavailable(*args, **kwargs):
@@ -261,11 +261,11 @@ def test_an_empty_key_record_fails_closed(monkeypatch, record):
     assert set(sent[0]) == {"event_id", "type", "plugin_version", "plugin_capabilities"}
     assert "Deploy" not in json.dumps(sent[0])
     status = {"status": "answered", "answer": "Yes"}
-    assert client.opened_answers(status, _state(e2e=record), "conduit-push-abc123def456") == {"status": "rejected"}
+    assert client.opened_answers(status, _state(e2e=record), "talaria-push-abc123def456") == {"status": "rejected"}
 
 
 def test_a_stale_state_write_keeps_the_provisioned_key(monkeypatch, tmp_path):
-    path = tmp_path / "conduit-push.json"
+    path = tmp_path / "talaria-push.json"
     monkeypatch.setattr(client, "state_path", lambda: path)
     stale = _state()
     del stale["e2e"]
@@ -279,18 +279,12 @@ def test_a_stale_state_write_keeps_the_provisioned_key(monkeypatch, tmp_path):
     assert "e2e" not in json.loads(path.read_text())
 
 
-def test_ciphertext_cap_matches_the_relay():
-    # relay/src/server.mjs E2E_MAX_CT_CHARS: the relay refuses anything larger.
-    source = (ROOT / "relay" / "src" / "server.mjs").read_text()
-    assert f"E2E_MAX_CT_CHARS = {e2e.MAX_CT_CHARS:_}" in source or f"E2E_MAX_CT_CHARS = {e2e.MAX_CT_CHARS}" in source
-
-
 def test_client_and_dashboard_agree_on_the_kid_shape():
     assert api._E2E_KID.pattern == e2e.KID_PATTERN.pattern
 
 
 def test_a_stale_write_never_replaces_a_newer_key(monkeypatch, tmp_path):
-    path = tmp_path / "conduit-push.json"
+    path = tmp_path / "talaria-push.json"
     monkeypatch.setattr(client, "state_path", lambda: path)
     newer = _state(e2e={"kid": "b" * 32, "secret": e2e.b64u(SECRET), "created_at": "2026-10-06T21:00:00Z"})
     path.write_text(json.dumps(newer))
@@ -301,20 +295,20 @@ def test_a_stale_write_never_replaces_a_newer_key(monkeypatch, tmp_path):
 
 
 def test_client_and_dashboard_lock_the_same_file(tmp_path):
-    path = tmp_path / "conduit-push.json"
+    path = tmp_path / "talaria-push.json"
     assert client.state_lock_path(path) == api._pairing_state_lock_path(path)
 
 
 def test_an_answer_that_is_not_text_is_an_e2e_error():
     keys = _keys()
     aad = e2e.answer_aad(kid=KID, installation_id=INSTALLATION, gateway_id=GATEWAY,
-                         request_id="conduit-push-abc123def456", question_id="")
+                         request_id="talaria-push-abc123def456", question_id="")
     nonce = bytes(12)
     sealed = e2e._aead(keys.answer).encrypt(nonce, b"\xff\xfe", aad)
     answer = f"e2e1.{KID}.{e2e.b64u(nonce)}.{e2e.b64u(sealed)}"
     with pytest.raises(e2e.E2EError):
         e2e.open_answer(answer, keys, installation_id=INSTALLATION, gateway_id=GATEWAY,
-                        request_id="conduit-push-abc123def456", question_id="")
+                        request_id="talaria-push-abc123def456", question_id="")
 
 
 @pytest.mark.parametrize("data,z", [(b"\xff\xfe", 0), (b"[1]", 0), (b"\x00\x01garbage", 1)])
@@ -342,43 +336,43 @@ def test_plugin_hello_stays_plain(monkeypatch):
 # --- Clarify answers ---------------------------------------------------------
 
 
-def _answer(text, question_id="", request_id="conduit-push-abc123def456", keys=None):
+def _answer(text, question_id="", request_id="talaria-push-abc123def456", keys=None):
     return e2e.seal_answer(text, keys or _keys(), installation_id=INSTALLATION, gateway_id=GATEWAY,
                            request_id=request_id, question_id=question_id)
 
 
 def test_sealed_answers_open_for_their_request():
     status = {"status": "answered", "answer": _answer("Yes")}
-    assert client.opened_answers(status, _state(), "conduit-push-abc123def456") == {"status": "answered", "answer": "Yes"}
+    assert client.opened_answers(status, _state(), "talaria-push-abc123def456") == {"status": "answered", "answer": "Yes"}
 
 
 def test_sealed_batch_answers_open_per_question():
     status = {"status": "answered", "answers": {"q0": _answer("Red", "q0"), "q1": _answer("Blue", "q1")}, "remaining": []}
-    opened = client.opened_answers(status, _state(), "conduit-push-abc123def456")
+    opened = client.opened_answers(status, _state(), "talaria-push-abc123def456")
     assert opened["answers"] == {"q0": "Red", "q1": "Blue"}
 
 
 @pytest.mark.parametrize("answer", [
     "Yes",  # plaintext from a relay or an old client
-    _answer("Yes", request_id="conduit-push-000000000000"),  # replayed from another request
+    _answer("Yes", request_id="talaria-push-000000000000"),  # replayed from another request
     _answer("Yes", question_id="q1"),  # moved to another question
     _answer("Yes", keys=e2e.derive_keys("f" * 32, bytes(32))),  # another key
 ])
 def test_answers_not_sealed_for_this_request_are_rejected(answer):
     status = {"status": "answered", "answer": answer}
-    assert client.opened_answers(status, _state(), "conduit-push-abc123def456") == {"status": "rejected"}
+    assert client.opened_answers(status, _state(), "talaria-push-abc123def456") == {"status": "rejected"}
 
 
 def test_answers_pass_through_for_unprovisioned_pairings():
     state = _state()
     del state["e2e"]
     status = {"status": "answered", "answer": "Yes"}
-    assert client.opened_answers(status, state, "conduit-push-abc123def456") == status
+    assert client.opened_answers(status, state, "talaria-push-abc123def456") == status
 
 
 def test_pending_polls_are_untouched():
     status = {"status": "pending", "remaining": ["q0"]}
-    assert client.opened_answers(status, _state(), "conduit-push-abc123def456") == status
+    assert client.opened_answers(status, _state(), "talaria-push-abc123def456") == status
 
 
 # --- Dashboard provisioning ----------------------------------------------------
@@ -386,7 +380,7 @@ def test_pending_polls_are_untouched():
 
 @pytest.fixture()
 def state_file(tmp_path, monkeypatch):
-    path = tmp_path / "conduit-push.json"
+    path = tmp_path / "talaria-push.json"
     path.write_text(json.dumps({"credential": "c", "installation_id": INSTALLATION, "gateway_id": GATEWAY, "relay_url": "https://relay"}))
     monkeypatch.setattr(api, "_pairing_state_path", lambda: path)
     monkeypatch.setattr(api, "_profile_scope", lambda profile: __import__("contextlib").nullcontext())

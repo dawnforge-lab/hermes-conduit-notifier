@@ -1,5 +1,5 @@
-"""channels.yaml tells Conduit's App Store builds which plugin version to
-ask for. Conduit reads it from main, so a version main doesn't have would
+"""channels.yaml tells Talaria's release builds which plugin version to
+ask for. Talaria reads it from main, so a version main doesn't have would
 keep the update notice up after every update."""
 
 import pathlib

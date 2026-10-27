@@ -38,10 +38,10 @@ if "tools.clarify_tool" not in sys.modules:
 
     _clarify_tool.strip_recommended = _strip_recommended
     sys.modules["tools.clarify_tool"] = _clarify_tool
-if "conduit_push" not in sys.modules:
-    _pkg = types.ModuleType("conduit_push")
+if "talaria_push" not in sys.modules:
+    _pkg = types.ModuleType("talaria_push")
     _pkg.__path__ = [str(ROOT)]
-    sys.modules["conduit_push"] = _pkg
+    sys.modules["talaria_push"] = _pkg
 
 
 def _load(name, path):
@@ -62,18 +62,18 @@ def _private_copy(name, path):
     return module
 
 
-plugin = _load("conduit_push.__init__", ROOT / "__init__.py")
+plugin = _load("talaria_push.__init__", ROOT / "__init__.py")
 calls = plugin.calls
 live_activity = plugin.live_activity
 clarify_loop = plugin.clarify_loop
-client = _private_copy("conduit_push._client_profiles_under_test", ROOT / "client.py")
+client = _private_copy("talaria_push._client_profiles_under_test", ROOT / "client.py")
 
 _home = contextvars.ContextVar("hermes_home")
 
 
 def _pair(home, name):
     home.mkdir(parents=True, exist_ok=True)
-    (home / "conduit-push.json").write_text(json.dumps({
+    (home / "talaria-push.json").write_text(json.dumps({
         "relay_url": f"https://relay.example/{name}",
         "credential": f"cred-{name}",
         "installation_id": f"inst-{name}",
@@ -133,7 +133,7 @@ def test_the_live_activity_thread_posts_with_its_profile(profiles):
 
 
 def test_a_released_decision_is_cancelled_with_its_profile(profiles):
-    _as_coder(profiles, lambda: clarify_loop._release_decision("conduit-push-abc123", relay_won=False))
+    _as_coder(profiles, lambda: clarify_loop._release_decision("talaria-push-abc123", relay_won=False))
 
     assert profiles.done.wait(5), "the release thread never ran"
     assert profiles.posted == [("DELETE", "cred-coder")]

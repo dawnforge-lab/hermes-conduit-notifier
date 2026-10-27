@@ -1,29 +1,28 @@
-"""Letting go of Conduit's claim on a chat once it sits idle (hermes-conduit#1123).
+"""Letting go of Talaria's claim on a chat once it sits idle.
 
 Hermes lets one live surface own a chat at a time (hermes_cli.active_sessions).
-A chat Conduit opens in the dashboard claims it on its first turn and keeps the
+A chat Talaria opens in the dashboard claims it on its first turn and keeps the
 claim for as long as the chat's runtime lives here, which is as long as
-Conduit's connection stays open. Hermes Desktop running its own process is then
-refused the same chat (SESSION_NOT_OWNED) long after Conduit's turn ended: the
-reverse of the takeover Conduit offers (#304).
+Talaria's connection stays open. Hermes Desktop running its own process is then
+refused the same chat (SESSION_NOT_OWNED) long after Talaria's turn ended: the
+reverse of the takeover Talaria offers (#304).
 
-So the dashboard lets go of a claim Conduit holds once the chat has been idle
+So the dashboard lets go of a claim Talaria holds once the chat has been idle
 for IDLE_S: no turn running, nothing waiting on an answer, no delegated work or
 wake-up still to come, and no turn marker. Hermes does the same for hosted room
 turns (tui_gateway.session_lifecycle._release_hosted_room_turn_slot): the next
-turn claims the chat again (_admit_prompt_turn), so Conduit's next send works
+turn claims the chat again (_admit_prompt_turn), so Talaria's next send works
 as before when nobody else took the chat, and meets the usual refusal and
 takeover when Desktop did. Nothing running is interrupted; the runtime stays.
 
-Only runtimes whose clients are all Conduit count: Conduit's sockets name
-themselves in X-Conduit-Client, and this plugin's own job transports carry
-``conduit_client``. A chat Desktop or the web dashboard also has open in this
-process keeps its claim, and Bot Chats keep theirs (some Hermes versions route
+Only runtimes whose clients are all Talaria count: Talaria's sockets name
+themselves in X-Talaria-Client. A chat Desktop or the web dashboard also has
+open in this process keeps its claim, and Bot Chats keep theirs (some Hermes versions route
 bot deliveries to the claim's holder).
 
-X-Conduit-Client is the client's own claim, made by a client that already
+X-Talaria-Client is the client's own claim, made by a client that already
 holds a dashboard login; all it can get is its own idle claims let go sooner.
-Conduit's calls run no Hermes turn and need no claim, so letting go during
+Talaria's calls run no Hermes turn and need no claim, so letting go during
 one changes nothing for the call.
 
 The gateway's helpers are read off ``tui_gateway.server`` as it loaded them;
@@ -42,9 +41,9 @@ logger = logging.getLogger(__name__)
 
 IDLE_S = 60.0
 SWEEP_S = 15.0
-# Set on a runtime seen with only Conduit on it, so it still counts once that
+# Set on a runtime seen with only Talaria on it, so it still counts once that
 # connection is gone (the gateway then parks it on a shared sentinel).
-MARK = "_conduit_claim"
+MARK = "_talaria_claim"
 REQUIRED = ("_release_active_session_slot", "_session_pending_kind")
 # Each is asked with (sid, session) or (session); a True keeps the claim.
 OPTIONAL_BUSY = (("_session_has_active_delegations", True), ("_session_owns_live_wakeup_schedule", False),
@@ -82,12 +81,10 @@ def _headers(transport: Any) -> Optional[dict]:
 
 
 def clients(server: Any, transport: Any) -> Optional[bool]:
-    """True when every client on ``transport`` is Conduit, False when one
+    """True when every client on ``transport`` is Talaria, False when one
     isn't (or can't be told), None when it has no client left."""
     if transport is None or transport is getattr(server, "_detached_ws_transport", None):
         return None
-    if getattr(transport, "conduit_client", None) == "conduit":
-        return True
     peers = getattr(transport, "transports", None)
     if callable(peers):  # Hermes' FanoutTransport: one runtime shown to several clients
         try:
@@ -105,7 +102,7 @@ def clients(server: Any, transport: Any) -> Optional[bool]:
     headers = _headers(transport)
     if headers is None:
         return False
-    return str(headers.get("x-conduit-client") or "").strip().lower() == "conduit"
+    return str(headers.get("x-talaria-client") or "").strip().lower() == "talaria"
 
 
 def _holds_claim(session: dict) -> Any:
@@ -205,7 +202,7 @@ def release(server: Any, sid: str, session: dict, now: float) -> bool:
             return False
         if not server._release_active_session_slot(session):
             return False
-    logger.info("Conduit: let go of its idle claim on chat %r (runtime %r) so another Hermes window can open it"
+    logger.info("Talaria: let go of its idle claim on chat %r (runtime %r) so another Hermes window can open it"
                 " (#1123)", getattr(lease, "session_id", None) or session.get("session_key"), sid)
     return True
 
@@ -227,5 +224,5 @@ def sweep(server: Any, home: Callable[[], Any], now: Optional[float] = None) -> 
             if releasable(server, sid, session, now, home) and release(server, sid, session, now):
                 released += 1
         except Exception:  # noqa: BLE001 — one odd runtime never stops the pass
-            logger.debug("Conduit: idle claim check failed for %r", sid, exc_info=True)
+            logger.debug("Talaria: idle claim check failed for %r", sid, exc_info=True)
     return released

@@ -10,7 +10,7 @@ Desktop views of #454), it only can't see whether the window is in front.
 
 The dashboard process knows the selection; the turn's hooks may run in
 another process. So the dashboard publishes it here, per Hermes home, in
-``conduit-desktop-selected.json``: the selected stored chat ids and when it
+``talaria-desktop-selected.json``: the selected stored chat ids and when it
 wrote them. It rewrites the file when the selection changes and renews it
 while anything is selected; a file not renewed in time (the dashboard
 stopped) counts as nothing selected. Anything that can't be read counts as
@@ -30,7 +30,7 @@ import time
 from pathlib import Path
 from typing import Any, Iterable
 
-FILE_NAME = "conduit-desktop-selected.json"
+FILE_NAME = "talaria-desktop-selected.json"
 # The dashboard renews a selection this often, and a reader trusts a file
 # this long: a couple of missed renewals (the sweep runs every 5 s) still hold.
 RENEW_S = 30.0

@@ -13,7 +13,7 @@ ROOT = Path(__file__).resolve().parents[1]
 REMOTE_ROOM = "room_" + "0123456789abcdef" * 2
 
 
-def _load(name="conduit_room_memory"):
+def _load(name="talaria_room_memory"):
     spec = importlib.util.spec_from_file_location(name, ROOT / "room_memory.py")
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
@@ -244,7 +244,7 @@ def test_installing_twice_wraps_once_and_uninstall_puts_hermes_methods_back(herm
 
 def test_a_reloaded_plugin_wraps_hermes_own_method_not_the_old_guard(hermes):
     own_sync = hermes.__dict__["sync_all"]
-    first, second = _load("conduit_room_memory_first"), _load("conduit_room_memory_second")
+    first, second = _load("talaria_room_memory_first"), _load("talaria_room_memory_second")
 
     assert first.install() and second.install()
     assert hermes.__dict__["sync_all"].__wrapped__ is own_sync

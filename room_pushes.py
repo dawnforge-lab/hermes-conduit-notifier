@@ -34,7 +34,7 @@ def is_room(session_id: Any, home: Any) -> bool:
     try:
         return room_memory.is_room_session(session_id, home)
     except Exception:  # noqa: BLE001 - a push must never break the turn
-        logger.debug("conduit_push: couldn't tell whether %s is a room's session", session_id, exc_info=True)
+        logger.debug("talaria_push: couldn't tell whether %s is a room's session", session_id, exc_info=True)
         return False
 
 
@@ -52,7 +52,7 @@ def _room_name(session_id: str, home: Path, member: str) -> Optional[str]:
         room_id = _titled_room(home, session_id) or _running_room(home, member)
         return _name(home, room_id) if room_id else None
     except Exception:  # noqa: BLE001 - the push goes with the generic name
-        logger.debug("conduit_push: couldn't name the room of session %s", session_id, exc_info=True)
+        logger.debug("talaria_push: couldn't name the room of session %s", session_id, exc_info=True)
         return None
 
 
