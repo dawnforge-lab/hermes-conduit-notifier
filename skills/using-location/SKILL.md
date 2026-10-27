@@ -109,8 +109,8 @@ starts, and its run is told which place and which move; set it up with
 
 `distance_to` is a straight line. For anything about time ("how long to
 get home", "when should I leave", "will I make it") or finding a place
-("pharmacy near me"), use `conduit_maps` when it's offered: Apple Maps,
-looked up on the user's iPhone, with real routes and traffic.
+("pharmacy near me"), use `conduit_maps` when it's offered: Google Maps,
+looked up from this host, with real routes and traffic.
 
 - `directions` with `to` (and `arrive_by` when there's a time to make):
   duration, traffic delay, `leave_by`, steps. `from` defaults to `"me"`.
