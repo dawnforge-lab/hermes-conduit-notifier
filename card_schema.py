@@ -4,10 +4,8 @@ the one schema both sides read (``cards/card-schema.json``).
 
 Hermes fills in a card's facts (a place's name, where it is, a rating it
 found and where from; numbers, a forecast, the steps of a recipe); Talaria
-owns the look, and the phone adds what Apple Maps knows itself at draw time
-(address, category, phone, website, travel time, Look Around). So the schema
-has no fields for those, and a rating, hours, price or photo without a named
-source is left out rather than shown as fact. The other cards say where
+owns the look. A rating, hours, price or photo without a named source is left
+out rather than shown as fact. The other cards say where
 their information is from when Hermes names a source (a forecast and media
 must), and otherwise read as Hermes' own; a contact says when the person is
 in the user's own contacts. A card with a ``live`` name replaces the earlier
@@ -299,7 +297,8 @@ def _chart_rules(chart: dict[str, Any]) -> dict[str, Any] | None:
 
 # --- Markdown, for a screen or client that doesn't draw cards -----------------
 
-_MODE_FLAGS = {"driving": "d", "walking": "w", "transit": "r"}
+# Google Maps URLs' travel modes, which open in Google Maps on any phone or on the web.
+_TRAVEL_MODES = {"driving": "driving", "walking": "walking", "transit": "transit", "cycling": "bicycling"}
 
 
 def fallback_markdown(cards: list[dict[str, Any]]) -> str:
@@ -330,16 +329,14 @@ def _card_markdown(card: dict[str, Any]) -> str:
     if route:
         to = places[route["to"]]
         mode = route.get("mode", "driving")
-        query = [("daddr", _maps_query(to))]
+        query = [("api", "1"), ("destination", _maps_query(to))]
         if "from" in route:
-            query.insert(0, ("saddr", _maps_query(places[route["from"]])))
+            query.insert(1, ("origin", _maps_query(places[route["from"]])))
         label = f"Directions to {_escape(to['name'])}"
-        if mode in _MODE_FLAGS:
-            # Apple Maps links have no cycling directions, so a cycling
-            # route's link names no mode rather than the wrong one.
-            query.append(("dirflg", _MODE_FLAGS[mode]))
+        if mode in _TRAVEL_MODES:
+            query.append(("travelmode", _TRAVEL_MODES[mode]))
             label += f" ({mode})"
-        link = "https://maps.apple.com/?" + "&".join(f"{key}={quote(value, safe=',')}" for key, value in query)
+        link = "https://www.google.com/maps/dir/?" + "&".join(f"{key}={quote(value, safe=',')}" for key, value in query)
         lines.append(f"[{label}]({link})")
     return "\n\n".join(lines)
 
@@ -364,7 +361,7 @@ def _place_markdown(place: dict[str, Any]) -> str:
         lines.append(" — ".join(facts))
     if place.get("note"):
         lines.append(f"_{_escape(place['note'])}_")
-    lines.append(f"[Open in Apple Maps](https://maps.apple.com/?{_maps_params(place)})")
+    lines.append(f"[Open in Maps](https://www.google.com/maps/search/?{_maps_params(place)})")
     return "  \n".join(lines)
 
 
@@ -567,11 +564,11 @@ def _maps_query(place: dict[str, Any]) -> str:
 
 
 def _maps_params(place: dict[str, Any]) -> str:
-    params = [("q", place["name"])]
-    if "lat" in place and "lon" in place:
-        params.append(("ll", f"{place['lat']:.6f},{place['lon']:.6f}"))
-    elif place.get("address"):
-        params.append(("address", place["address"]))
+    """A Google Maps search: the place's id when talaria_maps gave one, else
+    its coordinates, else its name and address."""
+    params = [("api", "1"), ("query", _maps_query(place))]
+    if place.get("place_id"):
+        params.append(("query_place_id", place["place_id"]))
     return "&".join(f"{key}={quote(value, safe=',')}" for key, value in params)
 
 

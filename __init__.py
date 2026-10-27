@@ -108,16 +108,17 @@ def register(ctx: Any) -> None:
     try:
         ctx.register_hook("pre_llm_call", _pre_llm_call)
     except Exception:  # noqa: BLE001
-        logger.warning("talaria_push: pre_llm_call hook unavailable; voice replies get no persona hint "
-                       "and Hermes doesn't hear about declined calls", exc_info=True)
-    # Lock Screen progress (#605): each model request and its token use.
+        logger.warning("talaria_push: pre_llm_call hook unavailable; Hermes doesn't hear about declined calls",
+                       exc_info=True)
+    # Live turn progress (#605): each model request and its token use.
     # Optional like the hooks above: an older Hermes without them still
     # reports tools, approvals and the end of the turn.
     for name, hook in (("pre_api_request", _pre_api_request), ("post_api_request", _post_api_request)):
         try:
             ctx.register_hook(name, hook)
         except Exception:  # noqa: BLE001
-            logger.warning("talaria_push: %s hook unavailable; the Lock Screen shows less detail", name, exc_info=True)
+            logger.warning("talaria_push: %s hook unavailable; live turn progress shows less detail", name,
+                           exc_info=True)
     # Wrap clarify execution so a backgrounded device gets an answerable card
     # (plugin-minted id, answered through the relay). Older gateways without
     # middleware support simply keep the original clarify path.
@@ -166,7 +167,7 @@ def _post_llm_call(**kwargs: Any) -> None:
     response = kwargs.get("assistant_response")
     if _is_child(session_id):
         return
-    # The Lock Screen's end waits for on_session_end too: this hook also runs
+    # The live turn's end waits for on_session_end too: this hook also runs
     # for a failed turn, and the first end the phone gets is the one it keeps.
     started = _take_turn_start(kwargs.get("turn_id"))
     # A cron run says nothing when the user muted its job or it answered
@@ -201,7 +202,7 @@ def _post_llm_call(**kwargs: Any) -> None:
         return
     key = (session_id, turn_id)
     # A Hermes that never reports the turn's end still gets its reply out,
-    # and its Live Activity ended.
+    # and its live turn ended.
     timer = _later(READY_GRACE_S, lambda: _turn_end_missed(session_id, turn_id))
     with _pending_lock:
         earlier = _pending_ready.pop(key, None)
@@ -253,7 +254,7 @@ def _finish_ready(session_id: str, ready: dict[str, Any] | None, send: bool) -> 
 def _unload() -> None:
     """Hermes unloads the plugin: replies held for a turn's end are
     dropped with their timers, held calls stay stored for the next load, the
-    group room memory guard comes off, and the delivery and Live Activity
+    group room memory guard comes off, and the delivery and live turn
     threads end (waiting about a second for a send in progress). Nothing
     more goes to the relay from this load."""
     with _pending_lock:
@@ -434,11 +435,11 @@ def _post_api_request(**kwargs: Any) -> None:
 
 
 def _quietly(function: Any, *args: Any) -> None:
-    """Lock Screen progress is an extra: it must never break a hook."""
+    """Live turn progress is an extra: it must never break a hook."""
     try:
         function(*args)
     except Exception:  # noqa: BLE001
-        logger.debug("talaria_push: Live Activity update failed", exc_info=True)
+        logger.debug("talaria_push: live turn update failed", exc_info=True)
 
 
 def _subagent_start(**kwargs: Any) -> None:
@@ -492,52 +493,10 @@ def _subagent_stop(**kwargs: Any) -> None:
     ))
 
 
-# Hermes' voice-live delegation note starts with this; used when the running
-# Hermes has no tools.voice_live to import it from.
-_VOICE_LIVE_NOTE_PREFIX = "[Note: this message is a delegation from a live spoken conversation"
-_voice_live_prefix: str | None = None
-
-PERSONA_VOICE_NOTE = (
-    "[Spoken reply: keep your usual personality through word choice and tone, but everything you "
-    "write will be read aloud, so write only words meant to be spoken. No stage directions or "
-    "narrated actions (for example *sets down the gavel*), no sound effects, no emoji, no markdown.]"
-)
-# Added while a Talaria that shows cards is connected: what isn't spoken
-# can still be seen.
-SHOW_VOICE_NOTE = (
-    "[The user's phone shows a screen during this call: put anything better seen than heard (a table, steps, "
-    "a chart, code, images, links, and places as map cards) on it with talaria_show, then say in a sentence "
-    "that it's there.]"
-)
-
-
-def _voice_note_prefix() -> str:
-    global _voice_live_prefix
-    if _voice_live_prefix is None:
-        try:
-            from tools.voice_live import VOICE_LIVE_TURN_NOTE
-
-            prefix = VOICE_LIVE_TURN_NOTE if isinstance(VOICE_LIVE_TURN_NOTE, str) and VOICE_LIVE_TURN_NOTE else ""
-        except Exception:  # noqa: BLE001 — an older Hermes, or none (tests)
-            prefix = ""
-        _voice_live_prefix = prefix or _VOICE_LIVE_NOTE_PREFIX
-    return _voice_live_prefix
-
-
-def _text_parts(content: Any) -> list[str]:
-    if isinstance(content, str):
-        return [content]
-    if isinstance(content, list):
-        return [part["text"] for part in content
-                if isinstance(part, dict) and part.get("type") == "text" and isinstance(part.get("text"), str)]
-    return []
-
-
 def _pre_llm_call(**kwargs: Any) -> dict[str, str] | None:
     """Context for this turn: calls from Hermes the user declined or missed
-    since the last turn of this chat (#449), the voice persona hint, and
-    which of the user's data Talaria shares here, to use before other
-    routes."""
+    since the last turn of this chat (#449), and which of the user's data
+    Talaria shares here, to use before other routes."""
     session_id = _text(kwargs.get("session_id"))
     child = _is_child(session_id)
     if not child:
@@ -546,7 +505,6 @@ def _pre_llm_call(**kwargs: Any) -> dict[str, str] | None:
         _quietly(live_activity.reporter.turn_started, session_id)
     notes = [
         None if child else calls.outcome_note(session_id),
-        _voice_persona_note(kwargs.get("conversation_history")),
         # Subagents can't use the shared data (each tool refuses them).
         None if child else talaria_first.note(),
     ]
@@ -595,28 +553,6 @@ def _inside_parent_turn(session_id: str, turn_id: Any) -> bool:
             _parent_turns.pop(session_id, None)
             running = None
     return running is not None and turn_id == running[0]
-
-
-def _voice_persona_note(history: Any) -> str | None:
-    """Keep a voice-live delegation's reply speakable without flattening the persona.
-
-    The TUI gateway prepends Hermes' voice-live note to the model input of a
-    turn delegated from a live spoken conversation; the ``user_message`` kwarg
-    is the clean text, so the note is read from the turn's own user row in
-    ``conversation_history``.
-    """
-    try:
-        if not isinstance(history, list):
-            return None
-        for message in reversed(history):
-            if isinstance(message, dict) and message.get("role") == "user":
-                prefix = _voice_note_prefix()
-                if any(text.lstrip().startswith(prefix) for text in _text_parts(message.get("content"))):
-                    return PERSONA_VOICE_NOTE + ("\n" + SHOW_VOICE_NOTE if show_tool.available() else "")
-                return None
-    except Exception:  # noqa: BLE001 — a hook must never break the turn
-        return None
-    return None
 
 
 # Ids checked against compaction lineage and found not to be a child. A

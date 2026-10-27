@@ -124,9 +124,7 @@ when they want it gone.
 - With "add only" sharing you can add events but can't read the calendar:
   say so if they ask what's on it.
 
-In a live voice call the phone adds things itself and reads changes
-waiting for the user out loud, so the same rules hold: ask, then let them
-approve.
+In a voice conversation the same rules hold: ask, then let them approve.
 
 In a voice chat with you, Talaria answers the card when the user says yes
 or no as their very next words after the reply that queued the change, so

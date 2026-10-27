@@ -23,6 +23,7 @@ api = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(api)
 
 CODE = "ABCDE-FGH23"
+RELAY = "https://relay.example"
 
 
 def _claimed(**extra):
@@ -70,22 +71,25 @@ def test_pairing_claims_the_code_and_saves_the_credential(tmp_path):
 
 def test_control_characters_leave_the_gateway_name(tmp_path):
     calls = []
-    api.pair_profile({"pairing_code": CODE, "gateway_name": "box\r\nX: y"}, path=tmp_path / "s.json",
+    api.pair_profile({"pairing_code": CODE, "relay_url": RELAY, "gateway_name": "box\r\nX: y"}, path=tmp_path / "s.json",
                      claim=_recording_claim(calls))
     assert calls[0][2] == "boxX: y"
 
 
 def test_a_named_profile_is_in_the_gateway_name(tmp_path):
     calls = []
-    api.pair_profile({"pairing_code": CODE}, profile="coder", path=tmp_path / "s.json", claim=_recording_claim(calls))
+    api.pair_profile({"pairing_code": CODE, "relay_url": RELAY}, profile="coder", path=tmp_path / "s.json",
+                     claim=_recording_claim(calls))
     assert calls[0][2].endswith("Hermes (coder)")
 
 
-def test_without_a_relay_url_the_current_then_default_relay_is_used(tmp_path):
+def test_without_a_relay_url_the_current_relay_is_used_and_none_is_refused(tmp_path):
     path = tmp_path / "s.json"
     calls = []
-    api.pair_profile({"pairing_code": CODE}, path=path, claim=_recording_claim(calls, _claimed(relay_url=None)))
-    assert calls[-1][0] == api.DEFAULT_RELAY_URL
+    with pytest.raises(api.TokenError) as raised:
+        api.pair_profile({"pairing_code": CODE}, path=path, claim=_recording_claim(calls, _claimed(relay_url=None)))
+    assert raised.value.status == 400 and "relay_url is required" in str(raised.value)
+    assert calls == [] and not path.exists()
     path.write_text(json.dumps({"credential": "old", "relay_url": "https://own.relay"}))
     api.pair_profile({"pairing_code": CODE}, path=path, claim=_recording_claim(calls, _claimed(relay_url=None)))
     assert calls[-1][0] == "https://own.relay"
@@ -96,7 +100,7 @@ def test_re_pairing_keeps_the_privacy_choice_and_drops_the_old_key(tmp_path):
     path = tmp_path / "s.json"
     path.write_text(json.dumps({"credential": "old", "redact_content": True, "redact_key": "k",
                                 "e2e": {"kid": "x", "secret": "y"}}))
-    api.pair_profile({"pairing_code": CODE}, path=path, claim=_recording_claim([]))
+    api.pair_profile({"pairing_code": CODE, "relay_url": RELAY}, path=path, claim=_recording_claim([]))
     state = json.loads(path.read_text())
     assert state["redact_content"] is True and state["redact_key"] == "k"
     assert "e2e" not in state and state["credential"] == "inst-1.gw-1.secret"
@@ -106,7 +110,7 @@ def test_re_pairing_the_same_phone_and_gateway_keeps_the_key(tmp_path):
     path = tmp_path / "s.json"
     key = {"kid": "x", "secret": "y"}
     path.write_text(json.dumps({"credential": "old", "installation_id": "inst-1", "gateway_id": "gw-1", "e2e": key}))
-    api.pair_profile({"pairing_code": CODE}, path=path, claim=_recording_claim([]))
+    api.pair_profile({"pairing_code": CODE, "relay_url": RELAY}, path=path, claim=_recording_claim([]))
     assert json.loads(path.read_text())["e2e"] == key
 
 
@@ -114,9 +118,11 @@ def test_a_stored_relay_that_fails_the_check_is_not_used(tmp_path):
     path = tmp_path / "s.json"
     path.write_text(json.dumps({"credential": "old", "relay_url": "file:///etc"}))
     calls = []
-    api.pair_profile({"pairing_code": CODE}, path=path, claim=_recording_claim(calls, _claimed(relay_url="http://[")))
-    assert calls[0][0] == api.DEFAULT_RELAY_URL
-    assert json.loads(path.read_text())["relay_url"] == api.DEFAULT_RELAY_URL
+    with pytest.raises(api.TokenError) as raised:
+        api.pair_profile({"pairing_code": CODE}, path=path, claim=_recording_claim(calls, _claimed(relay_url="http://[")))
+    assert raised.value.status == 400 and "relay_url is required" in str(raised.value)
+    assert calls == []
+    assert json.loads(path.read_text())["relay_url"] == "file:///etc"
 
 
 def test_a_relay_named_url_with_extras_is_not_stored(tmp_path):
@@ -259,12 +265,15 @@ def test_the_route_answers_without_the_credential(monkeypatch, tmp_path):
     monkeypatch.setattr(api, "_claim_pairing", lambda relay, code, name: _claimed())
     app = FastAPI()
     app.include_router(api.router, prefix=BASE)
-    response = TestClient(app).post(f"{BASE}/pair", json={"pairing_code": CODE})
+    response = TestClient(app).post(f"{BASE}/pair", json={"pairing_code": CODE, "relay_url": RELAY})
     assert response.status_code == 200, response.text
     assert response.headers["cache-control"] == "no-store"
     assert response.json()["ok"] is True and "credential" not in response.json()
-    bad = TestClient(app).post(f"{BASE}/pair", json={"pairing_code": "nope"})
+    bad = TestClient(app).post(f"{BASE}/pair", json={"pairing_code": "nope", "relay_url": RELAY})
     assert bad.status_code == 400
+    (tmp_path / "s.json").unlink()
+    no_relay = TestClient(app).post(f"{BASE}/pair", json={"pairing_code": CODE})
+    assert no_relay.status_code == 400 and "relay_url is required" in no_relay.text
 
 
 def test_a_plain_http_relay_on_a_public_address_is_refused_before_claiming(tmp_path):

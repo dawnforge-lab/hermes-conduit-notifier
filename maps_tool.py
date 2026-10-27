@@ -41,8 +41,6 @@ TOOLSET = "talaria"
 ACTIONS = ("search", "lookup", "reverse_geocode", "directions", "travel_times", "navigate")
 NAVIGATE_TTL_MINUTES = 15
 NAVIGATE_SPOKEN_YES = ("go", "let's go", "go ahead", "open maps")
-# Apple Maps link travel flags; cycling has none, so Maps picks.
-_DIRFLG = {"driving": "d", "walking": "w", "transit": "r"}
 _GOOGLE_TRAVEL = {"driving": "driving", "walking": "walking", "transit": "transit", "cycling": "bicycling"}
 MODES = ("driving", "walking", "transit", "cycling")
 MAX_TO = 10
@@ -141,8 +139,7 @@ def _shared_store() -> tuple[LocationStore, str | None]:
 
 
 def available() -> bool:
-    """Shown once this host has its own Google Maps key, unless a phone
-    asked to keep maps lookups off the host."""
+    """Shown once this host has its own Google Maps key."""
     try:
         return _host_allowed(_store())
     except Exception:  # noqa: BLE001
@@ -150,7 +147,7 @@ def available() -> bool:
 
 
 def _host_allowed(store: LocationStore) -> bool:
-    return maps_google.configured() and store.maps_host_allowed()
+    return maps_google.configured()
 
 
 def handle(args: Any, *, session_id: Any = None, is_child: Callable[[Any], bool] = lambda _: False,
@@ -392,7 +389,7 @@ def _navigate(store: LocationStore, view: dict[str, Any] | None, args: dict[str,
         to, label = f"place_id:{ref['place_id']}", "the place from the earlier answer"
         found = _google_place(ref["place_id"])
         if found is not None:
-            # Google's ids mean nothing to Apple Maps: any phone opens coordinates.
+            # Every maps app on the phone opens coordinates; not every one reads Google's ids.
             ref = {"lat": found["lat"], "lon": found["lon"]}
             to, label = f"{found['lat']:.6f},{found['lon']:.6f}", found["name"]
     elif "lat" in ref:
@@ -439,22 +436,16 @@ def _navigate(store: LocationStore, view: dict[str, Any] | None, args: dict[str,
 
 
 def _maps_link(ref: dict[str, Any], mode: str) -> str | None:
-    """A directions link for a place the host can name (not a saved place,
-    whose address stays on the phone): Google Maps' when this host uses
-    Google, else Apple Maps'."""
+    """A Google Maps directions link for a place the host can name (not a
+    saved place, whose address stays on the phone)."""
     if "lat" in ref:
         destination = f"{ref['lat']},{ref['lon']}"
     elif "text" in ref:
         destination = ref["text"]
     else:
         return None
-    if maps_google.configured():
-        return "https://www.google.com/maps/dir/?" + urlencode(
-            {"api": "1", "destination": destination, "travelmode": _GOOGLE_TRAVEL[mode]})
-    query = {"daddr": destination}
-    if mode in _DIRFLG:
-        query["dirflg"] = _DIRFLG[mode]
-    return "https://maps.apple.com/?" + urlencode(query)
+    return "https://www.google.com/maps/dir/?" + urlencode(
+        {"api": "1", "destination": destination, "travelmode": _GOOGLE_TRAVEL[mode]})
 
 
 def _google_place(place_id: str) -> dict[str, Any] | None:

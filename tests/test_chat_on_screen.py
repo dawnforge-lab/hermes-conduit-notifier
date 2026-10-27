@@ -57,7 +57,7 @@ api = _load("talaria_plugin_api_chat_on_screen", ROOT / "dashboard" / "plugin_ap
 
 
 def test_a_held_chat_is_on_screen_by_any_of_its_ids_until_the_hold_runs_out(tmp_path):
-    assert on_screen.hold(tmp_path, "mac", ["runtime-1", "stored-1"], 90, now=1000.0) is True
+    assert on_screen.hold(tmp_path, "tablet", ["runtime-1", "stored-1"], 90, now=1000.0) is True
     assert on_screen.on_screen(tmp_path, "stored-1", now=1000.0)
     assert on_screen.on_screen(tmp_path, " runtime-1 ", now=1089.0)
     assert not on_screen.on_screen(tmp_path, "stored-2", now=1000.0)
@@ -65,18 +65,18 @@ def test_a_held_chat_is_on_screen_by_any_of_its_ids_until_the_hold_runs_out(tmp_
 
 
 def test_a_hold_of_zero_ends_only_that_devices_hold(tmp_path):
-    on_screen.hold(tmp_path, "iphone", ["s-1"], 90, now=1000.0)
-    on_screen.hold(tmp_path, "mac", ["s-1"], 90, now=1000.0)
-    assert on_screen.hold(tmp_path, "iphone", [], 0, now=1001.0) is False
+    on_screen.hold(tmp_path, "phone", ["s-1"], 90, now=1000.0)
+    on_screen.hold(tmp_path, "tablet", ["s-1"], 90, now=1000.0)
+    assert on_screen.hold(tmp_path, "phone", [], 0, now=1001.0) is False
     assert on_screen.on_screen(tmp_path, "s-1", now=1001.0), "the Mac still has it on screen"
-    on_screen.hold(tmp_path, "mac", ["s-1"], 0, now=1002.0)
+    on_screen.hold(tmp_path, "tablet", ["s-1"], 0, now=1002.0)
     assert not on_screen.on_screen(tmp_path, "s-1", now=1002.0)
     assert list((tmp_path / on_screen.DIRECTORY).iterdir()) == []
 
 
 def test_a_new_hold_replaces_the_devices_last_chat(tmp_path):
-    on_screen.hold(tmp_path, "ipad", ["s-1"], 90, now=1000.0)
-    on_screen.hold(tmp_path, "ipad", ["s-2"], 90, now=1005.0)
+    on_screen.hold(tmp_path, "tablet", ["s-1"], 90, now=1000.0)
+    on_screen.hold(tmp_path, "tablet", ["s-2"], 90, now=1005.0)
     assert not on_screen.on_screen(tmp_path, "s-1", now=1005.0)
     assert on_screen.on_screen(tmp_path, "s-2", now=1005.0)
 
@@ -96,33 +96,33 @@ def test_a_new_hold_replaces_the_devices_last_chat(tmp_path):
 ])
 def test_anything_hold_doesnt_write_counts_as_nothing_on_screen(tmp_path, raw):
     (tmp_path / on_screen.DIRECTORY).mkdir()
-    (tmp_path / on_screen.DIRECTORY / "iphone.json").write_text(raw, encoding="utf-8")
+    (tmp_path / on_screen.DIRECTORY / "phone.json").write_text(raw, encoding="utf-8")
     assert not on_screen.on_screen(tmp_path, "s-1", now=1000.0)
 
 
 def test_the_file_is_private_and_no_temp_file_is_left(tmp_path):
-    on_screen.hold(tmp_path, "iphone", ["s-1"], 30, now=1000.0)
+    on_screen.hold(tmp_path, "phone", ["s-1"], 30, now=1000.0)
     directory = tmp_path / on_screen.DIRECTORY
-    assert [path.name for path in directory.iterdir()] == ["iphone.json"]
-    assert (directory / "iphone.json").stat().st_mode & 0o777 == 0o600
+    assert [path.name for path in directory.iterdir()] == ["phone.json"]
+    assert (directory / "phone.json").stat().st_mode & 0o777 == 0o600
 
 
 @pytest.mark.parametrize("body", [
     [],
     {"device": "android", "session_ids": ["s-1"], "hold_s": 30},
-    {"device": "iphone", "session_ids": ["s-1"], "hold_s": -1},
-    {"device": "iphone", "session_ids": ["s-1"], "hold_s": 601},
-    {"device": "iphone", "session_ids": ["s-1"], "hold_s": True},
-    {"device": "iphone", "session_ids": ["s-1"], "hold_s": float("nan")},
-    {"device": "iphone", "session_ids": ["s-1"], "hold_s": float("inf")},
+    {"device": "phone", "session_ids": ["s-1"], "hold_s": -1},
+    {"device": "phone", "session_ids": ["s-1"], "hold_s": 601},
+    {"device": "phone", "session_ids": ["s-1"], "hold_s": True},
+    {"device": "phone", "session_ids": ["s-1"], "hold_s": float("nan")},
+    {"device": "phone", "session_ids": ["s-1"], "hold_s": float("inf")},
     # An integer too large for a float is a 400, not an OverflowError.
-    {"device": "iphone", "session_ids": ["s-1"], "hold_s": 10 ** 400},
-    {"device": "iphone", "session_ids": "s-1", "hold_s": 30},
-    {"device": "iphone", "session_ids": [1], "hold_s": 30},
-    {"device": "iphone", "session_ids": [" "], "hold_s": 30},
-    {"device": "iphone", "session_ids": ["x" * 201], "hold_s": 30},
-    {"device": "iphone", "session_ids": [f"s-{n}" for n in range(17)], "hold_s": 30},
-    {"device": "iphone", "session_ids": [], "hold_s": 30},
+    {"device": "phone", "session_ids": ["s-1"], "hold_s": 10 ** 400},
+    {"device": "phone", "session_ids": "s-1", "hold_s": 30},
+    {"device": "phone", "session_ids": [1], "hold_s": 30},
+    {"device": "phone", "session_ids": [" "], "hold_s": 30},
+    {"device": "phone", "session_ids": ["x" * 201], "hold_s": 30},
+    {"device": "phone", "session_ids": [f"s-{n}" for n in range(17)], "hold_s": 30},
+    {"device": "phone", "session_ids": [], "hold_s": 30},
 ])
 def test_bad_bodies_are_refused(body):
     with pytest.raises(ValueError):
@@ -130,15 +130,15 @@ def test_bad_bodies_are_refused(body):
 
 
 def test_anything_but_a_positive_hold_releases(tmp_path):
-    on_screen.hold(tmp_path, "mac", ["s-1"], 90, now=1000.0)
-    assert not on_screen.hold(tmp_path, "mac", ["s-1"], -5, now=1000.0)
-    on_screen.hold(tmp_path, "mac", ["s-1"], 90, now=1000.0)
-    assert not on_screen.hold(tmp_path, "mac", ["s-1"], float("nan"), now=1000.0)
+    on_screen.hold(tmp_path, "tablet", ["s-1"], 90, now=1000.0)
+    assert not on_screen.hold(tmp_path, "tablet", ["s-1"], -5, now=1000.0)
+    on_screen.hold(tmp_path, "tablet", ["s-1"], 90, now=1000.0)
+    assert not on_screen.hold(tmp_path, "tablet", ["s-1"], float("nan"), now=1000.0)
     assert not on_screen.on_screen(tmp_path, "s-1", now=1001.0)
 
 
 def test_a_huge_hold_is_capped(tmp_path):
-    assert on_screen.hold(tmp_path, "mac", ["s-1"], 10 ** 400, now=1000.0)
+    assert on_screen.hold(tmp_path, "tablet", ["s-1"], 10 ** 400, now=1000.0)
     assert on_screen.on_screen(tmp_path, "s-1", now=1000.0 + on_screen.MAX_HOLD_S - 1)
 
 
@@ -149,7 +149,7 @@ def test_only_a_turn_within_the_host_cap_counts_as_attended():
 
 
 def test_a_release_needs_no_ids():
-    assert on_screen.parse({"device": "mac", "hold_s": 0}) == ("mac", [], 0.0)
+    assert on_screen.parse({"device": "tablet", "hold_s": 0}) == ("tablet", [], 0.0)
 
 
 # --- The reply-ready push ------------------------------------------------------
@@ -185,24 +185,24 @@ def turn(tmp_path, monkeypatch):
 
 def test_a_reply_in_a_chat_talaria_has_on_screen_sends_no_push(turn):
     assert turn() == ["response.ready"]
-    on_screen.hold(turn.home, "mac", ["runtime-1", "s-1"], 90)
+    on_screen.hold(turn.home, "tablet", ["runtime-1", "s-1"], 90)
     assert turn() == []
-    on_screen.hold(turn.home, "mac", [], 0)
+    on_screen.hold(turn.home, "tablet", [], 0)
     assert turn() == ["response.ready"]
 
 
 def test_a_turn_past_the_host_cap_pushes_even_while_held(turn):
-    on_screen.hold(turn.home, "mac", ["s-1"], 90)
+    on_screen.hold(turn.home, "tablet", ["s-1"], 90)
     assert turn(ran_s=on_screen.MAX_TURN_S + 60) == ["response.ready"]
 
 
 def test_another_chat_on_screen_doesnt_quiet_this_one(turn):
-    on_screen.hold(turn.home, "iphone", ["s-2"], 90)
+    on_screen.hold(turn.home, "phone", ["s-2"], 90)
     assert turn() == ["response.ready"]
 
 
 def test_a_failed_turn_still_pushes_in_a_chat_on_screen(turn):
-    on_screen.hold(turn.home, "iphone", ["s-1"], 90)
+    on_screen.hold(turn.home, "phone", ["s-1"], 90)
     assert turn(failed=True) == ["turn.failed"]
 
 
@@ -230,12 +230,12 @@ def client(tmp_path, monkeypatch):
 
 def test_the_route_holds_and_releases_a_chat(client):
     response = client.put(f"{BASE}/notifications/on-screen",
-                          json={"device": "iphone", "session_ids": ["r-1", "s-1"], "hold_s": 90})
+                          json={"device": "phone", "session_ids": ["r-1", "s-1"], "hold_s": 90})
     assert response.status_code == 200
     assert response.headers["cache-control"] == "no-store"
     assert response.json() == {"ok": True, "on_screen": True}
     assert on_screen.on_screen(client.home, "s-1")
-    response = client.put(f"{BASE}/notifications/on-screen", json={"device": "iphone", "hold_s": 0})
+    response = client.put(f"{BASE}/notifications/on-screen", json={"device": "phone", "hold_s": 0})
     assert response.json() == {"ok": True, "on_screen": False}
     assert not on_screen.on_screen(client.home, "s-1")
 
@@ -244,7 +244,7 @@ def test_a_bad_body_is_a_400(client):
     response = client.put(f"{BASE}/notifications/on-screen", json={"device": "pager", "hold_s": 0})
     assert response.status_code == 400
     assert response.headers["cache-control"] == "no-store"
-    assert client.put(f"{BASE}/notifications/on-screen", json=["iphone"]).status_code == 400
+    assert client.put(f"{BASE}/notifications/on-screen", json=["phone"]).status_code == 400
     response = client.put(f"{BASE}/notifications/on-screen", content=b"{not json",
                           headers={"Content-Type": "application/json"})
     assert response.status_code == 400

@@ -6,12 +6,12 @@ to this host over the dashboard connection, never through the push relay.
 
 What arrives:
 
-* buckets: hourly and daily totals or min/avg/max that HealthKit itself
-  computes on the phone (it merges iPhone and Watch by the user's source
+* buckets: hourly and daily totals or min/avg/max that Health Connect itself
+  computes on the phone (it merges the user's apps and devices by their
   priority, which summing raw samples here could not), plus one summary per
   night of sleep. The phone recomputes recent days on every sync and sends
   each metric's window whole, so a window replaces what was stored for it.
-* events: things with their own HealthKit id: workouts, sleep stage
+* events: things with their own Health Connect id: workouts, sleep stage
   segments, and raw readings when the user turns on detailed readings.
   Deleted ids become tombstones, so a late re-send can't bring them back.
 

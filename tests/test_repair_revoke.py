@@ -88,7 +88,7 @@ def test_the_revoke_runs_on_its_own_daemon_thread(tmp_path, monkeypatch):
 
 
 def test_a_first_pairing_revokes_nothing(tmp_path, relay_calls):
-    _pair(tmp_path / "s.json")
+    _pair(tmp_path / "s.json", relay_url="https://relay.example")
     assert relay_calls == []
 
 

@@ -169,7 +169,7 @@ def _batch(batch_id="batch-0001", sent_at="2026-10-14T08:00:00+01:00", sharing=N
             "delete": [],
         },
         "status": {"at": "2026-10-14T07:59:00+01:00", "battery": 0.42, "charging": False, "low_power": False,
-                   "carplay": False, "audio_route": "headphones", "network": "wifi", "activity": "walking",
+                   "car_mode": False, "audio_route": "headphones", "network": "wifi", "activity": "walking",
                    "activity_confidence": "high"},
         "focus": {"at": "2026-10-14T07:30:00+01:00", "active": True, "label": "Work", "hold_calls": True},
     }

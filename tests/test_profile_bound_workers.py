@@ -129,7 +129,7 @@ def test_the_live_activity_thread_posts_with_its_profile(profiles):
     deadline = time.monotonic() + 5
     while ("POST", "cred-coder") not in profiles.posted and time.monotonic() < deadline:
         time.sleep(0.02)
-    assert ("POST", "cred-coder") in profiles.posted, "the Live Activity thread never posted with its profile"
+    assert ("POST", "cred-coder") in profiles.posted, "the live turn thread never posted with its profile"
 
 
 def test_a_released_decision_is_cancelled_with_its_profile(profiles):
