@@ -1,7 +1,6 @@
 """Dropping another process's claim on a chat (Hermes' active-session
-registry), shared by the dashboard's takeover route (dashboard/plugin_api.py,
-which explains the rules) and Pulse, which takes over its own chat when Hermes
-Desktop holds it (pulse_host.py).
+registry), for the dashboard's takeover route (dashboard/plugin_api.py, which
+explains the rules).
 
 Raises ``TakeoverError`` with an HTTP-style status: 501 for a Hermes that
 can't hand a chat over, 503 when the registry can't be read, 504 when the
@@ -20,11 +19,11 @@ from typing import Any, Optional
 logger = logging.getLogger(__name__)
 
 TURN_MARKER_SURFACES = frozenset({"desktop", "tui"})
-# The route's workers and Pulse take over in the same process; Hermes' file
-# lock may not exclude threads of one process, so they also take this one.
-# The dashboard loads this file as conduit_push_dashboard_pkg.chat_takeover
-# and Pulse as conduit_push.chat_takeover, so the lock lives on sys, which
-# both copies share (dict.setdefault is atomic).
+# The route's workers take over in the same process; Hermes' file lock may
+# not exclude threads of one process, so they also take this one. The
+# dashboard loads this file as conduit_push_dashboard_pkg.chat_takeover and
+# the plugin as conduit_push.chat_takeover, so the lock lives on sys, which
+# every copy shares (dict.setdefault is atomic).
 _in_process = sys.__dict__.setdefault("_conduit_chat_takeover_lock", threading.Lock())
 
 

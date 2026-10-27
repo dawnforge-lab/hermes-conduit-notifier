@@ -1,7 +1,7 @@
 {
   "name": "conduit_push",
   "label": "Conduit",
-  "description": "Routes the Hermes Conduit iOS app calls on this host (Gemini Live tokens, GPT-Live subscription sessions, the Grok Live relay, voice lookups, memory and personality, voice call transcripts).",
+  "description": "Routes the Conduit app calls on this host (pairing, notification settings, chat takeover, calls, shared phone data, group rooms, artifacts).",
   "icon": "Puzzle",
   "version": "0.69.2",
   "tab": { "path": "/conduit", "hidden": true },

@@ -264,10 +264,6 @@ def test_a_bad_body_is_a_400(client):
     assert client.put(f"{BASE}/notifications/reply-sources", json=["desktop"]).status_code == 400
 
 
-def test_watch_jobs_count_as_conduit():
-    assert sources.turn_source("desktop", api._WatchJobTransport(None)) == "conduit"
-
-
 def test_an_unreadable_file_is_not_overwritten(tmp_path, monkeypatch):
     store = Store(tmp_path)
     store.set_notify("messaging", False)
