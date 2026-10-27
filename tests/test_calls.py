@@ -205,7 +205,7 @@ def test_a_retry_the_relay_answers_as_a_duplicate_sends_the_usual_push(home, fak
     assert fake.enqueued == [READY]
 
 
-@pytest.mark.parametrize("detail", ["apns_unreachable", "apns_rejected"])
+@pytest.mark.parametrize("detail", ["push_unreachable", "push_rejected"])
 def test_a_call_apple_didnt_take_sends_the_usual_push_at_once(home, fake, sleeps, detail):
     fake.failures = [_Rejected(502, detail)]
     _watch(home, "rt-1")
@@ -234,10 +234,10 @@ def test_relay_errors_carry_their_status_and_a_bounded_detail(monkeypatch):
             raise urllib.error.HTTPError(request.full_url, 502, "Bad Gateway", {}, io.BytesIO(body))
         return open_request
 
-    monkeypatch.setattr(real._opener, "open", refuse(b'{"error": "apns_unreachable"}'))
+    monkeypatch.setattr(real._opener, "open", refuse(b'{"error": "push_unreachable"}'))
     with pytest.raises(real.RelayRejected) as caught:
         real.request_json("https://relay.example/v1/events", method="POST", payload={})
-    assert (caught.value.status, caught.value.detail) == (502, "apns_unreachable")
+    assert (caught.value.status, caught.value.detail) == (502, "push_unreachable")
 
     monkeypatch.setattr(real._opener, "open", refuse(b'{"error": {"nested": "' + b"x" * 500 + b'"}}'))
     with pytest.raises(real.RelayRejected) as caught:

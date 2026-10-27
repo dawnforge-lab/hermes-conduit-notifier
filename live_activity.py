@@ -1,16 +1,16 @@
-"""Lock Screen progress for a running turn (Talaria #605).
+"""Live progress for a running turn.
 
-Talaria starts a Live Activity when the user sends a turn and registers its
-push token with the relay under the chat's session ids. While the turn runs,
-these hooks tell the relay what the agent is doing (thinking, which kind of
-tool, waiting on the user), how many tools it ran and how full its context
-is, and the relay updates the Live Activity through APNs.
+Talaria registers an activity id with the relay under the chat's session ids
+when the user sends a turn. While the turn runs, these hooks tell the relay
+what the agent is doing (thinking, which kind of tool, waiting on the user),
+how many tools it ran and how full its context is, and the relay sends that
+to the phone, which shows it as an ongoing notification.
 
 What goes out is deliberately coarse: a phase, a tool *category* from a fixed
 list (never a tool's name, arguments or output), two numbers and the session
-id. Live Activity payloads are shown by iOS itself, so they can't be sealed
-end to end like notifications; nothing here says what the turn is about. A
-profile with content redaction on sends no tool category at all.
+id. It isn't sealed end to end like notifications, so nothing here says what
+the turn is about. A profile with content redaction on sends no tool category
+at all.
 
 Sends are coalesced per session on one background thread: at most one every
 ``MIN_INTERVAL_S`` while the phone is watching, and the end of a turn at

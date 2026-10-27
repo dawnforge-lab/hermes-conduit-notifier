@@ -398,7 +398,7 @@ def _pre_approval_request(**kwargs: Any) -> None:
         # description (the card's display text); without either, the
         # sanitizer would reject it anyway, so skip the dead build.
         # The raw command is omitted (see approval_decision) to avoid
-        # echoing secrets through APNs.
+        # echoing secrets through the push.
         decision=(
             approval_decision(session_key=session_id, description=description)
             if session_id and description

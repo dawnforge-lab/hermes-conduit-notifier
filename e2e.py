@@ -2,7 +2,7 @@
 
 Talaria creates a per-pairing root secret on the phone and hands it to this
 profile through the dashboard connection (dashboard/plugin_api.py), so it
-never passes through the push relay or APNs. From that secret both sides
+never passes through the push relay or Google. From that secret both sides
 derive separate keys with HKDF-SHA256:
 
 * push:   gateway -> device notification content (ChaCha20-Poly1305)
@@ -45,8 +45,8 @@ AAD_TAG = "talaria-e2e/1"
 ANSWER_PREFIX = "e2e1."
 NONCE_BYTES = 12
 SECRET_BYTES = 32
-# The ciphertext has to fit an APNs payload (4 KB) next to the relay's alert,
-# routing stub and envelope fields; the relay rejects anything longer.
+# The ciphertext has to fit FCM's 4 KB of data next to the relay's alert,
+# routing and envelope fields; the relay rejects anything longer.
 MAX_CT_CHARS = 2600
 # Fields that carry content. Everything else on an event stays visible to the
 # relay because it routes on it.

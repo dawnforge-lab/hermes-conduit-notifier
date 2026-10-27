@@ -26,7 +26,7 @@ PLUGIN_CAPABILITIES = [
 # PROTOCOL/STORE bounds for batch clarify decisions (8 questions x 8
 # choices, same text caps), mirrored by the relay. This is the maximum a
 # decision may CONTAIN — it is NOT a promise that every valid batch fits an
-# answerable card: APNs caps the whole notification at 4 KB, so a wide or
+# answerable card: FCM caps a message's data at 4 KB, so a wide or
 # long-text batch can still exceed the relay's payload guard. That case
 # degrades safely (plain banner delivered, decision parked deliverable=false,
 # native clarify path continues) instead of losing the notification.
@@ -270,7 +270,7 @@ def approval_decision(*, session_key: str, description: str) -> dict[str, Any]:
     builds every `ApprovalRequest` with at least those two), so the push card
     offers that always-safe subset; the live foreground card still shows the
     full set. The raw `command` is intentionally omitted — it can carry
-    secrets, and the relay/APNs path is an extra egress transport.
+    secrets, and the relay/FCM path is an extra egress transport.
     """
     return {
         "kind": "approval",
@@ -440,7 +440,7 @@ def sanitize_decision(decision: dict[str, Any]) -> dict[str, Any]:
 
     Defense in depth: the relay re-validates, but keep this side bounded too
     so a malformed hook payload can never push an oversized or unknown-shaped
-    object through to the relay/APNs. Mirrors the relay's contract:
+    object through to the relay/FCM. Mirrors the relay's contract:
     approval requires the session key that routes the answer, the description
     that renders the card, and non-empty whitelisted choices; clarify
     requires the plugin-minted request id and the question.

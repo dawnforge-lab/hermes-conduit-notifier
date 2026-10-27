@@ -5,7 +5,7 @@ Talaria watches consumes the watch (calls_store) and, within the user's
 limits, sends a ``call.requested`` event in place of the push the hook would
 have sent. Delivery retries a transport or relay failure with the same event
 id, which the relay dedupes; a rejection (an older relay, the relay's daily
-ceiling), a relay that took the event but couldn't reach Apple, or a final
+ceiling), a relay that took the event but couldn't reach Google, or a final
 failure sends that ordinary push instead, so the user still hears about the
 job.
 
@@ -44,8 +44,8 @@ logger = logging.getLogger("hermes.plugins.talaria_push")
 CALL_TITLE = "Hermes wants to talk"
 # Seconds to wait before each delivery attempt.
 DELIVERY_DELAYS_S = (0.0, 2.0, 4.0)
-# The relay's errors for an event it took but Apple didn't (relay/src/server.mjs).
-APNS_FAILURES = frozenset({"apns_rejected", "apns_unreachable"})
+# The relay's errors for an event it took but Google didn't (talaria-relay src/server.mjs).
+PUSH_FAILURES = frozenset({"push_rejected", "push_unreachable"})
 
 
 def _spawn(work: Callable[[], None]) -> None:
@@ -402,14 +402,14 @@ def deliver(event: dict[str, Any], fallback: dict[str, Any] | None) -> None:
         try:
             answer = client.send_now(event)
         except RuntimeError as error:
-            if getattr(error, "status", 0) >= 500 and getattr(error, "detail", "") not in APNS_FAILURES:
+            if getattr(error, "status", 0) >= 500 and getattr(error, "detail", "") not in PUSH_FAILURES:
                 # The relay (or a proxy in front of it) failed to handle it:
                 # worth another try.
                 logger.warning("Talaria call request delivery failed: %s", error)
                 relay_failed = True
                 continue
             # The relay refused it, the profile lost its pairing, or the
-            # relay took it and Apple didn't: sending the same event again
+            # relay took it and Google didn't: sending the same event again
             # won't change that (a retry only answers "duplicate").
             logger.warning("Talaria call request refused: %s", error)
             break
