@@ -1,6 +1,6 @@
 name: Tests
 
-# The plugin test suite, on every PR and every push to
+# The plugin and relay test suites, on every PR and every push to
 # main. Until 2026-10-23 they ran only when a session remembered to, so a PR
 # could merge with a failing test, or with a plugin version another PR had
 # already taken on main (two PRs shipped 0.51.5, two 0.62.4).
@@ -46,3 +46,22 @@ jobs:
 
       - name: Run the plugin tests
         run: python -m pytest --rootdir=tests tests -q
+
+  relay:
+    name: Relay
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: relay
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+
+      - name: Run the relay tests
+        run: npm test
