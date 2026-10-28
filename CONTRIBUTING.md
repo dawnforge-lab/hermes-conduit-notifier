@@ -1,7 +1,8 @@
 # Contributing to talaria-plugin
 
-This repo is the Talaria plugin for Hermes (`talaria_push`). The app is
-Talaria, for Android.
+This repo is the Talaria plugin for Hermes (`talaria_push`) and, in
+`relay/`, the Talaria relay that delivers its pushes. The app is Talaria, for
+Android, in its own repository.
 
 ## Connected features
 
@@ -31,3 +32,26 @@ push to main. To run them locally:
 
     pip install -r tests/requirements.txt
     python -m pytest --rootdir=tests tests
+
+## The relay
+
+The relay in `relay/` is a small Node.js service with no npm dependencies,
+and it should stay that way: the standard library only.
+
+- Its API is shared with the plugin and the app: push data keys, error codes
+  and routes change on every side together, in the same pull request here
+  where they can.
+- Keep the relay's view of a push to routing only: content stays sealed
+  between the plugin and the phone. A change that would let the relay read
+  more needs a strong reason in the PR.
+- Tests need Node 22 or later. The end-to-end tests start real relay
+  processes against a fake Google (`relay/testing/harness.mjs`), so nothing
+  reaches Firebase. CI runs them on every PR:
+
+      cd relay
+      npm test
+
+## Security
+
+Please don't open a public issue for a security problem. Use GitHub's
+private vulnerability reporting on this repository instead.

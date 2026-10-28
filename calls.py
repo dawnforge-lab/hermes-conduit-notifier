@@ -41,7 +41,7 @@ logger = logging.getLogger("hermes.plugins.talaria_push")
 CALL_TITLE = "Hermes wants to talk"
 # Seconds to wait before each delivery attempt.
 DELIVERY_DELAYS_S = (0.0, 2.0, 4.0)
-# The relay's errors for an event it took but Google didn't (talaria-relay src/server.mjs).
+# The relay's errors for an event it took but Google didn't (relay/src/server.mjs).
 PUSH_FAILURES = frozenset({"push_rejected", "push_unreachable"})
 
 

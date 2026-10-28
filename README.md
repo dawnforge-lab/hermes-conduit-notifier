@@ -7,8 +7,9 @@ app for Hermes. It sends Hermes' notifications and calls to the phone, keeps
 the data the phone shares with this host (health, location, calendar,
 reminders, phone status, contacts), gives the agent tools to use that data,
 and serves the dashboard routes Talaria calls. It needs the Talaria app on
-an Android phone and a [Talaria relay](https://github.com/dawnforge-lab/talaria-relay),
-which delivers pushes to the phone through Firebase Cloud Messaging (FCM).
+an Android phone and a Talaria relay, which delivers pushes to the phone
+through Firebase Cloud Messaging (FCM). The relay is in this repository too,
+in [`relay/`](relay/README.md); it runs on its own, not inside Hermes.
 
 Every route sits behind the Hermes dashboard's own auth. The plugin holds no
 push service key and no dashboard credentials: the Firebase key stays on the
@@ -1125,7 +1126,7 @@ Hermes (talaria_push plugin) ──HTTPS──▶ Talaria relay ──FCM──�
 It handles phone registration, pairing codes, per-phone preferences, rate
 limiting and idempotent event delivery. It runs on its own server, with
 your own Firebase project. The code and setup steps are in
-[dawnforge-lab/talaria-relay](https://github.com/dawnforge-lab/talaria-relay).
+[`relay/`](relay/README.md).
 
 The plugin keeps the relay URL per profile, in `talaria-push.json`, and sets
 it at pairing time. There is no separate setting:
